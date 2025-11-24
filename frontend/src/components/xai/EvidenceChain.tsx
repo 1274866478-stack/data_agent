@@ -1,0 +1,644 @@
+import React, { useState, useMemo, useCallback } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
+import { Badge } from '../ui/badge';
+import { Button } from '../ui/button';
+import { Progress } from '../ui/progress';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
+import { Alert, AlertDescription, AlertTitle } from '../ui/alert';
+import { SafeComponentWrapper, useSafeAsyncData } from './SafeComponentWrapper';
+import { useErrorHandler } from './ErrorBoundary';
+import {
+  Link as LinkIcon,
+  CheckCircle2,
+  AlertTriangle,
+  Clock,
+  Search,
+  FileText,
+  Database,
+  Brain,
+  GitBranch,
+  ChevronDown,
+  ChevronUp,
+  BarChart3,
+  Info
+} from 'lucide-react';
+
+export interface EvidenceNode {
+  id: string;
+  source_type: 'document' | 'database' | 'web_search' | 'llm_reasoning' | 'user_input';
+  source_name: string;
+  content: string;
+  confidence_score: number;
+  verification_status: 'verified' | 'pending' | 'failed';
+  timestamp: string;
+  metadata?: Record<string, any>;
+  child_nodes?: string[];
+  extraction_method?: string;
+}
+
+export interface EvidenceChain {
+  chain_id: string;
+  chain_name: string;
+  chain_type: 'linear' | 'branching' | 'circular';
+  description: string;
+  evidence_count: number;
+  verified_count: number;
+  created_at: string;
+}
+
+export interface EvidenceChainProps {
+  chains?: EvidenceChain[];
+  evidenceNodes?: Record<string, EvidenceNode>;
+  query?: string;
+  answer?: string;
+  showVisualization?: boolean;
+  allowInteraction?: boolean;
+  className?: string;
+  maxNodes?: number;
+  maxDepth?: number;
+}
+
+export const EvidenceChain: React.FC<EvidenceChainProps> = ({
+  chains = [],
+  evidenceNodes = {},
+  query = '',
+  answer = '',
+  showVisualization = true,
+  allowInteraction = true,
+  className = '',
+  maxNodes = 50,
+  maxDepth = 5
+}) => {
+  const { handleError, resetError } = useErrorHandler('EvidenceChain');
+  const [expandedChains, setExpandedChains] = useState<Set<string>>(new Set());
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const [selectedChain, setSelectedChain] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'chains' | 'graph' | 'timeline'>('chains');
+  const [componentError, setComponentError] = useState<Error | null>(null);
+
+  const getVerificationBadge = (status: string) => {
+    switch (status) {
+      case 'verified':
+        return <Badge className="bg-green-100 text-green-800"><CheckCircle2 className="h-3 w-3 mr-1" />已验证</Badge>;
+      case 'pending':
+        return <Badge className="bg-yellow-100 text-yellow-800"><AlertTriangle className="h-3 w-3 mr-1" />待验证</Badge>;
+      case 'failed':
+        return <Badge className="bg-red-100 text-red-800"><AlertTriangle className="h-3 w-3 mr-1" />验证失败</Badge>;
+      default:
+        return <Badge variant="outline">未知</Badge>;
+    }
+  };
+
+  const getConfidenceColor = (score: number) => {
+    if (score >= 0.8) return 'text-green-600';
+    if (score >= 0.6) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  const getSourceTypeIcon = (sourceType: string) => {
+    switch (sourceType) {
+      case 'document': return <FileText className="h-4 w-4 text-blue-500" />;
+      case 'database': return <Database className="h-4 w-4 text-green-500" />;
+      case 'web_search': return <Search className="h-4 w-4 text-purple-500" />;
+      case 'llm_reasoning': return <Brain className="h-4 w-4 text-orange-500" />;
+      default: return <GitBranch className="h-4 w-4 text-gray-500" />;
+    }
+  };
+
+  const getChainTypeIcon = (chainType: string) => {
+    switch (chainType) {
+      case 'linear': return <GitBranch className="h-4 w-4" />;
+      case 'branching': return <GitBranch className="h-4 w-4" />;
+      case 'circular': return <GitBranch className="h-4 w-4" />;
+      default: return <GitBranch className="h-4 w-4" />;
+    }
+  };
+
+  const formatTimestamp = (timestamp: string) => {
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+    } catch {
+      return timestamp;
+    }
+  };
+
+  const toggleChainExpansion = (chainId: string) => {
+    setExpandedChains(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(chainId)) {
+        newSet.delete(chainId);
+      } else {
+        newSet.add(chainId);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleNodeExpansion = (nodeId: string) => {
+    setExpandedNodes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(nodeId)) {
+        newSet.delete(nodeId);
+      } else {
+        newSet.add(nodeId);
+      }
+      return newSet;
+    });
+  };
+
+  // 计算统计信息
+  const chainStats = useMemo(() => {
+    const totalChains = chains.length;
+    const totalEvidence = Object.keys(evidenceNodes).length;
+    const totalVerified = Object.values(evidenceNodes).filter(
+      node => node.verification_status === 'verified'
+    ).length;
+    const avgConfidence = totalEvidence > 0
+      ? Object.values(evidenceNodes).reduce((sum, n) => sum + n.confidence_score, 0) / totalEvidence
+      : 0;
+
+    return {
+      totalChains,
+      totalEvidence,
+      totalVerified,
+      avgConfidence,
+      verificationRate: totalEvidence > 0 ? (totalVerified / totalEvidence) * 100 : 0
+    };
+  }, [chains, evidenceNodes]);
+
+  // 渲染证据节点（带错误处理）
+  const renderEvidenceNode = useCallback((nodeId: string, level: number = 0) => {
+    try {
+      const node = evidenceNodes[nodeId];
+      if (!node) return null;
+
+      // 深度限制
+      if (level > maxDepth) {
+        return (
+          <div key={nodeId} className={`ml-${Math.min(level * 4, 16)} text-muted-foreground text-sm p-2`}>
+            <div className="flex items-center gap-2">
+              <ChevronDown className="h-4 w-4" />
+              <span>... 深度限制 ({maxDepth} 层)</span>
+            </div>
+          </div>
+        );
+      }
+
+    const isExpanded = expandedNodes.has(nodeId);
+    const hasChildren = node.child_nodes && node.child_nodes.length > 0;
+
+    return (
+      <div key={nodeId} className={`ml-${level * 4}`}>
+        <Card className="mb-3">
+          <CardHeader className="pb-3">
+            <Collapsible
+              open={isExpanded}
+              onOpenChange={() => toggleNodeExpansion(nodeId)}
+            >
+              <CollapsibleTrigger asChild>
+                <div className="flex items-center justify-between cursor-pointer hover:bg-muted/50 p-2 rounded transition-colors">
+                  <div className="flex items-center gap-3">
+                    {getSourceTypeIcon(node.source_type)}
+                    <div className="flex-1 min-w-0">
+                      <CardTitle className="text-sm truncate">{node.source_name}</CardTitle>
+                      <CardDescription className="text-xs">
+                        ID: {node.id} • {formatTimestamp(node.timestamp)}
+                      </CardDescription>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-right">
+                        <div className={`text-xs font-medium ${getConfidenceColor(node.confidence_score)}`}>
+                          {(node.confidence_score * 100).toFixed(0)}%
+                        </div>
+                        <Progress value={node.confidence_score * 100} className="w-12 h-1 mt-1" />
+                      </div>
+                      {getVerificationBadge(node.verification_status)}
+                      {hasChildren && (
+                        <Button variant="ghost" size="sm">
+                          {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="pt-0">
+                  <p className="text-sm bg-muted p-3 rounded border-l-4 border-blue-500">
+                    {node.content}
+                  </p>
+                  {node.metadata && Object.keys(node.metadata).length > 0 && (
+                    <div className="mt-3 p-2 bg-muted/50 rounded">
+                      <div className="text-xs font-medium mb-1">元数据:</div>
+                      <div className="grid grid-cols-2 gap-1 mt-1">
+                        {Object.entries(node.metadata).map(([key, value]) => (
+                          <div key={key} className="text-xs bg-background p-1 rounded">
+                            <span className="font-medium">{key}:</span>
+                            <span className="ml-1">{String(value)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {node.extraction_method && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">提取方法:</span>
+                      <Badge variant="outline" className="text-xs">{node.extraction_method}</Badge>
+                    </div>
+                  )}
+                </CardContent>
+              </CollapsibleContent>
+            </Collapsible>
+          </CardHeader>
+        </Card>
+
+        {/* 递归渲染子节点 */}
+        {hasChildren && isExpanded && (
+          <div className="ml-4 border-l-2 border-muted pl-2">
+            {node.child_nodes!.slice(0, 10).map((childId) => renderEvidenceNode(childId, level + 1))}
+            {node.child_nodes!.length > 10 && (
+              <div className="text-xs text-muted-foreground py-2">
+                ... 还有 {node.child_nodes!.length - 10} 个子节点
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  } catch (error) {
+    console.error('Error rendering evidence node:', error);
+    return (
+      <div key={nodeId} className="ml-4 p-2 border border-red-200 bg-red-50 rounded">
+        <div className="flex items-center gap-2 text-red-700">
+          <AlertTriangle className="h-4 w-4" />
+          <span className="text-sm">节点渲染错误: {nodeId}</span>
+        </div>
+      </div>
+    );
+  }
+  }, [evidenceNodes, expandedNodes, maxDepth, toggleNodeExpansion]);
+
+  // 渲染证据链列表视图
+  const renderChainsView = () => (
+    <div className="space-y-4">
+      {chains.map((chain) => {
+        const isExpanded = expandedChains.has(chain.chain_id);
+        const chainNodes = Object.values(evidenceNodes).slice(0, 5);
+
+        return (
+          <Card key={chain.chain_id}>
+            <CardHeader>
+              <Collapsible
+                open={isExpanded}
+                onOpenChange={() => toggleChainExpansion(chain.chain_id)}
+              >
+                <CollapsibleTrigger asChild>
+                  <div className="flex items-center justify-between cursor-pointer hover:bg-muted/50 p-2 rounded transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                        chain.chain_type === 'linear' ? 'bg-blue-100 text-blue-800' :
+                        chain.chain_type === 'branching' ? 'bg-purple-100 text-purple-800' :
+                        'bg-green-100 text-green-800'
+                      }`}>
+                        {getChainTypeIcon(chain.chain_type)}
+                      </div>
+                      <div>
+                        <CardTitle className="text-lg">{chain.chain_name}</CardTitle>
+                        <CardDescription>{chain.description}</CardDescription>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">{chain.evidence_count} 个证据</Badge>
+                      <Badge variant="outline">{chain.verified_count} 已验证</Badge>
+                      <Button variant="ghost" size="sm">
+                        {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <CardContent className="pt-0">
+                    <div className="space-y-3 mt-4">
+                      {chainNodes.map((node, index) => (
+                        <div key={node.id} className="flex items-start gap-3 p-3 bg-muted/50 rounded">
+                          <div className="flex-shrink-0 mt-1">
+                            {getSourceTypeIcon(node.source_type)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium">{node.source_name}</div>
+                            <div className="text-xs text-muted-foreground">{node.source_type}</div>
+                            <p className="text-sm mt-1 line-clamp-2">{node.content}</p>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            {getVerificationBadge(node.verification_status)}
+                            <div className={`text-xs font-medium ${getConfidenceColor(node.confidence_score)}`}>
+                              {(node.confidence_score * 100).toFixed(0)}%
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {Object.keys(evidenceNodes).length > 5 && (
+                        <div className="text-center text-xs text-muted-foreground py-2">
+                          还有 {Object.keys(evidenceNodes).length - 5} 个证据节点...
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </CollapsibleContent>
+              </Collapsible>
+            </CardHeader>
+          </Card>
+        );
+      })}
+    </div>
+  );
+
+  // 渲染图形化视图
+  const renderGraphView = () => {
+    if (Object.keys(evidenceNodes).length === 0) {
+      return (
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertTitle>暂无证据节点</AlertTitle>
+          <AlertDescription>
+            当前没有可显示的证据节点数据。
+          </AlertDescription>
+        </Alert>
+      );
+    }
+
+    return (
+      <div className="p-6 border rounded-lg bg-muted/50">
+        <div className="text-center text-muted-foreground">
+          <BarChart3 className="h-12 w-12 mx-auto mb-4" />
+          <h3 className="text-lg font-medium mb-2">证据链图形化视图</h3>
+          <p className="text-sm">
+            图形化视图正在开发中，当前显示简化的节点关系图。
+          </p>
+
+          <div className="mt-6 space-y-4">
+            {Object.entries(evidenceNodes).slice(0, 10).map(([nodeId, node]) => (
+              <div key={nodeId} className="flex items-center gap-3 p-3 bg-background rounded border">
+                {getSourceTypeIcon(node.source_type)}
+                <div className="flex-1">
+                  <div className="text-sm font-medium">{node.source_name}</div>
+                  <div className="text-xs text-muted-foreground">{node.source_type}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {getVerificationBadge(node.verification_status)}
+                  <Badge variant="outline">
+                    {(node.confidence_score * 100).toFixed(0)}%
+                  </Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // 渲染时间线视图
+  const renderTimelineView = () => {
+    const sortedNodes = Object.values(evidenceNodes).sort((a, b) =>
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+
+    if (sortedNodes.length === 0) {
+      return (
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertTitle>暂无证据节点</AlertTitle>
+          <AlertDescription>
+            当前没有可显示的证据节点数据。
+          </AlertDescription>
+        </Alert>
+      );
+    }
+
+    const limitedNodes = sortedNodes.slice(0, maxNodes);
+
+    return (
+      <div className="space-y-4">
+        {limitedNodes.map((node, index) => (
+          <div key={node.id} className="relative">
+            {index < limitedNodes.length - 1 && (
+              <div className="absolute left-6 top-12 w-0.5 h-8 bg-border" />
+            )}
+
+            <div className="flex gap-4">
+              <div className="flex flex-col items-center">
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                  node.verification_status === 'verified' ? 'bg-green-100 text-green-800' :
+                  node.verification_status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-red-100 text-red-800'
+                } border`}>
+                  {getSourceTypeIcon(node.source_type)}
+                </div>
+                <Badge variant="outline" className="mt-2 text-xs">
+                  {formatTimestamp(node.timestamp).split(' ')[1]}
+                </Badge>
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="text-sm">{node.source_name}</CardTitle>
+                        <CardDescription>{node.source_type}</CardDescription>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {getVerificationBadge(node.verification_status)}
+                        <div className="text-right">
+                          <div className={`text-xs font-medium ${getConfidenceColor(node.confidence_score)}`}>
+                            {(node.confidence_score * 100).toFixed(0)}%
+                          </div>
+                          <Progress value={node.confidence_score * 100} className="w-12 h-1 mt-1" />
+                        </div>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <p className="text-sm bg-muted p-2 rounded border-l-4 border-blue-500">
+                      {node.content}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          </div>
+        ))}
+        {sortedNodes.length > maxNodes && (
+          <div className="text-center p-4">
+            <Alert>
+              <Info className="h-4 w-4 mx-auto" />
+              <AlertTitle>显示限制</AlertTitle>
+              <AlertDescription>
+                当前显示前 {maxNodes} 个节点，共 {sortedNodes.length} 个节点。
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  if (chains.length === 0 && Object.keys(evidenceNodes).length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-8 text-center">
+          <LinkIcon className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+          <h3 className="text-lg font-medium mb-2">暂无证据链数据</h3>
+          <p className="text-muted-foreground">
+            当前答案没有详细的证据链分析数据。
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // 错误恢复处理
+  const handleComponentError = useCallback((error: Error) => {
+    console.error('EvidenceChain component error:', error);
+    setComponentError(error);
+  }, []);
+
+  const resetComponentError = useCallback(() => {
+    setComponentError(null);
+    resetError();
+  }, [resetError]);
+
+  // 组件卸载时清理资源
+  React.useEffect(() => {
+    return () => {
+      setExpandedChains(new Set());
+      setExpandedNodes(new Set());
+      setSelectedChain(null);
+      setComponentError(null);
+    };
+  }, []);
+
+  // 如果有组件错误，显示错误状态
+  if (componentError) {
+    return (
+      <Card className="border-red-200 bg-red-50">
+        <CardContent className="py-6">
+          <div className="flex flex-col items-center space-y-4">
+            <AlertTriangle className="h-8 w-8 text-red-500" />
+            <div className="text-center">
+              <h3 className="text-sm font-medium text-red-800">
+                证据链组件运行错误
+              </h3>
+              <p className="text-xs text-red-600 mt-1">
+                {componentError.message || '发生了未知错误'}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={resetComponentError} size="sm" variant="outline">
+                重试
+              </Button>
+              <Button
+                onClick={() => window.location.reload()}
+                size="sm"
+                variant="ghost"
+              >
+                刷新页面
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <SafeComponentWrapper
+      componentName="EvidenceChain"
+      onError={handleComponentError}
+    >
+      <div className={`space-y-6 ${className}`}>
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <LinkIcon className="h-5 w-5" />
+                  证据链分析
+                </CardTitle>
+                <CardDescription>
+                  展示推理过程中的证据链关系和验证状态
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline">
+                  {chainStats.totalChains} 个证据链
+                </Badge>
+                <Badge variant="outline">
+                  {chainStats.totalEvidence} 个证据节点
+                </Badge>
+                <Badge variant="outline">
+                  {chainStats.verificationRate.toFixed(0)}% 验证率
+                </Badge>
+              </div>
+            </div>
+          </CardHeader>
+
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-blue-600">{chainStats.totalChains}</div>
+              <div className="text-sm text-muted-foreground">证据链数量</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-green-600">{chainStats.totalVerified}</div>
+              <div className="text-sm text-muted-foreground">已验证证据</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-yellow-600">{(chainStats.avgConfidence * 100).toFixed(0)}%</div>
+              <div className="text-sm text-muted-foreground">平均置信度</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-purple-600">{chainStats.verificationRate.toFixed(0)}%</div>
+              <div className="text-sm text-muted-foreground">验证通过率</div>
+            </div>
+          </div>
+
+          <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as any)} className="w-full">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="chains">证据链视图</TabsTrigger>
+              <TabsTrigger value="graph">关系图谱</TabsTrigger>
+              <TabsTrigger value="timeline">时间线视图</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </CardContent>
+      </Card>
+
+      <Tabs value={viewMode} className="w-full">
+        <TabsContent value="chains" className="space-y-4">
+          {renderChainsView()}
+        </TabsContent>
+
+        <TabsContent value="graph" className="space-y-4">
+          {renderGraphView()}
+        </TabsContent>
+
+        <TabsContent value="timeline" className="space-y-4">
+          {renderTimelineView()}
+        </TabsContent>
+      </Tabs>
+      </div>
+    </SafeComponentWrapper>
+  );
+};
+
+EvidenceChain.displayName = 'EvidenceChain';

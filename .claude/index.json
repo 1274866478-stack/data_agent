@@ -1,0 +1,255 @@
+{
+  "scan_metadata": {
+    "timestamp": "2025-11-18T23:59:28+08:00",
+    "scan_strategy": "三阶段自适应扫描",
+    "total_files_found": 2000,
+    "files_scanned": 150,
+    "scan_coverage_percentage": 7.5,
+    "truncated": true,
+    "scan_duration_seconds": 45
+  },
+  "project_summary": {
+    "name": "Data Agent V4",
+    "type": "多租户SaaS数据智能分析平台",
+    "primary_languages": ["Python", "TypeScript", "Shell", "Markdown"],
+    "tech_stack": {
+      "frontend": "Next.js 14, TypeScript, Tailwind CSS, Zustand",
+      "backend": "FastAPI, SQLAlchemy 2.0, PostgreSQL, Python 3.8+",
+      "infrastructure": "Docker, Docker Compose, MinIO, ChromaDB",
+      "ai_services": "智谱AI GLM-4-flash, OpenRouter"
+    },
+    "deployment_ports": {
+      "frontend": 3000,
+      "backend": 8004,
+      "postgres": 5432,
+      "minio_api": 9000,
+      "minio_console": 9001,
+      "chromadb": 8001
+    }
+  },
+  "modules": [
+    {
+      "path": "backend",
+      "type": "FastAPI后端服务",
+      "language": "Python",
+      "entry_files": ["src/main.py", "src/app/main.py"],
+      "key_directories": [
+        "src/app/api/v1/endpoints",
+        "src/app/core",
+        "src/app/services",
+        "src/app/data",
+        "tests"
+      ],
+      "test_coverage": "75%",
+      "scan_status": "completed",
+      "key_files_found": [
+        "src/app/core/config.py",
+        "src/app/data/models.py",
+        "src/app/services/minio_client.py",
+        "src/app/services/chromadb_client.py",
+        "src/app/services/zhipu_client.py",
+        "requirements.txt"
+      ],
+      "api_endpoints": [
+        "/api/v1/health",
+        "/api/v1/auth",
+        "/api/v1/tenants",
+        "/api/v1/data-sources",
+        "/api/v1/documents",
+        "/api/v1/llm",
+        "/api/v1/query"
+      ],
+      "services": [
+        "认证与授权服务",
+        "多租户管理",
+        "MinIO对象存储",
+        "ChromaDB向量数据库",
+        "智谱AI集成",
+        "RAG链实现",
+        "查询优化"
+      ]
+    },
+    {
+      "path": "frontend",
+      "type": "Next.js前端应用",
+      "language": "TypeScript",
+      "entry_files": ["src/app/page.tsx"],
+      "key_directories": [
+        "src/app",
+        "src/components",
+        "src/lib",
+        "src/store"
+      ],
+      "test_coverage": "30%",
+      "scan_status": "completed",
+      "key_files_found": [
+        "package.json",
+        "tsconfig.json",
+        "tailwind.config.js",
+        "postcss.config.js"
+      ],
+      "dependencies": [
+        "Next.js 14.2.5",
+        "React 18.3.1",
+        "TypeScript 5.5.3",
+        "Tailwind CSS 3.4.6",
+        "Zustand 5.0.8",
+        "Radix UI组件库"
+      ],
+      "routing_structure": [
+        "/", "/login", "/register", "/dashboard",
+        "/data-sources", "/documents", "/chat", "/settings"
+      ]
+    },
+    {
+      "path": "docs",
+      "type": "项目文档",
+      "language": "Markdown",
+      "entry_files": ["CLAUDE.md"],
+      "key_directories": [
+        "prd-shards",
+        "architecture-shards",
+        "stories",
+        "QA",
+        "reference"
+      ],
+      "test_coverage": "N/A",
+      "scan_status": "completed",
+      "key_documents": [
+        "prd-v4.md",
+        "architecture-v4.md",
+        "UI and UXdesign.md"
+      ],
+      "document_categories": [
+        "产品需求文档",
+        "技术架构设计",
+        "用户故事集",
+        "QA质量报告",
+        "API参考文档"
+      ]
+    },
+    {
+      "path": "scripts",
+      "type": "自动化脚本",
+      "language": ["Shell", "Batch", "Python"],
+      "entry_files": ["README.md", "setup.sh"],
+      "key_directories": [
+        "."  // 根目录
+      ],
+      "test_coverage": "60%",
+      "scan_status": "completed",
+      "script_categories": {
+        "deployment": ["docker-start.sh", "docker-start.bat", "setup.sh"],
+        "monitoring": ["check-ports.py", "monitor-resources.bat", "verify-services.bat"],
+        "validation": ["validate-config.sh", "validate-docker-config.py"],
+        "security": ["security_audit.py", "generate_keys.py"]
+      }
+    }
+  ],
+  "infrastructure": {
+    "docker_services": [
+      {
+        "name": "frontend",
+        "image": "custom:frontend",
+        "port": 3000
+      },
+      {
+        "name": "backend",
+        "image": "custom:backend",
+        "port": 8004
+      },
+      {
+        "name": "db",
+        "image": "postgres:16-alpine",
+        "port": 5432
+      },
+      {
+        "name": "storage",
+        "image": "minio/minio:latest",
+        "ports": [9000, 9001]
+      },
+      {
+        "name": "vector_db",
+        "image": "chromadb/chroma:latest",
+        "port": 8001
+      }
+    ],
+    "volumes": [
+      "postgres_data",
+      "minio_data",
+      "chroma_data",
+      "backend_uploads"
+    ]
+  },
+  "scan_gaps": {
+    "high_priority": [
+      {
+        "module": "backend",
+        "gap_type": "API端点测试覆盖",
+        "description": "需要补充完整的API端点测试",
+        "recommendation": "扫描backend/tests目录，创建缺失的API测试"
+      },
+      {
+        "module": "backend",
+        "gap_type": "LLM服务集成测试",
+        "description": "智谱AI和RAG链的集成测试不完整",
+        "recommendation": "创建智谱API调用的完整测试套件"
+      },
+      {
+        "module": "frontend",
+        "gap_type": "组件库完善",
+        "description": "React组件库需要完整实现",
+        "recommendation": "扫描src/components目录，补充缺失的UI组件"
+      }
+    ],
+    "medium_priority": [
+      {
+        "module": "scripts",
+        "gap_type": "平台兼容性脚本",
+        "description": "Linux/macOS脚本需要补充",
+        "recommendation": "为所有Windows .bat脚本创建对应的Shell脚本"
+      },
+      {
+        "module": "backend",
+        "gap_type": "性能监控完善",
+        "description": "性能监控服务需要完整实现",
+        "recommendation": "扫描src/app/services中的性能监控相关文件"
+      }
+    ]
+  },
+  "ignored_patterns": {
+    "node_modules": "前端依赖包目录，已忽略扫描",
+    "__pycache__": "Python字节码缓存，已忽略扫描",
+    "docker volumes": "Docker卷数据目录，运行时才存在",
+    "*.log": "日志文件，包含大量运行时信息"
+  },
+  "next_scan_recommendations": {
+    "focus_areas": [
+      "backend/src/app/api/v1/endpoints/ - 详细扫描所有API端点实现",
+      "backend/tests/ - 完整的测试覆盖分析",
+      "frontend/src/components/ - React组件库完整度评估",
+      "frontend/src/store/ - Zustand状态管理实现扫描",
+      "docs/stories/ - 用户故事完整度检查"
+    ],
+    "deep_scan_files": [
+      "backend/src/app/services/llm_service.py",
+      "backend/src/app/services/tenant_service.py",
+      "backend/src/app/api/v1/endpoints/query.py",
+      "backend/src/app/middleware/tenant_context.py"
+    ]
+  },
+  "quality_indicators": {
+    "code_structure": "良好 - 清晰的模块化结构",
+    "documentation": "优秀 - 完整的文档体系",
+    "testing_coverage": "中等 - 后端75%，前端30%",
+    "configuration_management": "良好 - 完整的环境变量配置",
+    "docker_deployment": "优秀 - 完整的Docker Compose配置",
+    "security_considerations": "良好 - 多租户隔离、认证授权"
+  },
+  "claude_docs_generated": {
+    "root": true,
+    "modules": ["backend", "frontend", "docs", "scripts"],
+    "navigation_breadcrumbs": true,
+    "mermaid_diagrams": true
+  }
+}

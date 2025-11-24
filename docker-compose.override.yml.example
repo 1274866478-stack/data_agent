@@ -1,0 +1,68 @@
+# Docker Compose Override 示例文件
+# 用于本地开发环境的端口自定义配置
+#
+# 使用方法:
+# 1. 复制此文件为 docker-compose.override.yml
+#    cp docker-compose.override.yml.example docker-compose.override.yml
+#
+# 2. 根据需要修改端口映射
+#
+# 3. 运行 docker-compose up -d
+#    Docker Compose会自动合并 docker-compose.yml 和 docker-compose.override.yml
+#
+# 注意: docker-compose.override.yml 已在 .gitignore 中，不会被提交到Git
+
+version: '3.8'
+
+services:
+  # 前端服务 - 如果3000端口被占用，可以改为其他端口
+  frontend:
+    ports:
+      - "3001:3000"  # 使用3001代替3000
+    # 如果需要调试，可以添加环境变量
+    # environment:
+    #   - NODE_ENV=development
+    #   - DEBUG=*
+
+  # 后端服务 - 如果8004端口被占用，可以改为其他端口
+  backend:
+    ports:
+      - "8005:8004"  # 使用8005代替8004
+    # 如果需要调试，可以添加环境变量
+    # environment:
+    #   - DEBUG=true
+    #   - LOG_LEVEL=debug
+
+  # PostgreSQL - 如果5432端口被占用，可以改为其他端口
+  db:
+    ports:
+      - "5433:5432"  # 使用5433代替5432
+
+  # MinIO - 如果9000/9001端口被占用，可以改为其他端口
+  storage:
+    ports:
+      - "9002:9000"  # API端口: 使用9002代替9000
+      - "9003:9001"  # Console端口: 使用9003代替9001
+
+  # ChromaDB - 如果8001端口被占用，可以改为其他端口
+  vector_db:
+    ports:
+      - "8002:8001"  # 使用8002代替8001
+
+# 如果需要添加额外的卷挂载（例如本地开发时的代码热重载）
+# volumes:
+#   backend_dev:
+#     driver: local
+#     driver_opts:
+#       type: none
+#       o: bind
+#       device: ./backend
+
+# 如果需要自定义网络配置
+# networks:
+#   dataagent-network:
+#     driver: bridge
+#     ipam:
+#       config:
+#         - subnet: 172.28.0.0/16
+

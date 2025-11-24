@@ -1,0 +1,229 @@
+# <!-- Powered by BMAD™ Core -->
+# QA Gate Decision - Epic 3.STORY-3.1: 租户隔离的查询API
+
+decision: CONCERNS
+story_id: STORY-3.1
+story_title: "租户隔离的查询API"
+epic_id: Epic-3
+epic_title: "租户隔离的 Agentic 核心"
+review_date: "2025-11-17"
+reviewer: "Quinn - Test Architect"
+review_slug: "tenant-query-api-qa-review"
+
+# 验收标准评估
+acceptance_criteria:
+  criteria_1:
+    description: "实现租户隔离的 /api/v1/query 端点"
+    status: "PASS"
+    score: 85
+    notes: "端点功能完整，线程安全需改进"
+    evidence:
+      - "backend/src/app/api/v1/endpoints/query.py 实现完整"
+      - "查询处理流程完整，支持多种查询类型"
+      - "辅助端点（状态查询、缓存管理）实现完整"
+
+  criteria_2:
+    description: "所有查询必须验证 JWT Token 和 tenant_id"
+    status: "PASS"
+    score: 80
+    notes: "JWT验证完整，用户ID获取逻辑需修复"
+    evidence:
+      - "tenant_context.py 中间件完整实现"
+      - "JWT Token解析和验证正确"
+      - "租户状态检查机制完整"
+      - "问题：用户ID获取逻辑错误，使用tenant.id而非user_id"
+
+  criteria_3:
+    description: "实现查询请求和响应的 V3 格式"
+    status: "PASS"
+    score: 80
+    notes: "数据模型完整，安全验证需加强"
+    evidence:
+      - "QueryRequest和QueryResponseV3模型完整"
+      - "响应格式符合V3规范"
+      - "支持XAI可解释性日志"
+      - "问题：SQL注入检测过于简单"
+
+  criteria_4:
+    description: "集成租户上下文中间件"
+    status: "PASS"
+    score: 75
+    notes: "中间件集成完成，存在并发安全问题"
+    evidence:
+      - "tenant_context中间件正确应用"
+      - "全局租户上下文管理器实现"
+      - "装饰器支持完整"
+      - "问题：全局上下文可能存在线程安全问题"
+
+  criteria_5:
+    description: "实现查询限流和安全防护"
+    status: "PASS"
+    score: 85
+    notes: "多层级限流完整，安全检测需加强"
+    evidence:
+      - "租户级、用户级、IP级限流实现"
+      - "SQL注入检测基础实现"
+      - "输入验证机制完整"
+      - "问题：SQL注入检测逻辑可被绕过"
+
+  criteria_6:
+    description: "提供详细的错误处理和日志记录"
+    status: "PASS"
+    score: 70
+    notes: "基础错误处理完整，缺乏重试机制"
+    evidence:
+      - "结构化错误响应实现"
+      - "详细的查询日志记录"
+      - "XAI可解释性日志生成"
+      - "问题：外部服务调用缺乏重试机制"
+
+  criteria_7:
+    description: "支持查询状态跟踪和结果缓存"
+    status: "PASS"
+    score: 80
+    notes: "状态管理完整，缓存策略可优化"
+    evidence:
+      - "查询状态跟踪完整"
+      - "查询哈希缓存实现"
+      - "状态查询和缓存管理端点完整"
+      - "缓存查询逻辑可优化"
+
+  criteria_8:
+    description: "实现 API 响应时间监控"
+    status: "PASS"
+    score: 85
+    notes: "性能监控机制完整"
+    evidence:
+      - "响应时间记录精确到毫秒"
+      - "性能指标收集完整"
+      - "查询生命周期跟踪完整"
+
+# 质量指标评分
+quality_metrics:
+  functional_completeness: 95
+  security_compliance: 75
+  code_quality: 80
+  test_coverage: 70
+  performance: 80
+  documentation: 90
+  overall_score: 80
+
+# 发现的问题
+issues_found:
+  high_priority:
+    -
+      type: "security_vulnerability"
+      description: "SQL注入检测过于简单，容易被绕过"
+      location: "backend/src/app/schemas/query.py:87-96"
+      severity: "high"
+      recommendation: "实现更复杂的SQL注入检测和语义分析"
+
+    -
+      type: "thread_safety"
+      description: "全局租户上下文存在并发安全问题"
+      location: "backend/src/app/middleware/tenant_context.py"
+      severity: "high"
+      recommendation: "实现线程局部存储或请求级上下文隔离"
+
+    -
+      type: "logic_error"
+      description: "用户ID获取逻辑错误，使用tenant.id而非真实user_id"
+      location: "backend/src/app/api/v1/endpoints/query.py:263,341"
+      severity: "high"
+      recommendation: "从JWT claims中正确提取user_id"
+
+  medium_priority:
+    -
+      type: "data_security"
+      description: "敏感数据（连接字符串）可能明文存储"
+      location: "backend/src/app/data/models.py:DataSourceConnection"
+      severity: "medium"
+      recommendation: "实现字段级加密存储"
+
+    -
+      type: "error_handling"
+      description: "数据库事务管理不完整，缺乏充分的事务回滚机制"
+      location: "backend/src/app/services/query_context.py:174,245"
+      severity: "medium"
+      recommendation: "实现完整的事务管理和异常处理"
+
+    -
+      type: "performance"
+      description: "缓存查询逻辑效率低下，缺乏连接池管理"
+      location: "backend/src/app/services/query_context.py"
+      severity: "medium"
+      recommendation: "优化缓存策略，实现数据库连接池"
+
+  low_priority:
+    -
+      type: "test_coverage"
+      description: "安全测试和性能测试覆盖不足"
+      location: "backend/tests/"
+      severity: "low"
+      recommendation: "增加安全测试和负载测试用例"
+
+# 测试结果
+test_results:
+  unit_tests:
+    status: "PASS"
+    coverage: "estimated 70%"
+    notes: "基础功能测试完整，缺乏边界条件测试"
+
+  integration_tests:
+    status: "PASS"
+    coverage: "estimated 65%"
+    notes: "多租户场景测试完整，外部服务集成测试有限"
+
+  security_tests:
+    status: "CONCERNS"
+    coverage: "estimated 40%"
+    notes: "基础安全测试完成，缺乏渗透测试和深度安全分析"
+
+  performance_tests:
+    status: "PARTIAL"
+    coverage: "estimated 30%"
+    notes: "基本性能测试完成，缺乏大规模负载测试"
+
+# 决策理由
+decision_rationale: |
+  Story-3.1的租户隔离查询API在功能完整性方面表现优异，所有8个验收标准均已满足。
+  实现了完整的租户隔离机制、V3格式查询处理、状态跟踪和缓存管理，符合PRD V4要求。
+
+  然而，存在一些关键的安全和质量问题：
+  1. SQL注入防护机制过于简单，存在安全风险
+  2. 全局租户上下文的线程安全问题可能导致数据泄露
+  3. 用户ID获取逻辑错误影响身份识别准确性
+  4. 敏感数据存储和错误处理机制需要改进
+
+  这些问题虽然不影响基本功能，但在生产环境中会带来严重风险，因此给予CONCERNS决策。
+
+# 发布建议
+release_recommendation: |
+  建议在修复高优先级问题后进入集成测试阶段：
+  1. 立即修复SQL注入检测机制
+  2. 解决线程安全和用户ID逻辑问题
+  3. 加强敏感数据保护和错误处理
+  4. 补充安全测试和性能测试
+
+  完成这些改进后，可以安全地进入生产环境部署阶段。
+
+# 审批状态
+approvals:
+  qa_reviewer: "Quinn - Test Architect"
+  qa_decision: "CONCERNS"
+  product_owner: "待审批"
+  tech_lead: "待审批"
+  final_approval: "待定"
+
+# 相关文档
+related_documents:
+  story_file: "docs/stories/Story-3.1-租户隔离的查询API.md"
+  qa_report: "docs/QA/Story-3.1-租户隔离的查询API-QA审查报告.md"
+  test_files:
+    - "backend/tests/test_query_isolation_v3.py"
+    - "backend/tests/test_query_integration.py"
+  implementation_files:
+    - "backend/src/app/api/v1/endpoints/query.py"
+    - "backend/src/app/middleware/tenant_context.py"
+    - "backend/src/app/services/query_context.py"
+    - "backend/src/app/schemas/query.py"

@@ -1,0 +1,148 @@
+version: '3.8'
+
+services:
+  # Frontend Next.js Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: dataagent-frontend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:8004
+      - NEXT_PUBLIC_MINIO_ENDPOINT=http://localhost:9000
+      - NEXT_PUBLIC_MINIO_BUCKET=dataagent-files
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - dataagent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Backend FastAPI Application
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dataagent-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/dataagent
+      - DATABASE_SYNC_URL=postgresql://postgres:password@db:5432/dataagent
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_SECURE=false
+      - CHROMA_HOST=vector_db
+      - CHROMA_PORT=8000
+      - ZHIPUAI_API_KEY=${ZHIPUAI_API_KEY}
+      - CLERK_JWT_PUBLIC_KEY=${CLERK_JWT_PUBLIC_KEY:-test_public_key_placeholder}
+      - CLERK_API_URL=${CLERK_API_URL:-https://api.clerk.dev}
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - SECRET_KEY=${SECRET_KEY}
+      - CORS_ORIGINS=["http://localhost:3000", "http://127.0.0.1:3000"]
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./backend:/app
+      - backend_uploads:/app/uploads
+    ports:
+      - "8004:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      storage:
+        condition: service_started
+      vector_db:
+        condition: service_started
+    networks:
+      - dataagent-network
+
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: dataagent-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dataagent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dataagent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dataagent-network
+
+  # MinIO Storage Service
+  storage:
+    image: minio/minio:latest
+    container_name: dataagent-minio
+    restart: unless-stopped
+    command: server /data --console-address ':9001'
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - dataagent-network
+
+  # ChromaDB Vector Database
+  vector_db:
+    image: chromadb/chroma:latest
+    container_name: dataagent-chroma
+    restart: unless-stopped
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+    ports:
+      - "8001:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - dataagent-network
+
+volumes:
+  postgres_data:
+    driver: local
+  minio_data:
+    driver: local
+  chroma_data:
+    driver: local
+  backend_uploads:
+    driver: local
+
+networks:
+  dataagent-network:
+    driver: bridge
