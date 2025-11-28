@@ -56,7 +56,7 @@ const Logo: React.FC<LogoProps> = ({
 
   return (
     <div className={`logo-container logo-${size} logo-${variant} ${className}`}>
-      <Image {...logoProps} />
+      <Image {...logoProps} alt="Data Agent Logo" />
 
       {/* 可选的版本和SaaS标识 */}
       {(showVersion || showSaaS) && size !== 'small' && (

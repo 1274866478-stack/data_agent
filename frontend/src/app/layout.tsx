@@ -16,7 +16,9 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
-  const isDevelopmentMode = process.env.NODE_ENV === 'development'
+  // 支持 NODE_ENV 和 NEXT_PUBLIC_ENVIRONMENT 两种方式判断开发模式
+  const isDevelopmentMode = process.env.NODE_ENV === 'development' ||
+                            process.env.NEXT_PUBLIC_ENVIRONMENT === 'development'
 
   return (
     <html lang="zh-CN">

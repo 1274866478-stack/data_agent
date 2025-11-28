@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Plus, Menu, X, Settings, History, Database } from 'lucide-react'
+import { useEffect, useState, useRef } from 'react'
+import { Plus, Menu, X, Settings, History, Database, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
@@ -9,8 +9,10 @@ import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Input } from '@/components/ui/input'
 import { useChatStore } from '@/store/chatStore'
-import { MessageList } from './MessageList'
+import { MessageList, MessageListRef } from './MessageList'
 import { MessageInput } from './MessageInput'
+import { SearchPanel } from './SearchPanel'
+import { OfflineStatusIndicator } from './OfflineStatusIndicator'
 import { cn } from '@/lib/utils'
 
 interface ChatInterfaceProps {
@@ -20,6 +22,9 @@ interface ChatInterfaceProps {
 export function ChatInterface({ className }: ChatInterfaceProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sessionTitleFilter, setSessionTitleFilter] = useState('')
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false)
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
+  const messageListRef = useRef<MessageListRef>(null)
 
   const {
     sessions,
@@ -71,18 +76,46 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
     }
   }
 
+  // 处理搜索结果点击
+  const handleSearchResultClick = (sessionId: string, messageId?: string) => {
+    // 先切换到目标会话
+    if (currentSession?.id !== sessionId) {
+      switchSession(sessionId)
+    }
+
+    // 如果有消息ID，延迟设置高亮（等待会话切换完成）
+    if (messageId) {
+      setTimeout(() => {
+        setHighlightedMessageId(messageId)
+        messageListRef.current?.scrollToMessage(messageId)
+        // 3秒后清除高亮
+        setTimeout(() => setHighlightedMessageId(null), 3000)
+      }, 100)
+    }
+  }
+
   return (
     <div className={cn('flex h-full bg-background', className)}>
       {/* 侧边栏 */}
       <aside className="hidden md:flex w-80 flex-col border-r">
         <div className="p-4">
-          <Button
-            onClick={() => createSession()}
-            className="w-full justify-start"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            新建会话
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => createSession()}
+              className="flex-1 justify-start"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              新建会话
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setSearchPanelOpen(true)}
+              title="搜索对话"
+            >
+              <Search className="w-4 h-4" />
+            </Button>
+          </div>
 
           {/* 搜索框 */}
           <div className="mt-4">
@@ -91,6 +124,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
               value={sessionTitleFilter}
               onChange={(e) => setSessionTitleFilter(e.target.value)}
               className="text-sm"
+              aria-label="搜索会话"
             />
           </div>
         </div>
@@ -194,24 +228,45 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                 </SheetTrigger>
                 <SheetContent side="left" className="w-80 p-0">
                   <div className="h-full flex flex-col">
-                    <div className="p-4">
-                      <Button
-                        onClick={() => {
-                          createSession()
-                          setSidebarOpen(false)
-                        }}
-                        className="w-full justify-start"
-                      >
-                        <Plus className="w-4 h-4 mr-2" />
-                        新建会话
-                      </Button>
+                    <div className="p-4 space-y-3">
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => {
+                            createSession()
+                            setSidebarOpen(false)
+                          }}
+                          className="flex-1 justify-start"
+                        >
+                          <Plus className="w-4 h-4 mr-2" />
+                          新建会话
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => {
+                            setSidebarOpen(false)
+                            setSearchPanelOpen(true)
+                          }}
+                          title="搜索对话"
+                        >
+                          <Search className="w-4 h-4" />
+                        </Button>
+                      </div>
+
+                      {/* 移动端会话过滤 */}
+                      <Input
+                        placeholder="搜索会话..."
+                        value={sessionTitleFilter}
+                        onChange={(e) => setSessionTitleFilter(e.target.value)}
+                        className="text-sm"
+                      />
                     </div>
 
                     <Separator />
 
                     <ScrollArea className="flex-1 px-4">
                       <div className="space-y-2 py-4">
-                        {sessions.map((session) => (
+                        {filteredSessions.map((session) => (
                           <Card
                             key={session.id}
                             className={cn(
@@ -242,6 +297,11 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
                             </CardContent>
                           </Card>
                         ))}
+                        {filteredSessions.length === 0 && (
+                          <div className="text-center text-muted-foreground text-sm py-8">
+                            {sessionTitleFilter ? '没有找到匹配的会话' : '暂无会话'}
+                          </div>
+                        )}
                       </div>
                     </ScrollArea>
                   </div>
@@ -261,6 +321,9 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
 
             {/* 右侧操作按钮 */}
             <div className="flex items-center gap-2">
+              {/* 离线状态指示器 */}
+              <OfflineStatusIndicator />
+
               {currentSession && (
                 <Button
                   variant="ghost"
@@ -292,7 +355,12 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
         )}
 
         {/* 消息列表 */}
-        <MessageList className="flex-1" />
+        <MessageList
+          ref={messageListRef}
+          className="flex-1"
+          messages={currentSession?.messages || []}
+          highlightedMessageId={highlightedMessageId}
+        />
 
         {/* 消息输入 */}
         <MessageInput onFileAttach={(files) => {
@@ -300,6 +368,31 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
           // 这里可以添加文件上传逻辑
         }} />
       </main>
+
+      {/* 搜索面板 - 桌面端 */}
+      {searchPanelOpen && (
+        <aside className="hidden md:block w-96 border-l">
+          <SearchPanel
+            isOpen={searchPanelOpen}
+            onClose={() => setSearchPanelOpen(false)}
+            onResultClick={handleSearchResultClick}
+          />
+        </aside>
+      )}
+
+      {/* 搜索面板 - 移动端 */}
+      <Sheet open={searchPanelOpen} onOpenChange={setSearchPanelOpen}>
+        <SheetContent side="right" className="w-full sm:w-96 p-0 md:hidden">
+          <SearchPanel
+            isOpen={searchPanelOpen}
+            onClose={() => setSearchPanelOpen(false)}
+            onResultClick={(sessionId, messageId) => {
+              handleSearchResultClick(sessionId, messageId)
+              setSearchPanelOpen(false)
+            }}
+          />
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

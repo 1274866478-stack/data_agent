@@ -139,7 +139,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     <div className="space-y-6">
       {/* 错误提示 */}
       {error && (
-        <Alert variant="error" className="flex justify-between items-center">
+        <Alert variant="destructive" className="flex justify-between items-center">
           <span>{error}</span>
           <Button size="sm" variant="ghost" onClick={clearError}>
             ✕

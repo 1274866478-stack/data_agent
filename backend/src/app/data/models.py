@@ -3,15 +3,19 @@ SQLAlchemy 数据模型定义
 Tenant, DataSourceConnection, KnowledgeDocument 模型
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Enum, BigInteger
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Enum, BigInteger, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, timezone
 import uuid
 import enum
 
 from .database import Base
+
+# 使用通用的 JSON 类型代替 JSONB，以支持 SQLite 和 PostgreSQL
+# 在 PostgreSQL 中会自动使用 JSONB
+JSONB = JSON
 from ..services.encryption_service import encryption_service
 from ...services.database_factory import DatabaseAdapterFactory
 

@@ -184,12 +184,8 @@ export const highlightSearchTerm = (text: string, searchTerm: string) => {
   const parts = text.split(regex);
 
   return parts.map((part, index) =>
-    regex.test(part) ? (
-      <mark key={index} className="bg-yellow-200 px-1 rounded">
-        {part}
-      </mark>
-    ) : part
-  );
+    regex.test(part) ? `<mark class="bg-yellow-200 px-1 rounded">${part}</mark>` : part
+  ).join('');
 };
 
 // 溯源类型图标映射

@@ -243,7 +243,7 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
       {validationErrors.length > 0 && (
         <div className="mt-4">
           {validationErrors.map((error, index) => (
-            <Alert key={index} variant="error" className="mb-2">
+            <Alert key={index} variant="destructive" className="mb-2">
               {error}
             </Alert>
           ))}

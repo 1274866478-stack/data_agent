@@ -170,7 +170,7 @@ class ThreatDetector:
             r'(;|\||&|`|\$\()\s*(rm|del|format|shutdown|reboot)',
 
             # LDAP注入
-            r'(\*\)(\(\!\))|(\*\)\()',
+            r'(\*\)\(\!\))|(\*\)\()',
         ]
 
         self.rate_limit_threshold = 100  # 每分钟最大请求数

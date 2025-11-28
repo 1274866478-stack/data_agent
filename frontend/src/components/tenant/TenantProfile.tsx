@@ -51,7 +51,6 @@ export const TenantProfile: React.FC<TenantProfileProps> = ({
     return (
       <ErrorMessage
         message={error}
-        onRetry={fetchTenantProfile}
       />
     )
   }
@@ -166,8 +165,6 @@ export const TenantProfile: React.FC<TenantProfileProps> = ({
         {error && (
           <ErrorMessage
             message={error}
-            onRetry={fetchTenantProfile}
-            className="mt-4"
           />
         )}
       </CardContent>

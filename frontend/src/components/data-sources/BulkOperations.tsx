@@ -136,7 +136,7 @@ export const BulkOperations: React.FC<BulkOperationsProps> = ({
     if (selectedItems.length === 0) return
 
     try {
-      await bulkDelete(selectedItems, activeTab)
+      await bulkDelete(selectedItems, activeTab as 'document' | 'database')
     } catch (error) {
       console.error('批量删除失败:', error)
     }
@@ -268,22 +268,7 @@ export const BulkOperations: React.FC<BulkOperationsProps> = ({
         open={showDeleteDialog}
         onOpenChange={setShowDeleteDialog}
         title="确认批量删除"
-        description={
-          <div>
-            <p>您即将删除以下 {activeTab === 'databases' ? '数据库连接' : '文档'}：</p>
-            <ul className="mt-2 list-disc list-inside text-sm text-gray-600">
-              {getSelectedItemNames().map((name, index) => (
-                <li key={index}>{name}</li>
-              ))}
-              {selectedItems.length > 3 && (
-                <li>等 {selectedItems.length} 项</li>
-              )}
-            </ul>
-            <p className="mt-3 text-red-600 font-medium">
-              ⚠️ 此操作不可恢复，请确认是否继续？
-            </p>
-          </div>
-        }
+        description={`您即将删除以下 ${activeTab === 'databases' ? '数据库连接' : '文档'}：${getSelectedItemNames().slice(0, 3).join(', ')}${selectedItems.length > 3 ? ` 等 ${selectedItems.length} 项` : ''}。⚠️ 此操作不可恢复，请确认是否继续？`}
         confirmText={`删除 ${selectedItems.length} 项`}
         onConfirm={handleBulkDelete}
         isLoading={isLoading}

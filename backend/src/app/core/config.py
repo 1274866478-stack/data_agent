@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     openrouter_app_name: str = "Data Agent"  # 可选，用于OpenRouter排名
 
     # Clerk 认证配置
-    clerk_jwt_public_key: str  # Clerk JWT公钥
+    clerk_jwt_public_key: Optional[str] = None  # Clerk JWT公钥（开发环境可选）
     clerk_domain: str = "clerk.accounts.dev"  # Clerk域名（开发环境）
     clerk_api_key: Optional[str] = None  # Clerk API密钥（可选，用于高级功能）
     clerk_secret_key: Optional[str] = None  # Clerk Secret Key（可选）
@@ -92,9 +92,12 @@ class Settings(BaseSettings):
     @validator("clerk_jwt_public_key")
     def validate_clerk_jwt_public_key(cls, v, values):
         """验证Clerk JWT公钥"""
-        # 在开发/测试环境中允许测试密钥
+        # 在开发环境中允许为空
         environment = values.get('environment', 'development')
-        if environment in ('development', 'testing') and v in ('test_public_key_placeholder', 'test_key'):
+        if environment == 'development' and v is None:
+            return v
+        # 在测试环境中允许测试密钥
+        if environment in ('testing',) and v in ('test_public_key_placeholder', 'test_key'):
             return v
         if not v or not v.startswith(('-----BEGIN PUBLIC KEY-----', 'ssh-rsa')):
             raise ValueError("CLERK_JWT_PUBLIC_KEY must be a valid PEM format public key")
@@ -106,6 +109,20 @@ class Settings(BaseSettings):
         # 测试环境允许测试密钥
         environment = values.get('environment', 'development')
         if environment in ('testing',) and v.startswith('test_'):
+            return v
+
+        # 开发环境暂时允许较短的密钥进行测试
+        if environment == 'development':
+            if v == "minioadmin":
+                raise ValueError(
+                    'MINIO_ACCESS_KEY cannot use default value "minioadmin". '
+                    "Please set a strong access key via environment variable."
+                )
+            if len(v) < 8:  # 开发环境暂时降低要求
+                raise ValueError(
+                    "MINIO_ACCESS_KEY must be at least 8 characters long for development. "
+                    "Use 'python scripts/generate_keys.py' to generate a strong key."
+                )
             return v
 
         if v == "minioadmin":
@@ -175,6 +192,20 @@ class Settings(BaseSettings):
         # 测试环境允许测试密钥
         environment = values.get('environment', 'development')
         if environment in ('testing',) and v.startswith('test_'):
+            return v
+
+        # 开发环境暂时允许较短的密钥进行测试
+        if environment == 'development':
+            if v == "minioadmin":
+                raise ValueError(
+                    'MINIO_SECRET_KEY cannot use default value "minioadmin". '
+                    "Please set a strong secret key via environment variable."
+                )
+            if len(v) < 16:  # 开发环境暂时降低要求
+                raise ValueError(
+                    "MINIO_SECRET_KEY must be at least 16 characters long for development. "
+                    "Use 'python scripts/generate_keys.py' to generate a strong key."
+                )
             return v
 
         if v == "minioadmin":

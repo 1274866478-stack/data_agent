@@ -68,7 +68,7 @@ export function Header({ onSidebarToggle, sidebarCollapsed }: HeaderProps) {
 
             <div className="flex items-center gap-2 pl-2 border-l border-border">
               <div className="hidden md:block text-right">
-                <p className="text-sm font-medium">{user?.name || '用户'}</p>
+                <p className="text-sm font-medium">{user?.full_name || user?.email || '用户'}</p>
                 <p className="text-xs text-muted-foreground">{user?.email}</p>
               </div>
               <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">

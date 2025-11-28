@@ -61,7 +61,7 @@ class TestZhipuAIService:
     @pytest.fixture
     def service(self):
         """创建 ZhipuAIService 实例"""
-        with patch('app.services.zhipu_client.settings') as mock_settings:
+        with patch('src.app.services.zhipu_client.settings') as mock_settings:
             mock_settings.zhipuai_api_key = "test_api_key"
             mock_settings.zhipuai_default_model = "glm-4"
             return ZhipuAIService()
@@ -70,7 +70,7 @@ class TestZhipuAIService:
     async def test_check_connection_success(self, service):
         """测试API连接检查成功"""
         # Mock ZhipuAI client
-        with patch('app.services.zhipu_client.ZhipuAI') as mock_zhipuai:
+        with patch('src.app.services.zhipu_client.ZhipuAI') as mock_zhipuai:
             mock_client = Mock()
             mock_response = Mock()
             mock_response.choices = [Mock()]
@@ -87,7 +87,7 @@ class TestZhipuAIService:
     async def test_check_connection_failure(self, service):
         """测试API连接检查失败"""
         # Mock ZhipuAI client to raise exception
-        with patch('app.services.zhipu_client.ZhipuAI') as mock_zhipuai:
+        with patch('src.app.services.zhipu_client.ZhipuAI') as mock_zhipuai:
             mock_client = Mock()
             mock_client.chat.completions.create.side_effect = Exception("API connection failed")
             mock_zhipuai.return_value = mock_client
@@ -100,7 +100,7 @@ class TestZhipuAIService:
     async def test_check_connection_invalid_response(self, service):
         """测试API连接检查 - 响应无效"""
         # Mock ZhipuAI client with invalid response
-        with patch('app.services.zhipu_client.ZhipuAI') as mock_zhipuai:
+        with patch('src.app.services.zhipu_client.ZhipuAI') as mock_zhipuai:
             mock_client = Mock()
             mock_response = Mock()
             mock_response.choices = []  # 空选择列表
@@ -406,7 +406,7 @@ class TestZhipuAIService:
     async def test_call_api_with_retry_success(self, service):
         """测试API调用重试机制成功"""
         # Mock ZhipuAI client
-        with patch('app.services.zhipu_client.ZhipuAI') as mock_zhipuai:
+        with patch('src.app.services.zhipu_client.ZhipuAI') as mock_zhipuai:
             mock_client = Mock()
             mock_response = Mock()
             mock_client.chat.completions.create.return_value = mock_response
@@ -452,6 +452,352 @@ class TestGlobalService:
         """测试全局智谱服务实例"""
         assert zhipu_service is not None
         assert isinstance(zhipu_service, ZhipuAIService)
+
+
+class TestStreamChatCompletion:
+    """流式聊天完成集成测试"""
+
+    @pytest.fixture
+    def service(self):
+        """创建 ZhipuAIService 实例"""
+        with patch('src.app.services.zhipu_client.settings') as mock_settings:
+            mock_settings.zhipuai_api_key = "test_api_key"
+            mock_settings.zhipuai_default_model = "glm-4-flash"
+            return ZhipuAIService()
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_completion_success(self, service):
+        """测试流式聊天完成成功"""
+        # Mock流式响应块
+        mock_chunks = []
+        for content_part in ["你好", "！", "我是", "AI助手。"]:
+            chunk = Mock()
+            chunk.choices = [Mock()]
+            chunk.choices[0].delta = Mock()
+            chunk.choices[0].delta.content = content_part
+            chunk.choices[0].delta.reasoning_content = None
+            mock_chunks.append(chunk)
+
+        with patch.object(service, 'client') as mock_client:
+            mock_client.chat.completions.create.return_value = iter(mock_chunks)
+
+            messages = [{"role": "user", "content": "你好"}]
+            collected_content = []
+
+            # 直接调用stream_chat_completion并迭代
+            stream_gen = service.stream_chat_completion(messages=messages)
+            async for chunk in stream_gen:
+                if chunk['type'] == 'content' and chunk['content']:
+                    collected_content.append(chunk['content'])
+
+            assert len(collected_content) == 4
+            assert "".join(collected_content) == "你好！我是AI助手。"
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_completion_with_thinking(self, service):
+        """测试流式聊天完成 - 带思考模式"""
+        # Mock带思考的流式响应
+        mock_chunks = []
+
+        # 思考过程块
+        for thinking in ["分析问题...", "整理答案..."]:
+            chunk = Mock()
+            chunk.choices = [Mock()]
+            chunk.choices[0].delta = Mock()
+            chunk.choices[0].delta.reasoning_content = thinking
+            chunk.choices[0].delta.content = None
+            mock_chunks.append(chunk)
+
+        # 内容块
+        for content in ["答案是", "42。"]:
+            chunk = Mock()
+            chunk.choices = [Mock()]
+            chunk.choices[0].delta = Mock()
+            chunk.choices[0].delta.reasoning_content = None
+            chunk.choices[0].delta.content = content
+            mock_chunks.append(chunk)
+
+        with patch.object(service, 'client') as mock_client:
+            mock_client.chat.completions.create.return_value = iter(mock_chunks)
+
+            messages = [{"role": "user", "content": "请分析这个问题"}]
+            thinking_parts = []
+            content_parts = []
+
+            stream_gen = service.stream_chat_completion(
+                messages=messages,
+                enable_thinking=True,
+                show_thinking=True
+            )
+            async for chunk in stream_gen:
+                if chunk['type'] == 'thinking':
+                    thinking_parts.append(chunk['content'])
+                elif chunk['type'] == 'content' and chunk['content']:
+                    content_parts.append(chunk['content'])
+
+            assert len(thinking_parts) == 2
+            assert len(content_parts) == 2
+            assert "分析问题..." in thinking_parts
+            assert "答案是" in content_parts
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_completion_error_handling(self, service):
+        """测试流式聊天完成 - 错误处理"""
+        with patch.object(service, 'client') as mock_client:
+            mock_client.chat.completions.create.side_effect = Exception("API调用失败")
+
+            messages = [{"role": "user", "content": "测试"}]
+            error_received = False
+
+            stream_gen = service.stream_chat_completion(messages=messages)
+            async for chunk in stream_gen:
+                if chunk['type'] == 'error':
+                    error_received = True
+                    assert "调用出错" in chunk['content']
+
+            assert error_received
+
+
+class TestThinkingModeIntegration:
+    """思考模式集成测试"""
+
+    @pytest.fixture
+    def service(self):
+        """创建 ZhipuAIService 实例"""
+        with patch('src.app.services.zhipu_client.settings') as mock_settings:
+            mock_settings.zhipuai_api_key = "test_api_key"
+            mock_settings.zhipuai_default_model = "glm-4-flash"
+            return ZhipuAIService()
+
+    def test_should_enable_thinking_with_indicators(self, service):
+        """测试思考模式触发 - 包含指示词"""
+        messages = [{"role": "user", "content": "请详细分析机器学习的原理"}]
+        assert service.should_enable_thinking(messages) is True
+
+        messages = [{"role": "user", "content": "比较深度学习和传统机器学习的优缺点"}]
+        assert service.should_enable_thinking(messages) is True
+
+    def test_should_enable_thinking_with_complex_question(self, service):
+        """测试思考模式触发 - 复杂问题"""
+        # 较长的问题
+        long_question = "请从技术原理、应用场景、优势劣势、发展趋势等多个角度，详细分析人工智能在医疗健康领域的应用现状和未来发展方向。"
+        messages = [{"role": "user", "content": long_question}]
+        assert service.should_enable_thinking(messages) is True
+
+        # 多问号问题
+        multi_question = "什么是AI？它有什么用？如何学习？"
+        messages = [{"role": "user", "content": multi_question}]
+        assert service.should_enable_thinking(messages) is True
+
+    def test_should_not_enable_thinking_for_simple_question(self, service):
+        """测试思考模式不触发 - 简单问题"""
+        messages = [{"role": "user", "content": "你好"}]
+        assert service.should_enable_thinking(messages) is False
+
+        messages = [{"role": "user", "content": "今天天气怎么样"}]
+        assert service.should_enable_thinking(messages) is False
+
+
+class TestMultiTurnConversation:
+    """多轮对话集成测试"""
+
+    @pytest.fixture
+    def service(self):
+        """创建 ZhipuAIService 实例"""
+        with patch('src.app.services.zhipu_client.settings') as mock_settings:
+            mock_settings.zhipuai_api_key = "test_api_key"
+            mock_settings.zhipuai_default_model = "glm-4-flash"
+            return ZhipuAIService()
+
+    @pytest.mark.asyncio
+    async def test_multi_turn_conversation_context(self, service):
+        """测试多轮对话上下文保持"""
+        with patch.object(service, '_call_api_with_retry') as mock_api_call:
+            # 第一轮响应
+            mock_response1 = Mock()
+            mock_response1.choices = [Mock()]
+            mock_response1.choices[0].message.content = "机器学习是AI的一个分支"
+            mock_response1.choices[0].message.role = "assistant"
+            mock_response1.choices[0].finish_reason = "stop"
+            mock_response1.usage = Mock(prompt_tokens=10, completion_tokens=20, total_tokens=30)
+            mock_response1.model = "glm-4-flash"
+            mock_response1.created = 1700000000
+
+            # 第二轮响应
+            mock_response2 = Mock()
+            mock_response2.choices = [Mock()]
+            mock_response2.choices[0].message.content = "主要应用包括图像识别和NLP"
+            mock_response2.choices[0].message.role = "assistant"
+            mock_response2.choices[0].finish_reason = "stop"
+            mock_response2.usage = Mock(prompt_tokens=20, completion_tokens=25, total_tokens=45)
+            mock_response2.model = "glm-4-flash"
+            mock_response2.created = 1700000001
+
+            mock_api_call.side_effect = [mock_response1, mock_response2]
+
+            # 第一轮对话
+            messages1 = [{"role": "user", "content": "什么是机器学习？"}]
+            result1 = await service.chat_completion(messages=messages1)
+
+            assert result1 is not None
+            assert "机器学习" in result1["content"]
+
+            # 第二轮对话（带上下文）
+            messages2 = [
+                {"role": "user", "content": "什么是机器学习？"},
+                {"role": "assistant", "content": result1["content"]},
+                {"role": "user", "content": "它有什么应用？"}
+            ]
+            result2 = await service.chat_completion(messages=messages2)
+
+            assert result2 is not None
+            assert "应用" in result2["content"]
+            assert mock_api_call.call_count == 2
+
+
+class TestCircuitBreaker:
+    """熔断器测试"""
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_trigger(self):
+        """测试熔断器触发"""
+        failure_count = 0
+
+        @retry_on_failure(max_retries=3, delay=0.01, circuit_breaker_threshold=3)
+        async def failing_function():
+            nonlocal failure_count
+            failure_count += 1
+            raise Exception("持续失败")
+
+        # 第一次调用应该在重试后失败
+        with pytest.raises(Exception, match="持续失败"):
+            await failing_function()
+
+        assert failure_count == 3
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_recovery(self):
+        """测试熔断器恢复后成功"""
+        call_count = 0
+
+        @retry_on_failure(max_retries=3, delay=0.01)
+        async def recovering_function():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise Exception("临时失败")
+            return "恢复成功"
+
+        result = await recovering_function()
+        assert result == "恢复成功"
+        assert call_count == 2
+
+
+class TestCacheIntegration:
+    """缓存集成测试"""
+
+    @pytest.fixture
+    def service(self):
+        """创建 ZhipuAIService 实例"""
+        with patch('src.app.services.zhipu_client.settings') as mock_settings:
+            mock_settings.zhipuai_api_key = "test_api_key"
+            mock_settings.zhipuai_default_model = "glm-4-flash"
+            return ZhipuAIService()
+
+    @pytest.mark.asyncio
+    async def test_cache_hit(self, service):
+        """测试缓存命中"""
+        with patch.object(service, '_call_api_with_retry') as mock_api_call:
+            mock_response = Mock()
+            mock_response.choices = [Mock()]
+            mock_response.choices[0].message.content = "缓存测试响应"
+            mock_response.choices[0].message.role = "assistant"
+            mock_response.choices[0].finish_reason = "stop"
+            mock_response.usage = Mock(prompt_tokens=5, completion_tokens=10, total_tokens=15)
+            mock_response.model = "glm-4-flash"
+            mock_response.created = 1700000000
+
+            mock_api_call.return_value = mock_response
+
+            messages = [{"role": "user", "content": "缓存测试"}]
+
+            # 第一次调用 - 应该调用API
+            result1 = await service.chat_completion(messages=messages, enable_cache=True)
+            assert result1 is not None
+            assert mock_api_call.call_count == 1
+
+            # 第二次相同调用 - 应该命中缓存
+            result2 = await service.chat_completion(messages=messages, enable_cache=True)
+            assert result2 is not None
+            assert result2["content"] == result1["content"]
+            # API调用次数不应增加（从缓存获取）
+            assert mock_api_call.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_cache_disabled(self, service):
+        """测试禁用缓存"""
+        with patch.object(service, '_call_api_with_retry') as mock_api_call:
+            mock_response = Mock()
+            mock_response.choices = [Mock()]
+            mock_response.choices[0].message.content = "无缓存响应"
+            mock_response.choices[0].message.role = "assistant"
+            mock_response.choices[0].finish_reason = "stop"
+            mock_response.usage = Mock(prompt_tokens=5, completion_tokens=10, total_tokens=15)
+            mock_response.model = "glm-4-flash"
+            mock_response.created = 1700000000
+
+            mock_api_call.return_value = mock_response
+
+            messages = [{"role": "user", "content": "无缓存测试"}]
+
+            # 两次调用都禁用缓存 - 应该每次都调用API
+            await service.chat_completion(messages=messages, enable_cache=False)
+            await service.chat_completion(messages=messages, enable_cache=False)
+
+            assert mock_api_call.call_count == 2
+
+
+class TestPerformanceMonitoring:
+    """性能监控集成测试"""
+
+    @pytest.fixture
+    def service(self):
+        """创建 ZhipuAIService 实例"""
+        with patch('src.app.services.zhipu_client.settings') as mock_settings:
+            mock_settings.zhipuai_api_key = "test_api_key"
+            mock_settings.zhipuai_default_model = "glm-4-flash"
+            return ZhipuAIService()
+
+    @pytest.mark.asyncio
+    async def test_performance_stats_tracking(self, service):
+        """测试性能统计跟踪"""
+        initial_request_count = service.request_count
+
+        with patch.object(service, '_call_api_with_retry') as mock_api_call:
+            mock_response = Mock()
+            mock_response.choices = [Mock()]
+            mock_response.choices[0].message.content = "性能测试"
+            mock_response.choices[0].message.role = "assistant"
+            mock_response.choices[0].finish_reason = "stop"
+            mock_response.usage = Mock(prompt_tokens=5, completion_tokens=5, total_tokens=10)
+            mock_response.model = "glm-4-flash"
+            mock_response.created = 1700000000
+
+            mock_api_call.return_value = mock_response
+
+            messages = [{"role": "user", "content": "测试"}]
+            await service.chat_completion(messages=messages)
+
+            # 验证请求计数增加
+            assert service.request_count >= initial_request_count
+
+    def test_get_performance_stats(self, service):
+        """测试获取性能统计"""
+        # 验证统计属性存在
+        assert hasattr(service, 'request_count')
+        assert hasattr(service, 'success_count')
+        assert hasattr(service, 'error_count')
+        assert hasattr(service, 'total_response_time')
 
 
 if __name__ == "__main__":

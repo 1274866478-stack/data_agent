@@ -129,7 +129,11 @@ class DocumentService:
             # 文件验证
             validation_result = self._validate_file(file_name, file_size, mime_type)
             if not validation_result["valid"]:
-                return validation_result
+                return {
+                    "success": False,
+                    "error": validation_result.get("error", "UPLOAD_001"),
+                    "message": validation_result.get("message", "文件验证失败")
+                }
 
             file_type = validation_result["file_type"]
 

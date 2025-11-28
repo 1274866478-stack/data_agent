@@ -293,7 +293,6 @@ export const TenantSettings: React.FC<TenantSettingsProps> = ({
           {error && (
             <ErrorMessage
               message={error}
-              className="mt-4"
             />
           )}
         </form>

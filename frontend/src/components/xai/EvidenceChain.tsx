@@ -493,20 +493,6 @@ export const EvidenceChain: React.FC<EvidenceChainProps> = ({
     );
   };
 
-  if (chains.length === 0 && Object.keys(evidenceNodes).length === 0) {
-    return (
-      <Card>
-        <CardContent className="py-8 text-center">
-          <LinkIcon className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-          <h3 className="text-lg font-medium mb-2">暂无证据链数据</h3>
-          <p className="text-muted-foreground">
-            当前答案没有详细的证据链分析数据。
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
   // 错误恢复处理
   const handleComponentError = useCallback((error: Error) => {
     console.error('EvidenceChain component error:', error);
@@ -527,6 +513,20 @@ export const EvidenceChain: React.FC<EvidenceChainProps> = ({
       setComponentError(null);
     };
   }, []);
+
+  if (chains.length === 0 && Object.keys(evidenceNodes).length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-8 text-center">
+          <LinkIcon className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+          <h3 className="text-lg font-medium mb-2">暂无证据链数据</h3>
+          <p className="text-muted-foreground">
+            当前答案没有详细的证据链分析数据。
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   // 如果有组件错误，显示错误状态
   if (componentError) {

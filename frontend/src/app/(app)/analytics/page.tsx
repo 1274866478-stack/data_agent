@@ -85,7 +85,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* 错误信息 */}
-      <ErrorMessage message={error} />
+      {error && <ErrorMessage message={error} />}
 
       {/* 关键指标卡片 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -68,12 +68,12 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
   const handleDownload = async () => {
     try {
       const downloadUrl = await getDocumentDownloadUrl(document.id)
-      const link = document.createElement('a')
+      const link = window.document.createElement('a')
       link.href = downloadUrl
       link.download = document.file_name
-      document.body.appendChild(link)
+      window.document.body.appendChild(link)
       link.click()
-      document.body.removeChild(link)
+      window.document.body.removeChild(link)
     } catch (error) {
       console.error('Download failed:', error)
       setError('下载失败')
@@ -196,7 +196,7 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
           ) : error ? (
             <div className="flex flex-col items-center justify-center h-96 space-y-4">
               <div className="text-6xl">❌</div>
-              <Alert variant="error">
+              <Alert variant="destructive">
                 <p className="font-medium">预览加载失败</p>
                 <p className="text-sm mt-1">{error}</p>
               </Alert>

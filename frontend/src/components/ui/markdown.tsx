@@ -18,9 +18,10 @@ export function Markdown({ content, className }: MarkdownProps) {
         remarkPlugins={[remarkGfm]}
         components={{
           // 自定义代码块渲染
-          code: ({ node, inline, className, children, ...props }) => {
+          code: ({ className, children, ...props }: any) => {
             const match = /language-(\w+)/.exec(className || '')
             const language = match ? match[1] : ''
+            const inline = className?.includes('inline-')
 
             if (!inline && language) {
               return (

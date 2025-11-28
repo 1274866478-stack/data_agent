@@ -68,7 +68,6 @@ export const TenantStats: React.FC<TenantStatsProps> = ({
     return (
       <ErrorMessage
         message={error}
-        onRetry={fetchTenantStats}
       />
     )
   }
@@ -243,7 +242,6 @@ export const TenantStats: React.FC<TenantStatsProps> = ({
       {error && (
         <ErrorMessage
           message={error}
-          onRetry={fetchTenantStats}
         />
       )}
     </div>

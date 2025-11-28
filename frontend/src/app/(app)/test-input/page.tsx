@@ -26,13 +26,13 @@ export default function TestInputPage() {
         {/* 调试信息 */}
         <div className="bg-gray-100 p-4 rounded-lg space-y-2 text-sm font-mono">
           <div>
-            <strong>输入内容:</strong> "{input}"
+            <strong>输入内容:</strong> &quot;{input}&quot;
           </div>
           <div>
             <strong>输入长度:</strong> {input.length}
           </div>
           <div>
-            <strong>Trim后内容:</strong> "{input.trim()}"
+            <strong>Trim后内容:</strong> &quot;{input.trim()}&quot;
           </div>
           <div>
             <strong>Trim后长度:</strong> {input.trim().length}

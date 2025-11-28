@@ -4,12 +4,11 @@ API v1 版本路由包
 
 from fastapi import APIRouter
 from .endpoints import health, tenants, documents, data_sources, config, test, llm, auth, upload, reasoning
+from .endpoints import performance_monitoring
 # 暂时禁用security端点，因为编码问题
 # from .endpoints import security
 # 暂时禁用query端点，因为QueryService未定义
 # from .endpoints import query
-# 暂时禁用performance_monitoring端点，因为导入错误
-# from .endpoints import performance_monitoring
 # 暂时禁用rag端点，因为导入错误
 # from .endpoints import rag
 
@@ -44,8 +43,8 @@ api_router.include_router(reasoning.router, tags=["Reasoning"])
 # 新增查询端点 - Story 3.1 - 暂时禁用
 # api_router.include_router(query.router, tags=["Query"])
 
-# 新增性能监控端点 - Story 3.2 Enhancement - 暂时禁用
-# api_router.include_router(performance_monitoring.router, prefix="/performance", tags=["Performance Monitoring"])
+# 新增性能监控端点 - Story 3.2 Enhancement
+api_router.include_router(performance_monitoring.router, prefix="/performance", tags=["Performance Monitoring"])
 
 # 新增RAG服务端点 - Story 3.3 - 暂时禁用
 # api_router.include_router(rag.router, tags=["RAG"])

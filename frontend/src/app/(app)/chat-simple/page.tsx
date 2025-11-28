@@ -9,7 +9,8 @@ import { useChatStore } from '@/store/chatStore'
 
 export default function SimpleChatPage() {
   const [input, setInput] = useState('')
-  const { sendMessage, currentSession, createSession, messages, isLoading } = useChatStore()
+  const { sendMessage, currentSession, createSession, isLoading } = useChatStore()
+  const messages = currentSession?.messages || []
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return

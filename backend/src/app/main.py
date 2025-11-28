@@ -22,6 +22,7 @@ from .data.database import check_database_connection, create_tables, log_pool_he
 from .services.minio_client import minio_service
 from .services.chromadb_client import chromadb_service
 from .services.zhipu_client import zhipu_service
+from .services.query_performance_monitor import query_perf_monitor
 from ..services.rag_sql_service import RAGSQLService
 from .api.v1 import api_router
 
@@ -135,12 +136,27 @@ async def lifespan(app: FastAPI):
         if settings.environment == "production":
             raise
 
+    # 5. 启动性能监控服务
+    try:
+        query_perf_monitor.start_monitoring()
+        await query_perf_monitor.resource_monitor.start_background_monitoring(interval_seconds=30)
+        logger.info("Performance monitoring service started")
+    except Exception as e:
+        logger.error(f"Failed to start performance monitoring: {e}")
+
     logger.info("Data Agent Backend started successfully")
 
     yield
 
     # 关闭时执行
     logger.info("Shutting down Data Agent Backend...")
+
+    # 停止性能监控服务
+    try:
+        query_perf_monitor.stop_monitoring()
+        logger.info("Performance monitoring service stopped")
+    except Exception as e:
+        logger.error(f"Failed to stop performance monitoring: {e}")
 
     # 清理RAG-SQL服务资源
     try:
@@ -292,30 +308,52 @@ async def security_headers_middleware(request: Request, call_next):
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
     """
-    记录请求日志和性能指标
+    记录请求日志和性能指标，集成性能监控服务
     """
+    import uuid
+    import psutil
+
     start_time = time.time()
+    start_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
 
     # 生成请求ID
-    import uuid
-
     request_id = str(uuid.uuid4())[:8]
+
+    # 提取租户ID（如果存在）
+    tenant_id = request.headers.get("X-Tenant-ID", "unknown")
+
+    # 确定请求类型
+    path = str(request.url.path)
+    if "/query" in path or "/llm" in path:
+        query_type = "LLM_QUERY"
+    elif "/documents" in path:
+        query_type = "DOCUMENT"
+    elif "/data-sources" in path:
+        query_type = "DATA_SOURCE"
+    else:
+        query_type = "API_REQUEST"
 
     # 记录请求开始
     request_logger.log_request(
         method=request.method,
-        path=str(request.url.path),
+        path=path,
         client_ip=request.client.host if request.client else "unknown",
         user_agent=request.headers.get("user-agent"),
         request_id=request_id,
     )
 
+    error_occurred = False
+    error_message = None
+    status_code = 500
+
     try:
         # 处理请求
         response = await call_next(request)
+        status_code = response.status_code
 
         # 计算处理时间
         process_time = time.time() - start_time
+        end_memory = psutil.Process().memory_info().rss / 1024 / 1024
 
         # 添加性能头
         response.headers["X-Process-Time"] = str(process_time)
@@ -324,8 +362,8 @@ async def request_logging_middleware(request: Request, call_next):
         # 记录请求完成
         request_logger.log_response(
             method=request.method,
-            path=str(request.url.path),
-            status_code=response.status_code,
+            path=path,
+            status_code=status_code,
             duration=process_time,
             request_id=request_id,
         )
@@ -334,13 +372,17 @@ async def request_logging_middleware(request: Request, call_next):
 
     except Exception as e:
         # 记录错误
+        error_occurred = True
+        error_message = str(e)
         process_time = time.time() - start_time
+        end_memory = psutil.Process().memory_info().rss / 1024 / 1024
+
         logger.error(
-            f"Request failed: {request.method} {request.url.path} - {str(e)}",
+            f"Request failed: {request.method} {path} - {str(e)}",
             extra={
                 "event_type": "request_error",
                 "method": request.method,
-                "path": str(request.url.path),
+                "path": path,
                 "duration_ms": int(process_time * 1000),
                 "request_id": request_id,
                 "error_type": type(e).__name__,
@@ -348,6 +390,37 @@ async def request_logging_middleware(request: Request, call_next):
             },
         )
         raise
+
+    finally:
+        # 记录到性能监控服务（仅对API请求）
+        if path.startswith("/api/"):
+            try:
+                from .services.query_performance_monitor import QueryMetrics
+
+                process_time = time.time() - start_time
+                end_memory = psutil.Process().memory_info().rss / 1024 / 1024
+
+                metrics = QueryMetrics(
+                    query_id=request_id,
+                    tenant_id=tenant_id,
+                    query_type=query_type,
+                    query_hash=f"{request.method}:{path}",
+                    execution_time=process_time,
+                    sql_generation_time=0.0,
+                    sql_validation_time=0.0,
+                    result_processing_time=0.0,
+                    total_time=process_time,
+                    row_count=0,
+                    cache_hit=False,
+                    error=error_occurred,
+                    error_message=error_message,
+                    memory_usage=max(0, end_memory - start_memory),
+                    cpu_usage=psutil.cpu_percent(interval=None)
+                )
+
+                query_perf_monitor._record_query_metrics(metrics)
+            except Exception as perf_error:
+                logger.debug(f"性能指标记录失败: {perf_error}")
 
 
 # 全局异常处理器

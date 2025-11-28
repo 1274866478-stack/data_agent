@@ -338,8 +338,9 @@ describe('SearchPanel', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/找到 1 个结果/)).toBeInTheDocument()
-      expect(screen.getByText('(1 个会话, 0 条消息)')).toBeInTheDocument()
-      expect(screen.getByText('数据分析讨论')).toBeInTheDocument()
+      expect(screen.getByText(/1 个会话/)).toBeInTheDocument()
+      expect(screen.getByText(/0 条消息/)).toBeInTheDocument()
+      expect(screen.getAllByText('数据分析讨论').length).toBeGreaterThan(0)
       expect(screen.getByText('1 个结果')).toBeInTheDocument()
     })
   })
@@ -414,11 +415,14 @@ describe('SearchPanel', () => {
     await user.type(searchInput, '数据')
 
     await waitFor(() => {
-      expect(screen.getByText('数据分析讨论')).toBeInTheDocument()
+      expect(screen.getAllByText('数据分析讨论').length).toBeGreaterThan(0)
     })
 
-    const resultElement = screen.getByText('数据分析讨论')
-    await user.click(resultElement)
+    // 找到可点击的结果卡片 - 查找带有 p-2 类的 div（结果卡片）
+    const container = document.querySelector('.space-y-2')
+    const clickableCards = container?.querySelectorAll('div.p-2')
+    expect(clickableCards?.length).toBeGreaterThan(0)
+    await user.click(clickableCards![0] as HTMLElement)
 
     expect(mockOnResultClick).toHaveBeenCalledWith('session-1', undefined)
     expect(mockOnClose).toHaveBeenCalledTimes(1)

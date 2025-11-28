@@ -124,7 +124,7 @@ export default function DocumentsPage() {
 
         {/* 错误提示 */}
         {error && (
-          <Alert variant="error" className="mb-6 flex justify-between items-center">
+          <Alert variant="destructive" className="mb-6 flex justify-between items-center">
             <span>{error}</span>
             <Button size="sm" variant="ghost" onClick={clearError}>
               ✕

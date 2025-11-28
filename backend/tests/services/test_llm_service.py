@@ -431,3 +431,336 @@ class TestOpenRouterProvider:
             provider = OpenRouterProvider("test_key", "test_tenant")
             result = await provider.validate_connection()
             assert result is False
+
+
+class TestMultiTenantIsolation:
+    """多租户隔离测试"""
+
+    @pytest.fixture
+    def llm_service_instance(self):
+        """创建LLM服务实例"""
+        return LLMService()
+
+    @pytest.mark.asyncio
+    async def test_tenant_isolation_separate_providers(self, llm_service_instance):
+        """测试不同租户使用独立提供商实例"""
+        tenant_a = "tenant_a"
+        tenant_b = "tenant_b"
+
+        with patch('src.app.services.llm_service.ZhipuAI'):
+            # 为两个租户注册提供商
+            provider_a = llm_service_instance.register_provider(
+                tenant_a, LLMProvider.ZHIPU, "api_key_a"
+            )
+            provider_b = llm_service_instance.register_provider(
+                tenant_b, LLMProvider.ZHIPU, "api_key_b"
+            )
+
+            # 验证它们是不同的实例
+            assert provider_a is not provider_b
+            assert provider_a.tenant_id == tenant_a
+            assert provider_b.tenant_id == tenant_b
+            assert provider_a.api_key != provider_b.api_key
+
+    @pytest.mark.asyncio
+    async def test_tenant_isolation_config_separation(self, llm_service_instance):
+        """测试租户配置隔离"""
+        tenant_a = "tenant_a"
+        tenant_b = "tenant_b"
+
+        with patch('src.app.services.llm_service.ZhipuAI'), \
+             patch('src.app.services.llm_service.AsyncOpenAI'):
+            # 租户A只有Zhipu
+            llm_service_instance.register_provider(tenant_a, LLMProvider.ZHIPU, "key_a")
+
+            # 租户B有Zhipu和OpenRouter
+            llm_service_instance.register_provider(tenant_b, LLMProvider.ZHIPU, "key_b1")
+            llm_service_instance.register_provider(tenant_b, LLMProvider.OPENROUTER, "key_b2")
+
+            # 验证配置隔离
+            assert LLMProvider.ZHIPU.value in llm_service_instance.tenant_configs[tenant_a]
+            assert LLMProvider.OPENROUTER.value not in llm_service_instance.tenant_configs.get(tenant_a, {})
+
+            assert LLMProvider.ZHIPU.value in llm_service_instance.tenant_configs[tenant_b]
+            assert LLMProvider.OPENROUTER.value in llm_service_instance.tenant_configs[tenant_b]
+
+    @pytest.mark.asyncio
+    async def test_tenant_cannot_access_other_provider(self, llm_service_instance):
+        """测试租户无法访问其他租户的提供商"""
+        tenant_a = "tenant_a"
+        tenant_b = "tenant_b"
+
+        with patch('src.app.services.llm_service.ZhipuAI'):
+            llm_service_instance.register_provider(tenant_a, LLMProvider.ZHIPU, "key_a")
+
+            # 租户B尝试获取提供商应该返回None
+            provider = llm_service_instance.get_provider(tenant_b, LLMProvider.ZHIPU)
+            assert provider is None
+
+
+class TestProviderSwitching:
+    """提供商切换测试"""
+
+    @pytest.fixture
+    def llm_service_instance(self):
+        """创建LLM服务实例"""
+        return LLMService()
+
+    @pytest.fixture
+    def sample_messages(self):
+        """创建示例消息"""
+        return [LLMMessage(role="user", content="测试消息")]
+
+    @pytest.mark.asyncio
+    async def test_dynamic_provider_switching(self, llm_service_instance, sample_messages):
+        """测试动态切换提供商"""
+        tenant_id = "test_tenant"
+
+        # Mock响应
+        mock_zhipu_response = MagicMock()
+        mock_zhipu_response.choices[0].message.content = "来自智谱的响应"
+        mock_zhipu_response.choices[0].finish_reason = "stop"
+        mock_zhipu_response.model = "glm-4-flash"
+        mock_zhipu_response.usage.prompt_tokens = 10
+        mock_zhipu_response.usage.completion_tokens = 20
+        mock_zhipu_response.usage.total_tokens = 30
+        mock_zhipu_response.created = 1234567890
+
+        mock_openrouter_response = MagicMock()
+        mock_openrouter_response.choices[0].message.content = "来自OpenRouter的响应"
+        mock_openrouter_response.choices[0].finish_reason = "stop"
+        mock_openrouter_response.model = "google/gemini-2.0-flash-exp"
+        mock_openrouter_response.usage.prompt_tokens = 15
+        mock_openrouter_response.usage.completion_tokens = 25
+        mock_openrouter_response.usage.total_tokens = 40
+        mock_openrouter_response.created = 1234567890
+
+        with patch('src.app.services.llm_service.ZhipuAI') as mock_zhipu, \
+             patch('src.app.services.llm_service.AsyncOpenAI') as mock_openai:
+
+            # 配置Mock
+            mock_zhipu_client = MagicMock()
+            mock_zhipu_client.chat.completions.create.return_value = mock_zhipu_response
+            mock_zhipu.return_value = mock_zhipu_client
+
+            mock_openai_client = AsyncMock()
+            mock_openai_client.chat.completions.create.return_value = mock_openrouter_response
+            mock_openai.return_value = mock_openai_client
+
+            # 注册两个提供商
+            llm_service_instance.register_provider(tenant_id, LLMProvider.ZHIPU, "zhipu_key")
+            llm_service_instance.register_provider(tenant_id, LLMProvider.OPENROUTER, "openrouter_key")
+
+            # 使用Zhipu
+            response1 = await llm_service_instance.chat_completion(
+                tenant_id=tenant_id,
+                messages=sample_messages,
+                provider=LLMProvider.ZHIPU
+            )
+            assert response1.provider == LLMProvider.ZHIPU.value
+            assert "智谱" in response1.content
+
+            # 切换到OpenRouter
+            response2 = await llm_service_instance.chat_completion(
+                tenant_id=tenant_id,
+                messages=sample_messages,
+                provider=LLMProvider.OPENROUTER
+            )
+            assert response2.provider == LLMProvider.OPENROUTER.value
+            assert "OpenRouter" in response2.content
+
+
+class TestConcurrentRequests:
+    """并发请求测试"""
+
+    @pytest.fixture
+    def llm_service_instance(self):
+        """创建LLM服务实例"""
+        return LLMService()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_chat_completions(self, llm_service_instance):
+        """测试并发聊天完成请求"""
+        tenant_id = "test_tenant"
+        num_requests = 5
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "并发测试响应"
+        mock_response.choices[0].finish_reason = "stop"
+        mock_response.model = "glm-4-flash"
+        mock_response.usage.prompt_tokens = 10
+        mock_response.usage.completion_tokens = 20
+        mock_response.usage.total_tokens = 30
+        mock_response.created = 1234567890
+
+        with patch('src.app.services.llm_service.ZhipuAI') as mock_zhipu:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_zhipu.return_value = mock_client
+
+            llm_service_instance.register_provider(tenant_id, LLMProvider.ZHIPU, "test_key")
+
+            # 创建多个并发请求
+            async def make_request(index):
+                messages = [LLMMessage(role="user", content=f"请求 {index}")]
+                return await llm_service_instance.chat_completion(
+                    tenant_id=tenant_id,
+                    messages=messages,
+                    provider=LLMProvider.ZHIPU
+                )
+
+            import asyncio
+            tasks = [make_request(i) for i in range(num_requests)]
+            results = await asyncio.gather(*tasks)
+
+            # 验证所有请求都成功完成
+            assert len(results) == num_requests
+            assert all(r is not None for r in results)
+            assert all(isinstance(r, LLMResponse) for r in results)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_multi_tenant_requests(self, llm_service_instance):
+        """测试多租户并发请求"""
+        tenants = ["tenant_1", "tenant_2", "tenant_3"]
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "多租户响应"
+        mock_response.choices[0].finish_reason = "stop"
+        mock_response.model = "glm-4-flash"
+        mock_response.usage.prompt_tokens = 10
+        mock_response.usage.completion_tokens = 20
+        mock_response.usage.total_tokens = 30
+        mock_response.created = 1234567890
+
+        with patch('src.app.services.llm_service.ZhipuAI') as mock_zhipu:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_zhipu.return_value = mock_client
+
+            # 为每个租户注册提供商
+            for tenant in tenants:
+                llm_service_instance.register_provider(tenant, LLMProvider.ZHIPU, f"key_{tenant}")
+
+            # 创建多租户并发请求
+            async def make_tenant_request(tenant_id):
+                messages = [LLMMessage(role="user", content=f"来自 {tenant_id}")]
+                return await llm_service_instance.chat_completion(
+                    tenant_id=tenant_id,
+                    messages=messages,
+                    provider=LLMProvider.ZHIPU
+                )
+
+            import asyncio
+            tasks = [make_tenant_request(t) for t in tenants]
+            results = await asyncio.gather(*tasks)
+
+            # 验证所有请求都成功完成
+            assert len(results) == len(tenants)
+            assert all(r is not None for r in results)
+
+
+class TestErrorRecovery:
+    """错误恢复测试"""
+
+    @pytest.fixture
+    def llm_service_instance(self):
+        """创建LLM服务实例"""
+        return LLMService()
+
+    @pytest.mark.asyncio
+    async def test_provider_error_recovery(self, llm_service_instance):
+        """测试提供商错误后恢复"""
+        tenant_id = "test_tenant"
+        call_count = 0
+
+        def mock_create(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("临时网络错误")
+            # 第二次调用成功
+            response = MagicMock()
+            response.choices[0].message.content = "恢复后的响应"
+            response.choices[0].finish_reason = "stop"
+            response.model = "glm-4-flash"
+            response.usage.prompt_tokens = 10
+            response.usage.completion_tokens = 20
+            response.usage.total_tokens = 30
+            response.created = 1234567890
+            return response
+
+        with patch('src.app.services.llm_service.ZhipuAI') as mock_zhipu:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = mock_create
+            mock_zhipu.return_value = mock_client
+
+            llm_service_instance.register_provider(tenant_id, LLMProvider.ZHIPU, "test_key")
+
+            messages = [LLMMessage(role="user", content="测试")]
+
+            # 第一次失败
+            try:
+                await llm_service_instance.chat_completion(
+                    tenant_id=tenant_id,
+                    messages=messages,
+                    provider=LLMProvider.ZHIPU
+                )
+            except Exception:
+                pass  # 预期失败
+
+            # 第二次成功（恢复）
+            response = await llm_service_instance.chat_completion(
+                tenant_id=tenant_id,
+                messages=messages,
+                provider=LLMProvider.ZHIPU
+            )
+
+            assert response is not None
+            assert "恢复" in response.content
+
+
+class TestContextWindowManagement:
+    """上下文窗口管理测试"""
+
+    @pytest.fixture
+    def llm_service_instance(self):
+        """创建LLM服务实例"""
+        return LLMService()
+
+    @pytest.mark.asyncio
+    async def test_long_context_handling(self, llm_service_instance):
+        """测试长上下文处理"""
+        tenant_id = "test_tenant"
+
+        # 创建长对话历史
+        long_messages = [
+            LLMMessage(role="system", content="你是一个AI助手"),
+        ]
+        for i in range(20):
+            long_messages.append(LLMMessage(role="user", content=f"问题 {i}: " + "这是一个较长的问题。" * 10))
+            long_messages.append(LLMMessage(role="assistant", content=f"回答 {i}: " + "这是一个较长的回答。" * 10))
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "处理长上下文成功"
+        mock_response.choices[0].finish_reason = "stop"
+        mock_response.model = "glm-4-flash"
+        mock_response.usage.prompt_tokens = 1000
+        mock_response.usage.completion_tokens = 50
+        mock_response.usage.total_tokens = 1050
+        mock_response.created = 1234567890
+
+        with patch('src.app.services.llm_service.ZhipuAI') as mock_zhipu:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_zhipu.return_value = mock_client
+
+            llm_service_instance.register_provider(tenant_id, LLMProvider.ZHIPU, "test_key")
+
+            response = await llm_service_instance.chat_completion(
+                tenant_id=tenant_id,
+                messages=long_messages,
+                provider=LLMProvider.ZHIPU
+            )
+
+            assert response is not None
+            assert response.usage["total_tokens"] == 1050

@@ -666,6 +666,217 @@ class MySQLAdapter(DatabaseAdapter):
             return False
 
 
+class SQLiteAdapter(DatabaseAdapter):
+    """SQLite适配器实现"""
+
+    def __init__(self, connection_string: str, tenant_id: str):
+        super().__init__(connection_string, tenant_id)
+        self.connection = None
+        # 解析连接字符串获取数据库文件路径
+        self._db_path = self._parse_connection_string(connection_string)
+
+    def _parse_connection_string(self, connection_string: str) -> str:
+        """解析SQLite连接字符串"""
+        if connection_string.startswith("sqlite:///"):
+            return connection_string[10:]
+        elif connection_string.startswith("sqlite://"):
+            path = connection_string[9:]
+            return path if path else ":memory:"
+        return connection_string
+
+    def _detect_database_type(self) -> DatabaseType:
+        """检测为SQLite"""
+        return DatabaseType.SQLITE
+
+    async def get_connection(self):
+        """获取SQLite连接"""
+        import aiosqlite
+
+        if self.connection is None:
+            self.connection = await aiosqlite.connect(self._db_path)
+            await self.connection.execute("PRAGMA foreign_keys = ON")
+            self.connection.row_factory = aiosqlite.Row
+        return self.connection
+
+    async def close_connection(self, connection=None):
+        """关闭SQLite连接"""
+        if self.connection:
+            await self.connection.close()
+            self.connection = None
+
+    async def execute_query(self, query: str, params: Dict = None) -> Dict[str, Any]:
+        """执行查询"""
+        try:
+            conn = await self.get_connection()
+
+            if params:
+                cursor = await conn.execute(query, list(params.values()))
+            else:
+                cursor = await conn.execute(query)
+
+            query_upper = query.strip().upper()
+            if query_upper.startswith(('SELECT', 'PRAGMA')):
+                rows = await cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                data = [dict(zip(columns, row)) for row in rows]
+                result = {
+                    'success': True,
+                    'data': data,
+                    'row_count': len(data),
+                    'columns': columns
+                }
+            else:
+                await conn.commit()
+                result = {
+                    'success': True,
+                    'data': [],
+                    'row_count': cursor.rowcount,
+                    'columns': []
+                }
+
+            await cursor.close()
+            return result
+
+        except Exception as e:
+            logger.error(f"SQLite查询执行失败: {e}")
+            return {'success': False, 'error': str(e), 'data': [], 'row_count': 0}
+
+    async def get_schema_info(self, table_name: str = None) -> Dict[str, Any]:
+        """获取数据库结构信息"""
+        try:
+            schema_info = {'database_type': 'sqlite', 'tables': {}}
+
+            # 获取所有表
+            tables = await self.get_tables()
+            if table_name:
+                tables = [t for t in tables if t['name'] == table_name]
+
+            for table in tables:
+                tname = table['name']
+                columns = await self.get_columns(tname)
+                foreign_keys = await self.get_foreign_keys(tname)
+
+                schema_info['tables'][tname] = {
+                    'type': table.get('type', 'table'),
+                    'columns': columns,
+                    'foreign_keys': foreign_keys
+                }
+
+            return schema_info
+
+        except Exception as e:
+            logger.error(f"获取SQLite结构信息失败: {e}")
+            raise
+
+    async def get_tables(self) -> List[Dict[str, Any]]:
+        """获取所有表信息"""
+        try:
+            result = await self.execute_query("""
+                SELECT name, type
+                FROM sqlite_master
+                WHERE type IN ('table', 'view')
+                AND name NOT LIKE 'sqlite_%'
+                ORDER BY name
+            """)
+
+            tables = []
+            for row in result['data']:
+                # 获取行数
+                count_result = await self.execute_query(
+                    f"SELECT COUNT(*) as cnt FROM \"{row['name']}\""
+                )
+                row_count = count_result['data'][0]['cnt'] if count_result['data'] else 0
+
+                tables.append({
+                    'name': row['name'],
+                    'type': row['type'],
+                    'row_count': row_count
+                })
+
+            return tables
+
+        except Exception as e:
+            logger.error(f"获取SQLite表列表失败: {e}")
+            return []
+
+    async def get_columns(self, table_name: str) -> List[Dict[str, Any]]:
+        """获取表的列信息"""
+        try:
+            result = await self.execute_query(f"PRAGMA table_info('{table_name}')")
+
+            columns = []
+            for row in result['data']:
+                columns.append({
+                    'column_name': row['name'],
+                    'data_type': row['type'],
+                    'is_nullable': row['notnull'] == 0,
+                    'default_value': row['dflt_value'],
+                    'is_primary_key': row['pk'] == 1
+                })
+
+            return columns
+
+        except Exception as e:
+            logger.error(f"获取SQLite表列信息失败: {e}")
+            raise
+
+    async def get_foreign_keys(self, table_name: str = None) -> List[Dict[str, Any]]:
+        """获取外键信息"""
+        try:
+            if not table_name:
+                # 获取所有表的外键
+                tables = await self.get_tables()
+                all_fks = []
+                for table in tables:
+                    fks = await self.get_foreign_keys(table['name'])
+                    for fk in fks:
+                        fk['table_name'] = table['name']
+                    all_fks.extend(fks)
+                return all_fks
+
+            result = await self.execute_query(f"PRAGMA foreign_key_list('{table_name}')")
+
+            foreign_keys = []
+            for row in result['data']:
+                foreign_keys.append({
+                    'column': row['from'],
+                    'references_table': row['table'],
+                    'references_column': row['to'],
+                    'constraint_name': f"fk_{table_name}_{row['from']}"
+                })
+
+            return foreign_keys
+
+        except Exception as e:
+            logger.error(f"获取SQLite外键信息失败: {e}")
+            return []
+
+    async def get_sample_data(self, table_name: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """获取示例数据"""
+        try:
+            result = await self.execute_query(
+                f"SELECT * FROM \"{table_name}\" LIMIT ?",
+                {'limit': limit}
+            )
+            return result['data']
+
+        except Exception as e:
+            logger.error(f"获取SQLite示例数据失败: {e}")
+            return []
+
+    async def test_connection(self) -> bool:
+        """测试连接"""
+        try:
+            conn = await self.get_connection()
+            cursor = await conn.execute("SELECT 1")
+            await cursor.fetchone()
+            await cursor.close()
+            return True
+        except Exception as e:
+            logger.error(f"SQLite连接测试失败: {e}")
+            return False
+
+
 class DatabaseAdapterFactory:
     """数据库适配器工厂"""
 
@@ -678,8 +889,7 @@ class DatabaseAdapterFactory:
         elif connection_string.startswith("mysql://"):
             return MySQLAdapter(connection_string, tenant_id)
         elif connection_string.startswith("sqlite://"):
-            # TODO: 实现SQLite适配器
-            pass
+            return SQLiteAdapter(connection_string, tenant_id)
         else:
             # 默认使用PostgreSQL
             logger.warning(f"未知的数据库连接类型，默认使用PostgreSQL: {connection_string}")
@@ -707,7 +917,7 @@ class DatabaseAdapterFactory:
                 "type": DatabaseType.SQLITE,
                 "name": "SQLite",
                 "description": "轻量级嵌入式数据库",
-                "status": "planned",
+                "status": "fully_supported",
                 "features": list(DatabaseCapability(DatabaseType.SQLITE).features)
             }
         ]

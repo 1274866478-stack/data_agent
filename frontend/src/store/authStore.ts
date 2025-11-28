@@ -151,6 +151,12 @@ export const useAuthStore = create<AuthState>()(
         user: state.user,
         isAuthenticated: state.isAuthenticated,
       }),
+      onRehydrateStorage: () => (state) => {
+        // hydration 完成后，设置 loading 为 false
+        if (state) {
+          state.setLoading(false)
+        }
+      },
     }
   )
 )

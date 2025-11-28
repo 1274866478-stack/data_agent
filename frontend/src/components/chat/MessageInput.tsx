@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
-import { Send, Square, Paperclip, Upload, X, FileText } from 'lucide-react'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { Send, Square, Paperclip, Upload, X, FileText, AlertCircle, CheckCircle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useChatStore } from '@/store/chatStore'
-import { uploadFile, UploadProgress } from '@/services/fileUploadService'
+import { uploadFile, UploadProgress, fileUploadService } from '@/services/fileUploadService'
+import { cn } from '@/lib/utils'
 
 interface MessageInputProps {
   placeholder?: string
@@ -13,6 +14,13 @@ interface MessageInputProps {
   disabled?: boolean
   onFileAttach?: (files: File[]) => void
   onDocumentUploaded?: (document: any) => void
+}
+
+interface UploadedFile {
+  file: File
+  document?: any
+  status: 'pending' | 'uploading' | 'completed' | 'error'
+  error?: string
 }
 
 export function MessageInput({
@@ -24,8 +32,10 @@ export function MessageInput({
 }: MessageInputProps) {
   const [input, setInput] = useState('')
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null)
-  const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
+  const [isDragOver, setIsDragOver] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { sendMessage, isLoading, isTyping, currentSession } = useChatStore()
 
@@ -65,177 +75,204 @@ export function MessageInput({
   }
 
   // 处理文件拖拽
-  const handleDragOver = (e: React.DragEvent) => {
+  const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-  }
+    setIsDragOver(true)
+  }, [])
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    setIsDragOver(false)
+  }, [])
 
-    const files = Array.from(e.dataTransfer.files)
-    handleFileUpload(files)
-  }
+  // 验证文件类型
+  const validateFile = useCallback((file: File): { valid: boolean; error?: string } => {
+    if (!fileUploadService.isFileTypeSupported(file)) {
+      return {
+        valid: false,
+        error: `不支持的文件类型: ${file.name}。仅支持 PDF、Word 文档。`,
+      }
+    }
+
+    if (!fileUploadService.isFileSizeValid(file)) {
+      const maxSize = fileUploadService.formatFileSize(fileUploadService.getMaxFileSize())
+      return {
+        valid: false,
+        error: `文件过大: ${fileUploadService.formatFileSize(file.size)}。最大支持 ${maxSize}。`,
+      }
+    }
+
+    return { valid: true }
+  }, [])
 
   // 处理文件上传
   const handleFileUpload = async (files: File[]) => {
     if (files.length === 0) return
 
-    const file = files[0] // 目前只支持单个文件上传
-
-    // 设置上传进度
-    setUploadProgress({
-      loaded: 0,
-      total: file.size,
-      percentage: 0,
-      status: 'pending',
-      message: '准备上传...',
-    })
-
-    try {
-      const result = await uploadFile(file, (progress) => {
-        setUploadProgress(progress)
-      })
-
-      if (result.success && result.document) {
-        // 添加到已上传文件列表
-        setUploadedFiles(prev => [...prev, file])
-
-        // 通知父组件
-        onFileAttach?.([file])
-        onDocumentUploaded?.(result.document)
-
-        // 清除上传进度（延迟一下让用户看到完成状态）
-        setTimeout(() => {
-          setUploadProgress(null)
-        }, 2000)
-      } else {
-        // 上传失败，显示错误信息
-        setUploadProgress(prev => prev ? {
-          ...prev,
+    // 支持多文件上传
+    for (const file of files) {
+      // 验证文件
+      const validation = validateFile(file)
+      if (!validation.valid) {
+        setUploadProgress({
+          loaded: 0,
+          total: file.size,
+          percentage: 0,
           status: 'error',
-          message: result.error || '上传失败',
-        } : null)
-
-        // 延迟清除错误状态
-        setTimeout(() => {
-          setUploadProgress(null)
-        }, 5000)
+          message: validation.error,
+        })
+        setTimeout(() => setUploadProgress(null), 3000)
+        continue
       }
-    } catch (error) {
+
+      // 创建上传文件记录
+      const uploadedFile: UploadedFile = {
+        file,
+        status: 'uploading',
+      }
+      setUploadedFiles(prev => [...prev, uploadedFile])
+
+      // 设置上传进度
       setUploadProgress({
         loaded: 0,
         total: file.size,
         percentage: 0,
-        status: 'error',
-        message: error instanceof Error ? error.message : '上传过程中发生错误',
+        status: 'pending',
+        message: `准备上传: ${file.name}`,
       })
 
-      setTimeout(() => {
-        setUploadProgress(null)
-      }, 5000)
-    }
-  }
+      try {
+        const result = await uploadFile(file, (progress) => {
+          setUploadProgress(progress)
+        })
 
-  // 移除已上传的文件
-  const removeUploadedFile = (index: number) => {
-    setUploadedFiles(prev => prev.filter((_, i) => i !== index))
-  }
+        if (result.success && result.document) {
+          // 更新已上传文件状态
+          setUploadedFiles(prev =>
+            prev.map(f =>
+              f.file === file
+                ? { ...f, status: 'completed' as const, document: result.document }
+                : f
+            )
+          )
 
-  // 通过文件选择器上传文件
-  const handleFileSelect = () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.multiple = false
-    input.accept = '.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          // 通知父组件
+          onFileAttach?.([file])
+          onDocumentUploaded?.(result.document)
 
-    input.onchange = (e) => {
-      const files = Array.from((e.target as HTMLInputElement).files || [])
-      handleFileUpload(files)
-    }
+          // 清除上传进度
+          setTimeout(() => setUploadProgress(null), 1500)
+        } else {
+          // 更新失败状态
+          setUploadedFiles(prev =>
+            prev.map(f =>
+              f.file === file
+                ? { ...f, status: 'error' as const, error: result.error }
+                : f
+            )
+          )
 
-    input.click()
-  }
+          setUploadProgress({
+            loaded: 0,
+            total: file.size,
+            percentage: 0,
+            status: 'error',
+            message: result.error || '上传失败',
+          })
+          setTimeout(() => setUploadProgress(null), 3000)
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : '上传过程中发生错误'
 
-  const isSendDisabled = !input.trim() || isLoading || disabled || uploadProgress?.status === 'uploading'
+        setUploadedFiles(prev =>
+          prev.map(f =>
+            f.file === file
+              ? { ...f, status: 'error' as const, error: errorMessage }
+              : f
+          )
+        )
 
-  // 调试信息
-  useEffect(() => {
-    const debugInfo = {
-      input,
-      inputLength: input.length,
-      inputTrimmed: input.trim(),
-      inputTrimmedLength: input.trim().length,
-      isLoading,
-      disabled,
-      uploadProgress,
-      isSendDisabled,
-      currentSession: currentSession?.id,
-      hasCurrentSession: !!currentSession,
-      disabledReasons: {
-        emptyInput: !input.trim(),
-        loading: isLoading,
-        componentDisabled: disabled,
-        uploading: uploadProgress?.status === 'uploading'
+        setUploadProgress({
+          loaded: 0,
+          total: file.size,
+          percentage: 0,
+          status: 'error',
+          message: errorMessage,
+        })
+        setTimeout(() => setUploadProgress(null), 3000)
       }
     }
-    console.log('MessageInput 状态:', debugInfo)
+  }
 
-    // 如果按钮被禁用但输入不为空，记录警告
-    if (isSendDisabled && input.trim().length > 0) {
-      console.warn('⚠️ 按钮被禁用但输入不为空！', debugInfo)
+  // 处理拖拽放置
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+
+    const files = Array.from(e.dataTransfer.files)
+    handleFileUpload(files)
+  }, [])
+
+  // 移除已上传的文件
+  const removeUploadedFile = useCallback((index: number) => {
+    setUploadedFiles(prev => prev.filter((_, i) => i !== index))
+  }, [])
+
+  // 重试上传失败的文件
+  const retryUpload = useCallback((index: number) => {
+    const uploadedFile = uploadedFiles[index]
+    if (uploadedFile && uploadedFile.status === 'error') {
+      // 先移除失败的记录
+      setUploadedFiles(prev => prev.filter((_, i) => i !== index))
+      // 重新上传
+      handleFileUpload([uploadedFile.file])
     }
-  }, [input, isLoading, disabled, uploadProgress, isSendDisabled, currentSession])
+  }, [uploadedFiles])
+
+  // 通过文件选择器上传文件
+  const handleFileSelect = useCallback(() => {
+    fileInputRef.current?.click()
+  }, [])
+
+  // 处理文件选择器的 change 事件
+  const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length > 0) {
+      handleFileUpload(files)
+    }
+    // 重置 input 以允许选择相同的文件
+    e.target.value = ''
+  }, [])
+  const isSendDisabled = !input.trim() || isLoading || disabled || uploadProgress?.status === 'uploading'
+
+  // 获取已完成上传的文件数量
+  const completedUploads = uploadedFiles.filter(f => f.status === 'completed').length
 
   return (
     <div className="border-t bg-background p-4">
-      {/* 开发环境调试面板 - 始终显示 */}
-      <div className="max-w-4xl mx-auto mb-2 p-3 bg-yellow-50 border-2 border-yellow-400 rounded-lg text-xs space-y-1 shadow-lg">
-        <div className="font-bold text-base mb-2">🔍 调试信息面板</div>
-        <div className="grid grid-cols-2 gap-2">
-          <div className="bg-white p-2 rounded">
-            <strong>输入内容:</strong> "{input}"
-          </div>
-          <div className="bg-white p-2 rounded">
-            <strong>输入长度:</strong> {input.length}
-          </div>
-          <div className="bg-white p-2 rounded">
-            <strong>Trim后:</strong> "{input.trim()}"
-          </div>
-          <div className="bg-white p-2 rounded">
-            <strong>Trim长度:</strong> {input.trim().length}
-          </div>
-          <div className="bg-white p-2 rounded">
-            <strong>isLoading:</strong> {isLoading ? '✅ 是' : '❌ 否'}
-          </div>
-          <div className="bg-white p-2 rounded">
-            <strong>disabled:</strong> {disabled ? '✅ 是' : '❌ 否'}
-          </div>
-          <div className="bg-white p-2 rounded">
-            <strong>currentSession:</strong> {currentSession?.id || '❌ 无'}
-          </div>
-          <div className="bg-white p-2 rounded">
-            <strong>uploadProgress:</strong> {uploadProgress?.status || '无'}
-          </div>
-        </div>
-        <div className={`mt-2 p-2 rounded text-center font-bold text-base ${isSendDisabled ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'}`}>
-          按钮状态: {isSendDisabled ? '🔒 禁用' : '✅ 可用'}
-        </div>
-        {isSendDisabled && (
-          <div className="mt-2 p-2 bg-red-100 rounded">
-            <strong>禁用原因:</strong>
-            <ul className="list-disc list-inside mt-1">
-              {!input.trim() && <li>输入为空</li>}
-              {isLoading && <li>正在加载</li>}
-              {disabled && <li>组件被禁用</li>}
-              {uploadProgress?.status === 'uploading' && <li>正在上传文件</li>}
-            </ul>
-          </div>
-        )}
-      </div>
+      {/* 隐藏的文件输入 */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        multiple
+        onChange={handleFileInputChange}
+      />
 
       <div className="max-w-4xl mx-auto">
+        {/* 拖拽区域指示器 */}
+        {isDragOver && (
+          <div className="mb-3 p-6 border-2 border-dashed border-primary rounded-lg bg-primary/5 text-center">
+            <Upload className="h-8 w-8 mx-auto mb-2 text-primary" />
+            <p className="text-sm text-primary font-medium">释放文件以上传</p>
+            <p className="text-xs text-muted-foreground">支持 PDF、Word 文档</p>
+          </div>
+        )}
+
         <div className="flex gap-3">
           {/* 文件上传按钮 */}
           <div className="flex-shrink-0">
@@ -258,20 +295,23 @@ export function MessageInput({
           </div>
 
           {/* 输入区域 */}
-          <div className="flex-1 relative">
+          <div
+            className={cn(
+              "flex-1 relative transition-all duration-200",
+              isDragOver && "ring-2 ring-primary ring-offset-2 rounded-md"
+            )}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
             <Textarea
               ref={textareaRef}
               value={input}
-              onChange={(e) => {
-                console.log('Textarea onChange 触发:', e.target.value)
-                setInput(e.target.value)
-              }}
+              onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={placeholder}
+              placeholder={completedUploads > 0 ? `已上传 ${completedUploads} 个文件，输入问题...` : placeholder}
               maxLength={maxLength}
               disabled={disabled || isLoading}
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
               className="min-h-[40px] max-h-[120px] resize-none pr-12 py-3"
               rows={1}
             />
@@ -300,27 +340,16 @@ export function MessageInput({
                 <span className="sr-only">停止生成</span>
               </Button>
             ) : (
-              <>
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    console.log('发送按钮被点击')
-                    handleSend()
-                  }}
-                  disabled={isSendDisabled}
-                  className="h-10 px-3"
-                  title={isSendDisabled ? `按钮禁用原因: ${!input.trim() ? '输入为空' : isLoading ? '正在加载' : disabled ? '组件禁用' : '上传中'}` : '发送消息'}
-                >
-                  <Send className="h-4 w-4" />
-                  <span className="sr-only">发送消息</span>
-                </Button>
-                {/* 调试信息 - 开发环境显示 */}
-                {process.env.NODE_ENV === 'development' && (
-                  <div className="text-[10px] text-gray-500">
-                    {isSendDisabled ? '🔒' : '✅'}
-                  </div>
-                )}
-              </>
+              <Button
+                size="sm"
+                onClick={handleSend}
+                disabled={isSendDisabled}
+                className="h-10 px-3"
+                title={isSendDisabled ? '输入消息后发送' : '发送消息'}
+              >
+                <Send className="h-4 w-4" />
+                <span className="sr-only">发送消息</span>
+              </Button>
             )}
           </div>
         </div>
@@ -367,41 +396,88 @@ export function MessageInput({
 
         {/* 已上传文件列表 */}
         {uploadedFiles.length > 0 && (
-          <div className="mt-2 space-y-1">
-            <div className="text-xs text-muted-foreground mb-1">已上传文件：</div>
-            {uploadedFiles.map((file, index) => (
+          <div className="mt-3 space-y-1.5">
+            <div className="text-xs text-muted-foreground mb-1 flex items-center gap-2">
+              <span>已上传文件</span>
+              <span className="px-1.5 py-0.5 bg-muted rounded-full text-[10px]">
+                {completedUploads}/{uploadedFiles.length}
+              </span>
+            </div>
+            {uploadedFiles.map((uploadedFile, index) => (
               <div
                 key={index}
-                className="flex items-center gap-2 p-2 bg-muted/30 rounded text-xs"
+                className={cn(
+                  "flex items-center gap-2 p-2 rounded text-xs transition-colors",
+                  uploadedFile.status === 'completed' && "bg-green-50 dark:bg-green-950/20",
+                  uploadedFile.status === 'error' && "bg-red-50 dark:bg-red-950/20",
+                  uploadedFile.status === 'uploading' && "bg-blue-50 dark:bg-blue-950/20",
+                  uploadedFile.status === 'pending' && "bg-muted/30"
+                )}
               >
-                <FileText className="h-3 w-3 text-muted-foreground" />
-                <span className="flex-1 truncate">{file.name}</span>
-                <span className="text-muted-foreground">
-                  {(file.size / 1024 / 1024).toFixed(2)} MB
+                {/* 状态图标 */}
+                {uploadedFile.status === 'completed' && (
+                  <CheckCircle className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+                )}
+                {uploadedFile.status === 'error' && (
+                  <AlertCircle className="h-3.5 w-3.5 text-red-600 flex-shrink-0" />
+                )}
+                {uploadedFile.status === 'uploading' && (
+                  <Loader2 className="h-3.5 w-3.5 text-blue-600 animate-spin flex-shrink-0" />
+                )}
+                {uploadedFile.status === 'pending' && (
+                  <FileText className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                )}
+
+                {/* 文件名 */}
+                <span className="flex-1 truncate">{uploadedFile.file.name}</span>
+
+                {/* 文件大小 */}
+                <span className="text-muted-foreground flex-shrink-0">
+                  {fileUploadService.formatFileSize(uploadedFile.file.size)}
                 </span>
+
+                {/* 操作按钮 */}
+                {uploadedFile.status === 'error' ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => retryUpload(index)}
+                    className="h-auto px-1.5 py-0.5 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-100"
+                  >
+                    重试
+                  </Button>
+                ) : null}
+
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => removeUploadedFile(index)}
-                  className="h-auto p-0 text-xs text-muted-foreground hover:text-destructive"
+                  className="h-auto p-0.5 text-muted-foreground hover:text-destructive"
                 >
                   <X className="h-3 w-3" />
                 </Button>
               </div>
             ))}
+
+            {/* 上传失败提示 */}
+            {uploadedFiles.some(f => f.status === 'error') && (
+              <div className="text-xs text-red-600 flex items-center gap-1 mt-1">
+                <AlertCircle className="h-3 w-3" />
+                <span>部分文件上传失败，点击"重试"重新上传</span>
+              </div>
+            )}
           </div>
         )}
 
         {/* 提示信息 */}
-        <div className="mt-2 text-xs text-muted-foreground">
-          按 <kbd className="px-1 py-0.5 text-xs bg-muted rounded">Enter</kbd> 发送，
-          <kbd className="px-1 py-0.5 text-xs bg-muted rounded mx-1">Shift + Enter</kbd> 换行，
-          <kbd className="px-1 py-0.5 text-xs bg-muted rounded mx-1">Escape</kbd> 清空
-          {uploadedFiles.length > 0 && (
-            <span className="ml-2">
-              • 支持 PDF、Word 文档拖拽上传
-            </span>
-          )}
+        <div className="mt-3 text-xs text-muted-foreground flex flex-wrap items-center gap-x-1">
+          <span>按</span>
+          <kbd className="px-1 py-0.5 bg-muted rounded font-mono">Enter</kbd>
+          <span>发送，</span>
+          <kbd className="px-1 py-0.5 bg-muted rounded font-mono">Shift+Enter</kbd>
+          <span>换行</span>
+          <span className="mx-1">•</span>
+          <span>拖拽 PDF/Word 文档到此处上传</span>
         </div>
 
         {/* 输入状态指示 */}

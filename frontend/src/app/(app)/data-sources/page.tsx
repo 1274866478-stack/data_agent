@@ -91,7 +91,7 @@ export default function DataSourcesPage() {
             onDataSourceSelect={() => {}}
           />
         ) : (
-          <DocumentList tenantId={tenantId} />
+          <DocumentList />
         )}
       </div>
     )
@@ -137,7 +137,7 @@ export default function DataSourcesPage() {
       </div>
 
       {/* 错误信息 */}
-      <ErrorMessage message={error} />
+      {error && <ErrorMessage message={error} />}
 
       {/* 概览仪表板 */}
       {showOverview && (
@@ -209,7 +209,7 @@ export default function DataSourcesPage() {
                     onRefresh={handleRefresh}
                   />
                 ) : (
-                  <DocumentList tenantId={tenantId} />
+                  <DocumentList />
                 )}
               </div>
             }

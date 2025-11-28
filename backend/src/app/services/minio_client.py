@@ -47,8 +47,8 @@ class MinIOService:
         创建存储桶
         """
         try:
-            if not self.client.bucket_exists(bucket_name):
-                self.client.make_bucket(bucket_name)
+            if not self.client.bucket_exists(bucket_name=bucket_name):
+                self.client.make_bucket(bucket_name=bucket_name)
                 logger.info(f"Bucket '{bucket_name}' created successfully")
             return True
         except S3Error as e:
@@ -90,7 +90,7 @@ class MinIOService:
         从MinIO下载文件
         """
         try:
-            response = self.client.get_object(bucket_name, object_name)
+            response = self.client.get_object(bucket_name=bucket_name, object_name=object_name)
             file_data = response.read()
             response.close()
             response.release_conn()
@@ -106,7 +106,7 @@ class MinIOService:
         从MinIO删除文件
         """
         try:
-            self.client.remove_object(bucket_name, object_name)
+            self.client.remove_object(bucket_name=bucket_name, object_name=object_name)
             logger.info(f"File deleted successfully: {object_name}")
             return True
         except S3Error as e:
@@ -118,7 +118,7 @@ class MinIOService:
         列出存储桶中的文件
         """
         try:
-            objects = self.client.list_objects(bucket_name, prefix=prefix)
+            objects = self.client.list_objects(bucket_name=bucket_name, prefix=prefix)
             files = []
             for obj in objects:
                 files.append({
@@ -143,8 +143,8 @@ class MinIOService:
         """
         try:
             url = self.client.presigned_get_object(
-                bucket_name,
-                object_name,
+                bucket_name=bucket_name,
+                object_name=object_name,
                 expires=expires
             )
             return url

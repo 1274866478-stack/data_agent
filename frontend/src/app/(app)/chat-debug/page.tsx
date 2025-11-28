@@ -22,10 +22,10 @@ export default function ChatDebugPage() {
       <div className="space-y-4">
         <div>
           <p className="text-sm text-muted-foreground mb-2">
-            输入内容: "{input}" (长度: {input.length})
+            输入内容: &quot;{input}&quot; (长度: {input.length})
           </p>
           <p className="text-sm text-muted-foreground mb-2">
-            Trim后内容: "{input.trim()}" (长度: {input.trim().length})
+            Trim后内容: &quot;{input.trim()}&quot; (长度: {input.trim().length})
           </p>
           <p className="text-sm text-muted-foreground mb-2">
             按钮是否禁用: {isSendDisabled ? '是' : '否'}

@@ -92,6 +92,8 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
         return 'PostgreSQL'
       case 'mysql':
         return 'MySQL'
+      case 'sqlite':
+        return 'SQLite'
       default:
         return dbType.toUpperCase()
     }
@@ -211,7 +213,7 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
       </div>
 
       {/* 错误信息 */}
-      <ErrorMessage message={error} />
+      {error && <ErrorMessage message={error} />}
 
       {/* 加载状态 */}
       {isLoading && (

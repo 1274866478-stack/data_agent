@@ -1,6 +1,7 @@
 /**
  * 消息缓存服务
  * 提供离线消息缓存和同步功能
+ * 支持 IndexedDB 和 localStorage 双重存储策略
  */
 
 export interface CachedMessage {
@@ -17,6 +18,8 @@ export interface CachedMessage {
   }
   syncAttempted?: number
   lastSyncAttempt?: Date
+  version?: number // 添加版本号用于冲突检测
+  clientId?: string // 添加客户端ID用于多设备同步
 }
 
 export interface CachedSession {
@@ -28,6 +31,7 @@ export interface CachedSession {
   isActive: boolean
   isDirty: boolean
   lastSyncAt?: Date
+  version?: number // 添加版本号用于冲突检测
 }
 
 export interface SyncResult {
@@ -35,6 +39,381 @@ export interface SyncResult {
   syncedMessages: string[]
   failedMessages: string[]
   errorMessage?: string
+  conflictMessages?: string[] // 添加冲突消息列表
+}
+
+// 同步状态事件类型
+export type SyncEventType = 'start' | 'progress' | 'complete' | 'error' | 'conflict'
+
+export interface SyncEvent {
+  type: SyncEventType
+  progress?: number // 0-100
+  totalMessages?: number
+  syncedCount?: number
+  failedCount?: number
+  conflictCount?: number
+  message?: string
+}
+
+// 同步事件监听器
+export type SyncEventListener = (event: SyncEvent) => void
+
+// IndexedDB 数据库配置
+const DB_NAME = 'data-agent-offline-cache'
+const DB_VERSION = 1
+const SESSIONS_STORE = 'sessions'
+const MESSAGES_STORE = 'messages'
+const SYNC_QUEUE_STORE = 'syncQueue'
+
+/**
+ * IndexedDB 工具类
+ */
+class IndexedDBHelper {
+  private db: IDBDatabase | null = null
+  private dbReady: Promise<IDBDatabase> | null = null
+
+  /**
+   * 打开或创建数据库
+   */
+  async openDatabase(): Promise<IDBDatabase> {
+    if (this.db) return this.db
+
+    if (this.dbReady) return this.dbReady
+
+    this.dbReady = new Promise((resolve, reject) => {
+      if (typeof window === 'undefined' || !window.indexedDB) {
+        reject(new Error('IndexedDB not supported'))
+        return
+      }
+
+      const request = indexedDB.open(DB_NAME, DB_VERSION)
+
+      request.onerror = () => {
+        console.error('IndexedDB open error:', request.error)
+        reject(request.error)
+      }
+
+      request.onsuccess = () => {
+        this.db = request.result
+        resolve(this.db)
+      }
+
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result
+
+        // 创建会话存储
+        if (!db.objectStoreNames.contains(SESSIONS_STORE)) {
+          const sessionsStore = db.createObjectStore(SESSIONS_STORE, { keyPath: 'id' })
+          sessionsStore.createIndex('updatedAt', 'updatedAt', { unique: false })
+          sessionsStore.createIndex('isActive', 'isActive', { unique: false })
+        }
+
+        // 创建消息存储
+        if (!db.objectStoreNames.contains(MESSAGES_STORE)) {
+          const messagesStore = db.createObjectStore(MESSAGES_STORE, { keyPath: 'id' })
+          messagesStore.createIndex('sessionId', 'sessionId', { unique: false })
+          messagesStore.createIndex('status', 'status', { unique: false })
+          messagesStore.createIndex('timestamp', 'timestamp', { unique: false })
+        }
+
+        // 创建同步队列存储
+        if (!db.objectStoreNames.contains(SYNC_QUEUE_STORE)) {
+          db.createObjectStore(SYNC_QUEUE_STORE, { keyPath: 'messageId' })
+        }
+      }
+    })
+
+    return this.dbReady
+  }
+
+  /**
+   * 获取所有会话
+   */
+  async getAllSessions(): Promise<CachedSession[]> {
+    try {
+      const db = await this.openDatabase()
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([SESSIONS_STORE], 'readonly')
+        const store = transaction.objectStore(SESSIONS_STORE)
+        const request = store.getAll()
+
+        request.onsuccess = () => {
+          const sessions = request.result.map((s: any) => ({
+            ...s,
+            createdAt: new Date(s.createdAt),
+            updatedAt: new Date(s.updatedAt),
+            lastSyncAt: s.lastSyncAt ? new Date(s.lastSyncAt) : undefined,
+          }))
+          resolve(sessions)
+        }
+
+        request.onerror = () => reject(request.error)
+      })
+    } catch (error) {
+      console.error('IndexedDB getAllSessions error:', error)
+      return []
+    }
+  }
+
+  /**
+   * 保存会话
+   */
+  async saveSession(session: CachedSession): Promise<void> {
+    try {
+      const db = await this.openDatabase()
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([SESSIONS_STORE], 'readwrite')
+        const store = transaction.objectStore(SESSIONS_STORE)
+
+        const sessionData = {
+          ...session,
+          createdAt: session.createdAt.toISOString(),
+          updatedAt: session.updatedAt.toISOString(),
+          lastSyncAt: session.lastSyncAt?.toISOString(),
+          messages: [], // 消息单独存储
+        }
+
+        const request = store.put(sessionData)
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+      })
+    } catch (error) {
+      console.error('IndexedDB saveSession error:', error)
+    }
+  }
+
+  /**
+   * 获取会话的所有消息
+   */
+  async getMessagesBySession(sessionId: string): Promise<CachedMessage[]> {
+    try {
+      const db = await this.openDatabase()
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([MESSAGES_STORE], 'readonly')
+        const store = transaction.objectStore(MESSAGES_STORE)
+        const index = store.index('sessionId')
+        const request = index.getAll(sessionId)
+
+        request.onsuccess = () => {
+          const messages = request.result.map((m: any) => ({
+            ...m,
+            timestamp: new Date(m.timestamp),
+            lastSyncAttempt: m.lastSyncAttempt ? new Date(m.lastSyncAttempt) : undefined,
+          }))
+          // 按时间排序
+          messages.sort((a: CachedMessage, b: CachedMessage) =>
+            a.timestamp.getTime() - b.timestamp.getTime()
+          )
+          resolve(messages)
+        }
+
+        request.onerror = () => reject(request.error)
+      })
+    } catch (error) {
+      console.error('IndexedDB getMessagesBySession error:', error)
+      return []
+    }
+  }
+
+  /**
+   * 保存消息
+   */
+  async saveMessage(message: CachedMessage): Promise<void> {
+    try {
+      const db = await this.openDatabase()
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([MESSAGES_STORE], 'readwrite')
+        const store = transaction.objectStore(MESSAGES_STORE)
+
+        const messageData = {
+          ...message,
+          timestamp: message.timestamp.toISOString(),
+          lastSyncAttempt: message.lastSyncAttempt?.toISOString(),
+        }
+
+        const request = store.put(messageData)
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+      })
+    } catch (error) {
+      console.error('IndexedDB saveMessage error:', error)
+    }
+  }
+
+  /**
+   * 获取待同步消息
+   */
+  async getPendingMessages(): Promise<CachedMessage[]> {
+    try {
+      const db = await this.openDatabase()
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([MESSAGES_STORE], 'readonly')
+        const store = transaction.objectStore(MESSAGES_STORE)
+        const index = store.index('status')
+        const request = index.getAll('pending')
+
+        request.onsuccess = () => {
+          const messages = request.result.map((m: any) => ({
+            ...m,
+            timestamp: new Date(m.timestamp),
+            lastSyncAttempt: m.lastSyncAttempt ? new Date(m.lastSyncAttempt) : undefined,
+          }))
+          resolve(messages)
+        }
+
+        request.onerror = () => reject(request.error)
+      })
+    } catch (error) {
+      console.error('IndexedDB getPendingMessages error:', error)
+      return []
+    }
+  }
+
+  /**
+   * 添加到同步队列
+   */
+  async addToSyncQueue(messageId: string): Promise<void> {
+    try {
+      const db = await this.openDatabase()
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([SYNC_QUEUE_STORE], 'readwrite')
+        const store = transaction.objectStore(SYNC_QUEUE_STORE)
+        const request = store.put({ messageId, addedAt: new Date().toISOString() })
+
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+      })
+    } catch (error) {
+      console.error('IndexedDB addToSyncQueue error:', error)
+    }
+  }
+
+  /**
+   * 从同步队列移除
+   */
+  async removeFromSyncQueue(messageId: string): Promise<void> {
+    try {
+      const db = await this.openDatabase()
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([SYNC_QUEUE_STORE], 'readwrite')
+        const store = transaction.objectStore(SYNC_QUEUE_STORE)
+        const request = store.delete(messageId)
+
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+      })
+    } catch (error) {
+      console.error('IndexedDB removeFromSyncQueue error:', error)
+    }
+  }
+
+  /**
+   * 获取同步队列
+   */
+  async getSyncQueue(): Promise<string[]> {
+    try {
+      const db = await this.openDatabase()
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([SYNC_QUEUE_STORE], 'readonly')
+        const store = transaction.objectStore(SYNC_QUEUE_STORE)
+        const request = store.getAll()
+
+        request.onsuccess = () => {
+          resolve(request.result.map((item: any) => item.messageId))
+        }
+
+        request.onerror = () => reject(request.error)
+      })
+    } catch (error) {
+      console.error('IndexedDB getSyncQueue error:', error)
+      return []
+    }
+  }
+
+  /**
+   * 删除会话及其消息
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    try {
+      const db = await this.openDatabase()
+
+      // 先删除该会话的所有消息
+      const messages = await this.getMessagesBySession(sessionId)
+      const messageIds = messages.map(m => m.id)
+
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(
+          [SESSIONS_STORE, MESSAGES_STORE, SYNC_QUEUE_STORE],
+          'readwrite'
+        )
+
+        // 删除会话
+        transaction.objectStore(SESSIONS_STORE).delete(sessionId)
+
+        // 删除消息和同步队列项
+        const messagesStore = transaction.objectStore(MESSAGES_STORE)
+        const syncQueueStore = transaction.objectStore(SYNC_QUEUE_STORE)
+
+        messageIds.forEach(id => {
+          messagesStore.delete(id)
+          syncQueueStore.delete(id)
+        })
+
+        transaction.oncomplete = () => resolve()
+        transaction.onerror = () => reject(transaction.error)
+      })
+    } catch (error) {
+      console.error('IndexedDB deleteSession error:', error)
+    }
+  }
+
+  /**
+   * 清空所有数据
+   */
+  async clearAll(): Promise<void> {
+    try {
+      const db = await this.openDatabase()
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction(
+          [SESSIONS_STORE, MESSAGES_STORE, SYNC_QUEUE_STORE],
+          'readwrite'
+        )
+
+        transaction.objectStore(SESSIONS_STORE).clear()
+        transaction.objectStore(MESSAGES_STORE).clear()
+        transaction.objectStore(SYNC_QUEUE_STORE).clear()
+
+        transaction.oncomplete = () => resolve()
+        transaction.onerror = () => reject(transaction.error)
+      })
+    } catch (error) {
+      console.error('IndexedDB clearAll error:', error)
+    }
+  }
+
+  /**
+   * 检查 IndexedDB 是否可用
+   */
+  isSupported(): boolean {
+    return typeof window !== 'undefined' && !!window.indexedDB
+  }
+}
+
+// 创建 IndexedDB 帮助器实例
+const indexedDBHelper = new IndexedDBHelper()
+
+/**
+ * 生成唯一客户端ID
+ */
+function getClientId(): string {
+  if (typeof window === 'undefined') return 'server'
+
+  let clientId = localStorage.getItem('data-agent-client-id')
+  if (!clientId) {
+    clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    localStorage.setItem('data-agent-client-id', clientId)
+  }
+  return clientId
 }
 
 class MessageCacheService {
@@ -42,9 +421,45 @@ class MessageCacheService {
   private syncQueueKey = 'data-agent-sync-queue'
   private maxRetries = 3
   private syncRetryDelay = 5000 // 5 seconds
+  private syncEventListeners: Set<SyncEventListener> = new Set()
+  private useIndexedDB: boolean = false
+  private clientId: string
+
+  constructor() {
+    this.clientId = getClientId()
+    // 检查是否支持 IndexedDB
+    this.useIndexedDB = indexedDBHelper.isSupported()
+  }
 
   /**
-   * 获取缓存的消息数据
+   * 添加同步事件监听器
+   */
+  addSyncEventListener(listener: SyncEventListener): void {
+    this.syncEventListeners.add(listener)
+  }
+
+  /**
+   * 移除同步事件监听器
+   */
+  removeSyncEventListener(listener: SyncEventListener): void {
+    this.syncEventListeners.delete(listener)
+  }
+
+  /**
+   * 触发同步事件
+   */
+  private emitSyncEvent(event: SyncEvent): void {
+    this.syncEventListeners.forEach(listener => {
+      try {
+        listener(event)
+      } catch (error) {
+        console.error('Sync event listener error:', error)
+      }
+    })
+  }
+
+  /**
+   * 获取缓存的消息数据 (localStorage 回退方案)
    */
   private getCachedData(): { sessions: CachedSession[], syncQueue: string[] } {
     if (typeof window === 'undefined') {
@@ -79,7 +494,7 @@ class MessageCacheService {
   }
 
   /**
-   * 保存缓存数据
+   * 保存缓存数据 (localStorage 回退方案)
    */
   private saveCachedData(sessions: CachedSession[], syncQueue: string[]): void {
     if (typeof window === 'undefined') {
@@ -95,9 +510,22 @@ class MessageCacheService {
   }
 
   /**
-   * 缓存会话
+   * 缓存会话 (支持 IndexedDB)
    */
   cacheSession(session: CachedSession): void {
+    // 添加版本号
+    const sessionWithVersion = {
+      ...session,
+      version: (session.version || 0) + 1,
+      isDirty: true,
+    }
+
+    // 使用 IndexedDB 存储
+    if (this.useIndexedDB) {
+      indexedDBHelper.saveSession(sessionWithVersion).catch(console.error)
+    }
+
+    // 同时保存到 localStorage 作为备份
     const { sessions, syncQueue } = this.getCachedData()
     const existingIndex = sessions.findIndex(s => s.id === session.id)
 
@@ -111,20 +539,33 @@ class MessageCacheService {
   }
 
   /**
-   * 缓存消息
+   * 缓存消息 (支持 IndexedDB)
    */
   cacheMessage(sessionId: string, message: Omit<CachedMessage, 'syncAttempted' | 'lastSyncAttempt'>): void {
+    const fullMessage: CachedMessage = {
+      ...message,
+      syncAttempted: 0,
+      version: 1,
+      clientId: this.clientId,
+    }
+
+    // 使用 IndexedDB 存储
+    if (this.useIndexedDB) {
+      indexedDBHelper.saveMessage(fullMessage).catch(console.error)
+
+      // 如果是待发送消息，加入同步队列
+      if (message.status === 'pending') {
+        indexedDBHelper.addToSyncQueue(fullMessage.id).catch(console.error)
+      }
+    }
+
+    // 同时保存到 localStorage 作为备份
     const { sessions, syncQueue } = this.getCachedData()
     const sessionIndex = sessions.findIndex(s => s.id === sessionId)
 
     if (sessionIndex < 0) {
       console.warn('Session not found for caching message:', sessionId)
       return
-    }
-
-    const fullMessage: CachedMessage = {
-      ...message,
-      syncAttempted: 0,
     }
 
     const session = sessions[sessionIndex]
@@ -281,7 +722,7 @@ class MessageCacheService {
   }
 
   /**
-   * 同步消息到服务器
+   * 同步消息到服务器 (增强版，支持事件通知)
    */
   async syncMessages(
     sendMessage: (content: string, sessionId?: string) => Promise<void>
@@ -294,16 +735,27 @@ class MessageCacheService {
         success: true,
         syncedMessages: [],
         failedMessages: [],
+        conflictMessages: [],
       }
     }
 
+    // 触发同步开始事件
+    this.emitSyncEvent({
+      type: 'start',
+      totalMessages: pendingMessages.length,
+      progress: 0,
+    })
+
     const syncedMessages: string[] = []
     const failedMessages: string[] = []
+    const conflictMessages: string[] = []
     let updatedSessions = [...sessions]
     let updatedSyncQueue = [...syncQueue]
 
     // 按时间戳排序，先同步旧消息
     pendingMessages.sort((a, b) => a.message.timestamp.getTime() - b.message.timestamp.getTime())
+
+    let processedCount = 0
 
     for (const { sessionId, message } of pendingMessages) {
       try {
@@ -317,6 +769,8 @@ class MessageCacheService {
           if (messageIndex >= 0) {
             updatedSessions[sessionIndex].messages[messageIndex].status = 'synced'
             updatedSessions[sessionIndex].messages[messageIndex].lastSyncAttempt = new Date()
+            updatedSessions[sessionIndex].messages[messageIndex].version =
+              (updatedSessions[sessionIndex].messages[messageIndex].version || 0) + 1
             updatedSessions[sessionIndex].lastSyncAt = new Date()
           }
         }
@@ -329,6 +783,11 @@ class MessageCacheService {
           updatedSyncQueue.splice(queueIndex, 1)
         }
 
+        // 同时更新 IndexedDB
+        if (this.useIndexedDB) {
+          indexedDBHelper.removeFromSyncQueue(message.id).catch(console.error)
+        }
+
       } catch (error) {
         console.error(`Failed to sync message ${message.id}:`, error)
 
@@ -337,7 +796,8 @@ class MessageCacheService {
         if (sessionIndex >= 0) {
           const messageIndex = updatedSessions[sessionIndex].messages.findIndex(m => m.id === message.id)
           if (messageIndex >= 0) {
-            updatedSessions[sessionIndex].messages[messageIndex].syncAttempted += 1
+            updatedSessions[sessionIndex].messages[messageIndex].syncAttempted =
+              (updatedSessions[sessionIndex].messages[messageIndex].syncAttempted || 0) + 1
             updatedSessions[sessionIndex].messages[messageIndex].lastSyncAttempt = new Date()
 
             // 如果超过最大重试次数，标记为失败
@@ -348,21 +808,105 @@ class MessageCacheService {
                 updatedSyncQueue.splice(queueIndex, 1)
               }
               failedMessages.push(message.id)
+
+              // 触发错误事件
+              this.emitSyncEvent({
+                type: 'error',
+                message: `消息 ${message.id} 同步失败，已达到最大重试次数`,
+              })
             }
           }
         }
       }
+
+      // 更新进度
+      processedCount++
+      const progress = Math.round((processedCount / pendingMessages.length) * 100)
+      this.emitSyncEvent({
+        type: 'progress',
+        progress,
+        totalMessages: pendingMessages.length,
+        syncedCount: syncedMessages.length,
+        failedCount: failedMessages.length,
+      })
     }
 
     // 保存更新的缓存数据
     this.saveCachedData(updatedSessions, updatedSyncQueue)
 
-    return {
+    const result: SyncResult = {
       success: failedMessages.length === 0,
       syncedMessages,
       failedMessages,
-      errorMessage: failedMessages.length > 0 ? `Failed to sync ${failedMessages.length} messages` : undefined,
+      conflictMessages,
+      errorMessage: failedMessages.length > 0 ? `同步失败 ${failedMessages.length} 条消息` : undefined,
     }
+
+    // 触发同步完成事件
+    this.emitSyncEvent({
+      type: 'complete',
+      progress: 100,
+      totalMessages: pendingMessages.length,
+      syncedCount: syncedMessages.length,
+      failedCount: failedMessages.length,
+      conflictCount: conflictMessages.length,
+      message: result.success ? '同步完成' : result.errorMessage,
+    })
+
+    return result
+  }
+
+  /**
+   * 重试失败的消息
+   */
+  async retryFailedMessages(
+    sendMessage: (content: string, sessionId?: string) => Promise<void>
+  ): Promise<SyncResult> {
+    const { sessions, syncQueue } = this.getCachedData()
+
+    // 找出所有失败的消息
+    const failedMessages: { sessionId: string, message: CachedMessage }[] = []
+
+    sessions.forEach(session => {
+      session.messages.forEach(message => {
+        if (message.status === 'error') {
+          failedMessages.push({ sessionId: session.id, message })
+        }
+      })
+    })
+
+    if (failedMessages.length === 0) {
+      return {
+        success: true,
+        syncedMessages: [],
+        failedMessages: [],
+        conflictMessages: [],
+      }
+    }
+
+    // 重置重试次数并重新加入同步队列
+    let updatedSessions = [...sessions]
+    let updatedSyncQueue = [...syncQueue]
+
+    failedMessages.forEach(({ sessionId, message }) => {
+      const sessionIndex = updatedSessions.findIndex(s => s.id === sessionId)
+      if (sessionIndex >= 0) {
+        const messageIndex = updatedSessions[sessionIndex].messages.findIndex(m => m.id === message.id)
+        if (messageIndex >= 0) {
+          updatedSessions[sessionIndex].messages[messageIndex].status = 'pending'
+          updatedSessions[sessionIndex].messages[messageIndex].syncAttempted = 0
+
+          if (!updatedSyncQueue.includes(message.id)) {
+            updatedSyncQueue.push(message.id)
+          }
+        }
+      }
+    })
+
+    this.saveCachedData(updatedSessions, updatedSyncQueue)
+
+    // 重新同步
+    return this.syncMessages(sendMessage)
   }
 
   /**
@@ -396,6 +940,11 @@ class MessageCacheService {
     if (typeof window !== 'undefined') {
       localStorage.removeItem(this.cacheKey)
       localStorage.removeItem(this.syncQueueKey)
+    }
+
+    // 同时清空 IndexedDB
+    if (this.useIndexedDB) {
+      indexedDBHelper.clearAll().catch(console.error)
     }
   }
 
@@ -480,4 +1029,20 @@ export const clearCache = (): void => {
 
 export const getCacheStats = () => {
   return messageCacheService.getCacheStats()
+}
+
+// 新增导出：同步事件监听器
+export const addSyncEventListener = (listener: SyncEventListener): void => {
+  messageCacheService.addSyncEventListener(listener)
+}
+
+export const removeSyncEventListener = (listener: SyncEventListener): void => {
+  messageCacheService.removeSyncEventListener(listener)
+}
+
+// 新增导出：重试失败消息
+export const retryFailedMessages = async (
+  sendMessage: (content: string, sessionId?: string) => Promise<void>
+): Promise<SyncResult> => {
+  return messageCacheService.retryFailedMessages(sendMessage)
 }

@@ -14,17 +14,29 @@ jest.mock('@/store/chatStore')
 const mockUseChatStore = useChatStore as jest.MockedFunction<typeof useChatStore>
 
 // Mock组件
-jest.mock('../MessageList', () => {
-  return function MockMessageList({ className }: { className?: string }) {
+jest.mock('../MessageList', () => ({
+  MessageList: React.forwardRef(function MockMessageList({ className }: { className?: string }, ref: any) {
     return <div data-testid="message-list" className={className}>Message List</div>
-  }
-})
+  })
+}))
 
-jest.mock('../MessageInput', () => {
-  return function MockMessageInput({ onFileAttach }: { onFileAttach: (files: File[]) => void }) {
+jest.mock('../MessageInput', () => ({
+  MessageInput: function MockMessageInput({ onFileAttach }: { onFileAttach: (files: File[]) => void }) {
     return <div data-testid="message-input">Message Input</div>
   }
-})
+}))
+
+jest.mock('../SearchPanel', () => ({
+  SearchPanel: function MockSearchPanel({ isOpen, onClose, onResultClick }: any) {
+    if (!isOpen) return null
+    return (
+      <div data-testid="search-panel">
+        Search Panel
+        <button onClick={onClose}>关闭</button>
+      </div>
+    )
+  }
+}))
 
 describe('ChatInterface', () => {
   const mockCreateSession = jest.fn()
@@ -60,6 +72,13 @@ describe('ChatInterface', () => {
     Object.defineProperty(window, 'localStorage', {
       value: localStorageMock,
     })
+
+    // Mock ResizeObserver
+    global.ResizeObserver = class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
 
     // Mock confirm dialog
     global.confirm = jest.fn(() => true)
@@ -181,7 +200,9 @@ describe('ChatInterface', () => {
 
     render(<ChatInterface />)
 
-    const sessionCard = screen.getByText('会话1').closest('div[data-radix-scroll-area-viewport] div')
+    // 找到会话卡片并点击
+    const sessionText = screen.getByText('会话1')
+    const sessionCard = sessionText.closest('[class*="cursor-pointer"]')
     await user.click(sessionCard!)
 
     expect(mockSwitchSession).toHaveBeenCalledWith('session-1')
@@ -207,7 +228,9 @@ describe('ChatInterface', () => {
 
     render(<ChatInterface />)
 
-    const closeButton = screen.getByRole('button', { name: '' }).closest('button')!
+    // 找到错误关闭按钮（在错误提示区域内）
+    const errorDiv = screen.getByText('网络连接失败').closest('div')!
+    const closeButton = errorDiv.querySelector('button')!
     await user.click(closeButton)
 
     expect(mockSetError).toHaveBeenCalledWith(null)
@@ -225,12 +248,14 @@ describe('ChatInterface', () => {
 
     render(<ChatInterface />)
 
-    // 在移动端，菜单按钮应该可见
-    const menuButton = screen.getByRole('button', { name: '' })
-    await user.click(menuButton)
+    // 在移动端，菜单按钮应该可见（md:hidden 的按钮）
+    const menuButtons = screen.getAllByRole('button')
+    const menuButton = menuButtons.find(btn => btn.classList.contains('md:hidden'))
+    expect(menuButton).toBeTruthy()
+    await user.click(menuButton!)
 
-    // Sheet应该打开
-    expect(screen.getByText('新建会话')).toBeInTheDocument()
+    // Sheet应该打开，显示多个"新建会话"按钮
+    expect(screen.getAllByText('新建会话').length).toBeGreaterThanOrEqual(2)
   })
 
   it('should call clearHistory when clear history button is clicked', async () => {

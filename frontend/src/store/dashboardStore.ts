@@ -3,6 +3,11 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 
+// 获取 API 基础 URL
+const getApiBaseUrl = () => {
+  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'
+}
+
 // 数据源概览统计接口
 export interface DashboardOverview {
   databases: {
@@ -134,7 +139,8 @@ export const useDashboardStore = create<DashboardState>()(
         set({ isLoading: true, error: null })
 
         try {
-          const response = await fetch('/api/v1/data-sources/overview', {
+          const apiBaseUrl = getApiBaseUrl()
+          const response = await fetch(`${apiBaseUrl}/data-sources/overview`, {
             headers: {
               'Authorization': `Bearer ${localStorage.getItem('token')}`,
               'Content-Type': 'application/json',
@@ -238,7 +244,8 @@ export const useDashboardStore = create<DashboardState>()(
             params.append('date_to', filters.dateRange.to)
           }
 
-          const response = await fetch(`/api/v1/data-sources/search?${params}`, {
+          const apiBaseUrl = getApiBaseUrl()
+          const response = await fetch(`${apiBaseUrl}/data-sources/search?${params}`, {
             headers: {
               'Authorization': `Bearer ${localStorage.getItem('token')}`,
               'Content-Type': 'application/json',
@@ -270,7 +277,8 @@ export const useDashboardStore = create<DashboardState>()(
         set({ isLoading: true, error: null })
 
         try {
-          const response = await fetch('/api/v1/data-sources/bulk-delete', {
+          const apiBaseUrl = getApiBaseUrl()
+          const response = await fetch(`${apiBaseUrl}/data-sources/bulk-delete`, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${localStorage.getItem('token')}`,

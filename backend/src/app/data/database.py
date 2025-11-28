@@ -78,11 +78,43 @@ def check_database_connection() -> bool:
 
 def create_tables():
     """
-    创建所有数据表
+    创建所有数据表并初始化默认数据
     """
     try:
+        # 导入所有模型以确保它们被注册到 Base.metadata
+        from .models import (
+            Tenant, DataSourceConnection, KnowledgeDocument,
+            TenantConfig, QueryLog, ExplanationLog,
+            FusionResult, ReasoningPath, TenantStatus
+        )
+
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables created successfully")
+
+        # 创建默认租户（如果不存在）
+        db = SessionLocal()
+        try:
+            existing_tenant = db.query(Tenant).filter(Tenant.id == "default_tenant").first()
+            if not existing_tenant:
+                default_tenant = Tenant(
+                    id="default_tenant",
+                    email="admin@dataagent.local",
+                    status=TenantStatus.ACTIVE,
+                    display_name="Default Tenant",
+                    settings={"timezone": "UTC", "language": "zh-CN"},
+                    storage_quota_mb=1024
+                )
+                db.add(default_tenant)
+                db.commit()
+                logger.info("Default tenant created successfully")
+            else:
+                logger.info("Default tenant already exists")
+        except Exception as tenant_error:
+            db.rollback()
+            logger.warning(f"Could not create default tenant: {tenant_error}")
+        finally:
+            db.close()
+
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}")
         raise

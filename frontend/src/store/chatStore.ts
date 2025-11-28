@@ -245,7 +245,7 @@ export const useChatStore = create<ChatState>()(
                 role: m.role,
                 content: m.content,
                 timestamp: m.timestamp,
-                status: m.status || 'sent',
+                status: (m.status === 'sending' ? 'pending' : m.status || 'sent') as 'pending' | 'sent' | 'error' | 'synced',
               })),
               isActive: state.currentSession.isActive,
               isDirty: false,
@@ -344,7 +344,7 @@ export const useChatStore = create<ChatState>()(
                   role: m.role,
                   content: m.content,
                   timestamp: m.timestamp,
-                  status: m.status || 'sent',
+                  status: (m.status === 'sending' ? 'pending' : m.status || 'sent') as 'pending' | 'sent' | 'error' | 'synced',
                 })),
                 isActive: state.currentSession.isActive,
                 isDirty: false,
@@ -627,7 +627,7 @@ export const useChatStore = create<ChatState>()(
 
           if (cachedSessions.length > 0) {
             // 转换缓存数据为当前状态格式
-            const sessions = cachedSessions.map(cachedSession => ({
+            const sessions: ChatSession[] = cachedSessions.map(cachedSession => ({
               id: cachedSession.id,
               title: cachedSession.title,
               createdAt: cachedSession.createdAt,
@@ -637,7 +637,9 @@ export const useChatStore = create<ChatState>()(
                 role: cachedMessage.role,
                 content: cachedMessage.content,
                 timestamp: cachedMessage.timestamp,
-                status: cachedMessage.status === 'pending' ? 'sending' : cachedMessage.status,
+                status: (cachedMessage.status === 'pending' ? 'sending' :
+                         cachedMessage.status === 'synced' ? 'sent' :
+                         cachedMessage.status) as 'sending' | 'sent' | 'error',
                 metadata: cachedMessage.metadata,
               })),
               isActive: cachedSession.isActive,
@@ -672,6 +674,10 @@ export const useChatStore = create<ChatState>()(
         try {
           const result = await syncMessages(async (content, sessionId) => {
             // 使用store的sendMessage方法，但要避免无限循环
+            if (!sessionId) {
+              throw new Error('Session ID is required')
+            }
+
             const currentState = get()
             if (currentState.currentSession?.id === sessionId) {
               // 直接调用API而不是通过store的sendMessage
@@ -686,19 +692,20 @@ export const useChatStore = create<ChatState>()(
                 throw new Error(response.error || 'API Error: Unknown error')
               }
 
-              const result = response.data
+              const apiResult = response.data
 
               // 添加AI响应消息到缓存
               const assistantMessage = {
                 id: generateId(),
+                sessionId,
                 role: 'assistant' as const,
-                content: result.answer || '抱歉，我现在无法回答这个问题。',
+                content: apiResult.answer || '抱歉，我现在无法回答这个问题。',
                 timestamp: new Date(),
                 status: 'sent' as const,
                 metadata: {
-                  sources: result.sources,
-                  reasoning: result.reasoning,
-                  confidence: result.confidence,
+                  sources: apiResult.sources,
+                  reasoning: apiResult.reasoning,
+                  confidence: apiResult.confidence,
                 }
               }
 

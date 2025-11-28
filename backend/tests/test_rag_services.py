@@ -436,5 +436,471 @@ class TestRAGIntegration:
                     assert response.tenant_id == "test-tenant"
 
 
+class TestRAGLLMIntegration:
+    """RAG与LLM集成测试"""
+
+    @pytest.mark.asyncio
+    async def test_full_rag_pipeline_with_llm_answer(self):
+        """测试完整RAG管道（含LLM答案生成）"""
+        with patch('src.services.rag_service.EmbeddingService') as MockEmbedding, \
+             patch('src.services.rag_service.RetrievalService') as MockRetrieval, \
+             patch('src.services.rag_service.ZhipuService') as MockZhipu:
+
+            # 设置Mock服务
+            mock_embedding_service = AsyncMock()
+            mock_retrieval_service = AsyncMock()
+            mock_zhipu_service = AsyncMock()
+
+            MockEmbedding.return_value = mock_embedding_service
+            MockRetrieval.return_value = mock_retrieval_service
+            MockZhipu.return_value = mock_zhipu_service
+
+            # 配置嵌入服务Mock
+            mock_embedding_service.generate_embedding.return_value = (
+                [0.1] * 1024,
+                {"processing_time_ms": 50}
+            )
+
+            # 配置检索结果Mock
+            mock_retrieval_results = [
+                RetrievalResult(
+                    chunk_id="chunk_1",
+                    content="机器学习是人工智能的一个重要分支，它使计算机能够从数据中学习。",
+                    content_preview="机器学习是人工智能...",
+                    document_id=1,
+                    document_title="AI基础",
+                    file_name="ai_basics.pdf",
+                    file_type="pdf",
+                    similarity_score=0.92,
+                    rank=1,
+                    content_length=40,
+                    token_count=20,
+                    chunk_index=0
+                ),
+                RetrievalResult(
+                    chunk_id="chunk_2",
+                    content="深度学习是机器学习的子集，使用神经网络进行特征学习。",
+                    content_preview="深度学习是机器学习...",
+                    document_id=2,
+                    document_title="深度学习入门",
+                    file_name="deep_learning.pdf",
+                    file_type="pdf",
+                    similarity_score=0.85,
+                    rank=2,
+                    content_length=35,
+                    token_count=18,
+                    chunk_index=0
+                )
+            ]
+
+            mock_retrieval_service.retrieve_documents.return_value = (
+                mock_retrieval_results,
+                {"processing_time_ms": 100}
+            )
+
+            # 配置上下文构建Mock
+            context_text = """
+            [来源: ai_basics.pdf]
+            机器学习是人工智能的一个重要分支，它使计算机能够从数据中学习。
+
+            [来源: deep_learning.pdf]
+            深度学习是机器学习的子集，使用神经网络进行特征学习。
+            """
+            mock_retrieval_service.build_context.return_value = (
+                context_text,
+                ["ai_basics.pdf", "deep_learning.pdf"],
+                {"total_tokens": 50}
+            )
+
+            # 配置LLM响应Mock
+            mock_zhipu_service.chat_completion.return_value = (
+                "机器学习是人工智能的重要分支，它让计算机能够从数据中自动学习和改进。"
+                "深度学习是机器学习的一个子领域，它使用多层神经网络来学习数据的复杂特征表示。"
+            )
+
+            # 创建服务并测试
+            service = RAGService()
+            request = RAGQueryRequest(
+                query="什么是机器学习和深度学习？",
+                tenant_id="test-tenant",
+                generate_answer=True,
+                answer_style="detailed",
+                temperature=0.3
+            )
+
+            response = await service.process_query(request)
+
+            # 验证响应
+            assert response is not None
+            assert response.success is True
+            assert response.query == "什么是机器学习和深度学习？"
+            assert response.tenant_id == "test-tenant"
+            assert response.total_retrieved == 2
+            assert response.answer is not None
+            assert "机器学习" in response.answer
+            assert response.answer_confidence > 0.8  # 高置信度
+
+    @pytest.mark.asyncio
+    async def test_rag_with_different_answer_styles(self):
+        """测试不同答案风格的RAG"""
+        with patch('src.services.rag_service.EmbeddingService') as MockEmbedding, \
+             patch('src.services.rag_service.RetrievalService') as MockRetrieval, \
+             patch('src.services.rag_service.ZhipuService') as MockZhipu:
+
+            mock_embedding_service = AsyncMock()
+            mock_retrieval_service = AsyncMock()
+            mock_zhipu_service = AsyncMock()
+
+            MockEmbedding.return_value = mock_embedding_service
+            MockRetrieval.return_value = mock_retrieval_service
+            MockZhipu.return_value = mock_zhipu_service
+
+            # 基础Mock配置
+            mock_embedding_service.generate_embedding.return_value = ([0.1] * 1024, {"processing_time_ms": 50})
+
+            mock_retrieval_results = [
+                RetrievalResult(
+                    chunk_id="chunk_1",
+                    content="人工智能基础知识",
+                    content_preview="人工智能基础...",
+                    document_id=1,
+                    document_title="AI入门",
+                    file_name="ai_intro.pdf",
+                    file_type="pdf",
+                    similarity_score=0.9,
+                    rank=1,
+                    content_length=20,
+                    token_count=10,
+                    chunk_index=0
+                )
+            ]
+            mock_retrieval_service.retrieve_documents.return_value = (mock_retrieval_results, {"processing_time_ms": 50})
+            mock_retrieval_service.build_context.return_value = ("AI基础知识", ["ai_intro.pdf"], {"total_tokens": 20})
+
+            answer_styles = ["concise", "detailed", "creative"]
+            expected_responses = {
+                "concise": "AI是模拟人类智能的技术。",
+                "detailed": "人工智能是一个广泛的计算机科学领域，专注于创建能够执行通常需要人类智能的任务的系统...",
+                "creative": "想象一下，如果计算机能够像人类一样思考、学习和创造..."
+            }
+
+            for style in answer_styles:
+                mock_zhipu_service.chat_completion.return_value = expected_responses[style]
+
+                service = RAGService()
+                request = RAGQueryRequest(
+                    query="什么是AI？",
+                    tenant_id="test-tenant",
+                    generate_answer=True,
+                    answer_style=style,
+                    temperature=0.3 if style == "concise" else 0.7
+                )
+
+                response = await service.process_query(request)
+
+                assert response is not None
+                assert response.answer is not None
+
+
+class TestChromaDBZhipuIntegration:
+    """ChromaDB与智谱AI协同测试"""
+
+    @pytest.mark.asyncio
+    async def test_chromadb_retrieval_to_zhipu_answer(self):
+        """测试ChromaDB检索到智谱AI回答的完整流程"""
+        with patch('src.services.rag_service.EmbeddingService') as MockEmbedding, \
+             patch('src.services.rag_service.RetrievalService') as MockRetrieval, \
+             patch('src.services.rag_service.ZhipuService') as MockZhipu:
+
+            mock_embedding_service = AsyncMock()
+            mock_retrieval_service = AsyncMock()
+            mock_zhipu_service = AsyncMock()
+
+            MockEmbedding.return_value = mock_embedding_service
+            MockRetrieval.return_value = mock_retrieval_service
+            MockZhipu.return_value = mock_zhipu_service
+
+            # 模拟ChromaDB返回的结果
+            mock_embedding_service.generate_embedding.return_value = ([0.15] * 1024, {"processing_time_ms": 30})
+
+            chromadb_mock_results = [
+                RetrievalResult(
+                    chunk_id="chroma_doc_1",
+                    content="PostgreSQL是一个功能强大的开源对象关系数据库系统。",
+                    content_preview="PostgreSQL是一个...",
+                    document_id=1,
+                    document_title="数据库指南",
+                    file_name="db_guide.pdf",
+                    file_type="pdf",
+                    similarity_score=0.88,
+                    rank=1,
+                    content_length=30,
+                    token_count=15,
+                    chunk_index=0
+                )
+            ]
+
+            mock_retrieval_service.retrieve_documents.return_value = (chromadb_mock_results, {"processing_time_ms": 80})
+            mock_retrieval_service.build_context.return_value = (
+                "[来源: db_guide.pdf]\nPostgreSQL是一个功能强大的开源对象关系数据库系统。",
+                ["db_guide.pdf"],
+                {"total_tokens": 25}
+            )
+
+            # 智谱AI基于检索内容生成回答
+            mock_zhipu_service.chat_completion.return_value = (
+                "PostgreSQL是一个功能强大的开源对象关系数据库管理系统(ORDBMS)，"
+                "它以其可靠性、数据完整性和正确性著称，支持复杂查询和事务处理。"
+            )
+
+            service = RAGService()
+            request = RAGQueryRequest(
+                query="什么是PostgreSQL？",
+                tenant_id="test-tenant",
+                generate_answer=True
+            )
+
+            response = await service.process_query(request)
+
+            assert response.success is True
+            assert response.total_retrieved == 1
+            assert "PostgreSQL" in response.answer
+            assert response.context_length > 0
+
+    @pytest.mark.asyncio
+    async def test_empty_chromadb_results_handling(self):
+        """测试ChromaDB无结果时的处理"""
+        with patch('src.services.rag_service.EmbeddingService') as MockEmbedding, \
+             patch('src.services.rag_service.RetrievalService') as MockRetrieval, \
+             patch('src.services.rag_service.ZhipuService') as MockZhipu:
+
+            mock_embedding_service = AsyncMock()
+            mock_retrieval_service = AsyncMock()
+            mock_zhipu_service = AsyncMock()
+
+            MockEmbedding.return_value = mock_embedding_service
+            MockRetrieval.return_value = mock_retrieval_service
+            MockZhipu.return_value = mock_zhipu_service
+
+            mock_embedding_service.generate_embedding.return_value = ([0.1] * 1024, {"processing_time_ms": 30})
+            mock_retrieval_service.retrieve_documents.return_value = ([], {"processing_time_ms": 50})
+            mock_retrieval_service.build_context.return_value = ("", [], {"total_tokens": 0})
+
+            service = RAGService()
+            request = RAGQueryRequest(
+                query="这是一个找不到相关文档的查询",
+                tenant_id="test-tenant",
+                generate_answer=True
+            )
+
+            response = await service.process_query(request)
+
+            assert response.success is True
+            assert response.total_retrieved == 0
+            # 无检索结果时，answer可能为None或提示信息
+            assert response.context_length == 0
+
+
+class TestKnowledgeBaseQA:
+    """知识库问答场景测试"""
+
+    @pytest.mark.asyncio
+    async def test_multi_document_qa(self):
+        """测试多文档问答"""
+        with patch('src.services.rag_service.EmbeddingService') as MockEmbedding, \
+             patch('src.services.rag_service.RetrievalService') as MockRetrieval, \
+             patch('src.services.rag_service.ZhipuService') as MockZhipu:
+
+            mock_embedding_service = AsyncMock()
+            mock_retrieval_service = AsyncMock()
+            mock_zhipu_service = AsyncMock()
+
+            MockEmbedding.return_value = mock_embedding_service
+            MockRetrieval.return_value = mock_retrieval_service
+            MockZhipu.return_value = mock_zhipu_service
+
+            mock_embedding_service.generate_embedding.return_value = ([0.1] * 1024, {"processing_time_ms": 30})
+
+            # 模拟来自多个文档的检索结果
+            multi_doc_results = [
+                RetrievalResult(
+                    chunk_id=f"doc_{i}_chunk",
+                    content=f"文档{i}的相关内容：这是关于主题的第{i}个观点。",
+                    content_preview=f"文档{i}的相关内容...",
+                    document_id=i,
+                    document_title=f"文档{i}",
+                    file_name=f"document_{i}.pdf",
+                    file_type="pdf",
+                    similarity_score=0.9 - i * 0.1,
+                    rank=i,
+                    content_length=30,
+                    token_count=15,
+                    chunk_index=0
+                )
+                for i in range(1, 4)
+            ]
+
+            mock_retrieval_service.retrieve_documents.return_value = (multi_doc_results, {"processing_time_ms": 100})
+            mock_retrieval_service.build_context.return_value = (
+                "综合多个文档的内容...",
+                ["document_1.pdf", "document_2.pdf", "document_3.pdf"],
+                {"total_tokens": 60}
+            )
+            mock_zhipu_service.chat_completion.return_value = "综合三个文档的观点，我们可以得出..."
+
+            service = RAGService()
+            request = RAGQueryRequest(
+                query="综合多个文档的信息回答问题",
+                tenant_id="test-tenant",
+                max_results=5,
+                generate_answer=True
+            )
+
+            response = await service.process_query(request)
+
+            assert response.success is True
+            assert response.total_retrieved == 3
+            assert response.answer is not None
+            assert len(response.context_used) == 3
+
+    @pytest.mark.asyncio
+    async def test_qa_with_source_citation(self):
+        """测试带来源引用的问答"""
+        with patch('src.services.rag_service.EmbeddingService') as MockEmbedding, \
+             patch('src.services.rag_service.RetrievalService') as MockRetrieval, \
+             patch('src.services.rag_service.ZhipuService') as MockZhipu:
+
+            mock_embedding_service = AsyncMock()
+            mock_retrieval_service = AsyncMock()
+            mock_zhipu_service = AsyncMock()
+
+            MockEmbedding.return_value = mock_embedding_service
+            MockRetrieval.return_value = mock_retrieval_service
+            MockZhipu.return_value = mock_zhipu_service
+
+            mock_embedding_service.generate_embedding.return_value = ([0.1] * 1024, {"processing_time_ms": 30})
+
+            source_results = [
+                RetrievalResult(
+                    chunk_id="policy_chunk",
+                    content="公司政策规定：员工每年享有15天带薪年假。",
+                    content_preview="公司政策规定...",
+                    document_id=1,
+                    document_title="员工手册",
+                    file_name="employee_handbook.pdf",
+                    file_type="pdf",
+                    similarity_score=0.95,
+                    rank=1,
+                    content_length=25,
+                    token_count=12,
+                    chunk_index=5
+                )
+            ]
+
+            mock_retrieval_service.retrieve_documents.return_value = (source_results, {"processing_time_ms": 50})
+            mock_retrieval_service.build_context.return_value = (
+                "[来源: 员工手册, 第5章]\n公司政策规定：员工每年享有15天带薪年假。",
+                ["employee_handbook.pdf"],
+                {"total_tokens": 20}
+            )
+            mock_zhipu_service.chat_completion.return_value = (
+                "根据《员工手册》规定，员工每年享有15天带薪年假。[来源: employee_handbook.pdf]"
+            )
+
+            service = RAGService()
+            request = RAGQueryRequest(
+                query="员工有多少天年假？",
+                tenant_id="test-tenant",
+                generate_answer=True,
+                include_metadata=True
+            )
+
+            response = await service.process_query(request)
+
+            assert response.success is True
+            assert "15天" in response.answer or "15" in response.answer
+
+
+class TestRAGReasoningIntegration:
+    """RAG与推理服务集成测试"""
+
+    @pytest.mark.asyncio
+    async def test_rag_with_reasoning_steps(self):
+        """测试带推理步骤的RAG"""
+        with patch('src.services.rag_service.EmbeddingService') as MockEmbedding, \
+             patch('src.services.rag_service.RetrievalService') as MockRetrieval, \
+             patch('src.services.rag_service.ZhipuService') as MockZhipu:
+
+            mock_embedding_service = AsyncMock()
+            mock_retrieval_service = AsyncMock()
+            mock_zhipu_service = AsyncMock()
+
+            MockEmbedding.return_value = mock_embedding_service
+            MockRetrieval.return_value = mock_retrieval_service
+            MockZhipu.return_value = mock_zhipu_service
+
+            mock_embedding_service.generate_embedding.return_value = ([0.1] * 1024, {"processing_time_ms": 30})
+
+            reasoning_results = [
+                RetrievalResult(
+                    chunk_id="fact_1",
+                    content="销售额在Q1增长了15%。",
+                    content_preview="销售额在Q1...",
+                    document_id=1,
+                    document_title="Q1报告",
+                    file_name="q1_report.pdf",
+                    file_type="pdf",
+                    similarity_score=0.9,
+                    rank=1,
+                    content_length=15,
+                    token_count=8,
+                    chunk_index=0
+                ),
+                RetrievalResult(
+                    chunk_id="fact_2",
+                    content="Q2销售额继续增长10%。",
+                    content_preview="Q2销售额继续...",
+                    document_id=2,
+                    document_title="Q2报告",
+                    file_name="q2_report.pdf",
+                    file_type="pdf",
+                    similarity_score=0.85,
+                    rank=2,
+                    content_length=15,
+                    token_count=8,
+                    chunk_index=0
+                )
+            ]
+
+            mock_retrieval_service.retrieve_documents.return_value = (reasoning_results, {"processing_time_ms": 60})
+            mock_retrieval_service.build_context.return_value = (
+                "Q1销售额增长15%，Q2继续增长10%。",
+                ["q1_report.pdf", "q2_report.pdf"],
+                {"total_tokens": 30}
+            )
+
+            # 模拟包含推理过程的回答
+            mock_zhipu_service.chat_completion.return_value = (
+                "基于报告数据分析：\n"
+                "1. Q1销售额增长15%\n"
+                "2. Q2销售额继续增长10%\n"
+                "结论：上半年销售呈持续增长态势，累计增长约26.5%。"
+            )
+
+            service = RAGService()
+            request = RAGQueryRequest(
+                query="分析上半年销售趋势",
+                tenant_id="test-tenant",
+                generate_answer=True,
+                answer_style="detailed"
+            )
+
+            response = await service.process_query(request)
+
+            assert response.success is True
+            assert response.answer is not None
+            assert "增长" in response.answer
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

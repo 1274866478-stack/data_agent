@@ -36,9 +36,26 @@ class FileUploadService {
   }
 
   /**
+   * 获取认证头信息
+   */
+  private getAuthHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {}
+
+    // 从 localStorage 获取 token
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('token')
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+    }
+
+    return headers
+  }
+
+  /**
    * 检查文件类型是否支持
    */
-  private isFileTypeSupported(file: File): boolean {
+  isFileTypeSupported(file: File): boolean {
     const supportedTypes = [
       'application/pdf',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -54,7 +71,7 @@ class FileUploadService {
   /**
    * 检查文件大小是否在限制范围内
    */
-  private isFileSizeValid(file: File): boolean {
+  isFileSizeValid(file: File): boolean {
     const maxSize = 100 * 1024 * 1024 // 100MB
     return file.size <= maxSize
   }
@@ -79,6 +96,7 @@ class FileUploadService {
 
     const response = await fetch(`${this.apiBase}/upload/initialize`, {
       method: 'POST',
+      headers: this.getAuthHeaders(),
       body: formData,
     })
 
@@ -114,6 +132,7 @@ class FileUploadService {
       `${this.apiBase}/upload/chunk/${sessionId}/${chunkNumber}`,
       {
         method: 'POST',
+        headers: this.getAuthHeaders(),
         body: formData,
       }
     )
@@ -130,6 +149,7 @@ class FileUploadService {
   private async completeChunkedUpload(sessionId: string): Promise<UploadResult> {
     const response = await fetch(`${this.apiBase}/upload/complete/${sessionId}`, {
       method: 'POST',
+      headers: this.getAuthHeaders(),
     })
 
     if (!response.ok) {
@@ -382,6 +402,13 @@ class FileUploadService {
       })
 
       xhr.open('POST', `${this.apiBase}/documents/upload`)
+
+      // 添加认证头
+      const authHeaders = this.getAuthHeaders()
+      Object.entries(authHeaders).forEach(([key, value]) => {
+        xhr.setRequestHeader(key, value)
+      })
+
       xhr.send(formData)
     })
   }
@@ -423,7 +450,9 @@ class FileUploadService {
    * 获取上传状态
    */
   async getUploadStatus(sessionId: string): Promise<any> {
-    const response = await fetch(`${this.apiBase}/upload/status/${sessionId}`)
+    const response = await fetch(`${this.apiBase}/upload/status/${sessionId}`, {
+      headers: this.getAuthHeaders(),
+    })
 
     if (!response.ok) {
       throw new Error('获取上传状态失败')
@@ -438,11 +467,35 @@ class FileUploadService {
   async abortUpload(sessionId: string): Promise<void> {
     const response = await fetch(`${this.apiBase}/upload/abort/${sessionId}`, {
       method: 'DELETE',
+      headers: this.getAuthHeaders(),
     })
 
     if (!response.ok) {
       throw new Error('取消上传失败')
     }
+  }
+
+  /**
+   * 获取支持的文件类型列表
+   */
+  getSupportedFileTypes(): string[] {
+    return ['.pdf', '.doc', '.docx']
+  }
+
+  /**
+   * 获取最大文件大小(字节)
+   */
+  getMaxFileSize(): number {
+    return 100 * 1024 * 1024 // 100MB
+  }
+
+  /**
+   * 格式化文件大小
+   */
+  formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
   }
 }
 

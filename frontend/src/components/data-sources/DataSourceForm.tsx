@@ -54,14 +54,19 @@ export function DataSourceForm({
   const validateConnectionString = (connectionString: string, dbType: string): boolean => {
     if (!connectionString) return false
 
+    // SQLite 使用文件路径，不是标准URL格式
+    if (dbType === 'sqlite') {
+      return connectionString.startsWith('sqlite:///') || connectionString.startsWith('sqlite://')
+    }
+
     try {
       const url = new URL(connectionString)
 
       switch (dbType) {
         case 'postgresql':
-          return url.protocol === 'postgresql:' && url.hostname && url.pathname
+          return url.protocol === 'postgresql:' && !!url.hostname && !!url.pathname
         case 'mysql':
-          return url.protocol === 'mysql:' && url.hostname && url.pathname
+          return url.protocol === 'mysql:' && !!url.hostname && !!url.pathname
         default:
           return false
       }
@@ -77,6 +82,8 @@ export function DataSourceForm({
         return 'postgresql://username:password@localhost:5432/database_name'
       case 'mysql':
         return 'mysql://username:password@localhost:3306/database_name'
+      case 'sqlite':
+        return 'sqlite:///path/to/database.db'
       default:
         return ''
     }
@@ -92,7 +99,7 @@ export function DataSourceForm({
       return
     }
 
-    if (!validateConnectionString(connectionString, dbType)) {
+    if (!connectionString || !validateConnectionString(connectionString, dbType || 'postgresql')) {
       setError('connection_string', { message: '连接字符串格式不正确' })
       return
     }
@@ -124,7 +131,7 @@ export function DataSourceForm({
 
   // 提交表单
   const handleFormSubmit = async (data: CreateDataSourceRequest) => {
-    if (!validateConnectionString(data.connection_string, data.db_type)) {
+    if (!data.connection_string || !validateConnectionString(data.connection_string, data.db_type || 'postgresql')) {
       setError('connection_string', { message: '连接字符串格式不正确，请先测试连接' })
       return
     }
@@ -184,6 +191,7 @@ export function DataSourceForm({
             >
               <option value="postgresql">PostgreSQL</option>
               <option value="mysql">MySQL</option>
+              <option value="sqlite">SQLite</option>
             </select>
             {errors.db_type && (
               <p className="text-sm text-destructive">{errors.db_type.message}</p>
@@ -195,13 +203,13 @@ export function DataSourceForm({
             <Label htmlFor="connection_string">连接字符串 *</Label>
             <Input
               id="connection_string"
-              placeholder={getConnectionStringExample(watchedDbType)}
+              placeholder={getConnectionStringExample(watchedDbType || 'postgresql')}
               className="font-mono text-sm"
               {...register('connection_string', {
                 required: '请输入连接字符串',
                 validate: (value) => {
                   if (!value) return '请输入连接字符串'
-                  if (!validateConnectionString(value, watchedDbType)) {
+                  if (!validateConnectionString(value, watchedDbType || 'postgresql')) {
                     return '连接字符串格式不正确'
                   }
                   return true
@@ -214,7 +222,7 @@ export function DataSourceForm({
 
             {/* 连接字符串格式说明 */}
             <div className="text-xs text-muted-foreground">
-              格式示例：{getConnectionStringExample(watchedDbType)}
+              格式示例：{getConnectionStringExample(watchedDbType || 'postgresql')}
             </div>
 
             {/* 测试连接按钮 */}
@@ -292,7 +300,7 @@ export function DataSourceForm({
           )}
 
           {/* 错误信息 */}
-          <ErrorMessage message={useDataSourceStore.getState().error} />
+          {useDataSourceStore.getState().error && <ErrorMessage message={String(useDataSourceStore.getState().error)} />}
 
           {/* 表单按钮 */}
           <div className="flex gap-3 pt-4">

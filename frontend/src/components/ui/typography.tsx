@@ -80,7 +80,7 @@ export const P = React.forwardRef<HTMLParagraphElement, TypographyProps>(
 )
 P.displayName = "P"
 
-export const Blockquote = React.forwardRef<HTMLElement, TypographyProps>(
+export const Blockquote = React.forwardRef<HTMLQuoteElement, TypographyProps>(
   ({ className, children, ...props }, ref) => (
     <blockquote
       ref={ref}

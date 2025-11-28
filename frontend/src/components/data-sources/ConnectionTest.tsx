@@ -57,6 +57,8 @@ export function ConnectionTest({
         return 'postgresql://username:password@localhost:5432/database_name'
       case 'mysql':
         return 'mysql://username:password@localhost:3306/database_name'
+      case 'sqlite':
+        return 'sqlite:///path/to/database.db'
       default:
         return ''
     }
@@ -99,6 +101,7 @@ export function ConnectionTest({
           >
             <option value="postgresql">PostgreSQL</option>
             <option value="mysql">MySQL</option>
+            <option value="sqlite">SQLite</option>
           </select>
           <Button
             onClick={handleTestConnection}
@@ -153,6 +156,7 @@ export function ConnectionTest({
           >
             <option value="postgresql">PostgreSQL</option>
             <option value="mysql">MySQL</option>
+            <option value="sqlite">SQLite</option>
           </select>
         </div>
 

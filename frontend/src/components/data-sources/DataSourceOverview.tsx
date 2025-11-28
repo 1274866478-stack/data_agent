@@ -96,7 +96,7 @@ const ActivityItem: React.FC<ActivityItemProps> = ({ activity }) => {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-gray-900 truncate">
-          {getActivityText()}{getTypeText()} "{activity.item_name}"
+          {getActivityText()}{getTypeText()} &quot;{activity.item_name}&quot;
         </p>
         <p className="text-xs text-gray-500">
           {new Date(activity.timestamp).toLocaleString()}

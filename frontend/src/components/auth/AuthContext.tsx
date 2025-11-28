@@ -43,12 +43,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (response.ok) {
         const userData = await response.json()
         setUser(userData)
+        setLoading(false) // 登录成功后设置loading为false
       } else {
         throw new Error('Failed to validate token')
       }
     } catch (error) {
       console.error('Login failed:', error)
       logout()
+      setLoading(false) // 登录失败后也要设置loading为false
       throw error
     }
   }
@@ -126,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch (error) {
           console.error('Failed to restore auth session:', error)
           localStorage.removeItem('auth_token')
+          setLoading(false) // 恢复会话失败后设置loading为false
         }
       } else {
         // 没有token时也要设置loading为false
