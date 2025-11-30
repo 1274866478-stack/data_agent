@@ -39,15 +39,22 @@ class EncryptionService:
         """
         获取或创建加密密钥
         优先从环境变量获取，如果没有则创建新的
+
+        Fernet密钥格式：44字符的Base64编码字符串（代表32字节的密钥）
         """
         # 从环境变量获取密钥
         key = os.getenv("ENCRYPTION_KEY")
         if key:
             try:
-                # Base64解码密钥
-                return base64.urlsafe_b64decode(key.encode())
+                # Fernet需要的是Base64编码的字符串（bytes类型）
+                # 直接将字符串编码为bytes即可，不需要再次解码
+                key_bytes = key.encode('utf-8')
+                # 验证密钥格式是否正确
+                Fernet(key_bytes)  # 这会验证密钥格式
+                logger.info("Encryption key loaded from environment variable")
+                return key_bytes
             except Exception as e:
-                logger.warning(f"Failed to decode encryption key from environment: {e}")
+                logger.warning(f"Failed to load encryption key from environment: {e}")
 
         # 如果环境变量中没有，生成新的密钥
         logger.warning("No encryption key found in environment, generating new key")
@@ -55,7 +62,7 @@ class EncryptionService:
 
         # 在开发环境中，记录密钥以便添加到环境变量
         if os.getenv("ENVIRONMENT", "development") == "development":
-            logger.warning(f"Generated encryption key (add to .env): ENCRYPTION_KEY={base64.urlsafe_b64encode(key).decode()}")
+            logger.warning(f"Generated encryption key (add to .env): ENCRYPTION_KEY={key.decode()}")
 
         return key
 
@@ -67,7 +74,7 @@ class EncryptionService:
             connection_string: 明文连接字符串
 
         Returns:
-            加密后的连接字符串（Base64编码）
+            加密后的连接字符串（Fernet token，已经是Base64编码）
         """
         if not connection_string:
             raise ValueError("Connection string cannot be empty")
@@ -77,10 +84,10 @@ class EncryptionService:
             return connection_string
 
         try:
-            # 加密数据
+            # Fernet.encrypt() 返回的已经是Base64编码的bytes
+            # 直接解码为字符串即可，不需要再次Base64编码
             encrypted_data = self.cipher_suite.encrypt(connection_string.encode('utf-8'))
-            # 返回Base64编码的结果
-            return base64.urlsafe_b64encode(encrypted_data).decode('utf-8')
+            return encrypted_data.decode('utf-8')
         except Exception as e:
             logger.error(f"Failed to encrypt connection string: {e}")
             raise RuntimeError("Failed to encrypt connection string")
@@ -90,7 +97,7 @@ class EncryptionService:
         解密连接字符串
 
         Args:
-            encrypted_connection_string: 加密的连接字符串（Base64编码）
+            encrypted_connection_string: 加密的连接字符串（Fernet token）
 
         Returns:
             解密后的明文连接字符串
@@ -103,10 +110,8 @@ class EncryptionService:
             return encrypted_connection_string
 
         try:
-            # Base64解码
-            encrypted_data = base64.urlsafe_b64decode(encrypted_connection_string.encode('utf-8'))
-            # 解密数据
-            decrypted_data = self.cipher_suite.decrypt(encrypted_data)
+            # Fernet token 已经是Base64编码的，直接传给decrypt即可
+            decrypted_data = self.cipher_suite.decrypt(encrypted_connection_string.encode('utf-8'))
             return decrypted_data.decode('utf-8')
         except Exception as e:
             logger.error(f"Failed to decrypt connection string: {e}")

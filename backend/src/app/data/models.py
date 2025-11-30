@@ -20,8 +20,8 @@ from ..services.encryption_service import encryption_service
 from ...services.database_factory import DatabaseAdapterFactory
 
 
-class TenantStatus(enum.Enum):
-    """租户状态枚举"""
+class TenantStatus(str, enum.Enum):
+    """租户状态枚举 - 继承str以便与数据库字符串值兼容"""
     ACTIVE = "active"
     SUSPENDED = "suspended"
     DELETED = "deleted"
@@ -39,7 +39,13 @@ class Tenant(Base):
     email = Column(String(255), nullable=False, unique=True, index=True)
 
     # 租户状态管理（Story要求）
-    status = Column(Enum(TenantStatus), default=TenantStatus.ACTIVE, nullable=False, index=True)
+    # 使用 values_callable 确保与数据库中的小写枚举值匹配
+    status = Column(
+        Enum(TenantStatus, values_callable=lambda x: [e.value for e in x]),
+        default=TenantStatus.ACTIVE,
+        nullable=False,
+        index=True
+    )
 
     # 租户基本信息
     display_name = Column(String(255), nullable=True)

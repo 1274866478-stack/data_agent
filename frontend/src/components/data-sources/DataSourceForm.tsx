@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,7 +9,41 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import { ErrorMessage } from '@/components/ui/error-message'
-import { useDataSourceStore, CreateDataSourceRequest, TestResult } from '@/store/dataSourceStore'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useDataSourceStore, CreateDataSourceRequest } from '@/store/dataSourceStore'
+import { Database, FileUp } from 'lucide-react'
+
+// 支持的文件类型配置
+const SUPPORTED_FILE_TYPES = {
+  'csv': {
+    mimeTypes: ['text/csv', 'application/vnd.ms-excel'],
+    extensions: ['.csv'],
+    maxSize: 100 * 1024 * 1024, // 100MB
+    icon: '📊',
+    description: 'CSV 表格文件'
+  },
+  'xlsx': {
+    mimeTypes: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    extensions: ['.xlsx'],
+    maxSize: 100 * 1024 * 1024, // 100MB
+    icon: '📗',
+    description: 'Excel 表格文件'
+  },
+  'xls': {
+    mimeTypes: ['application/vnd.ms-excel'],
+    extensions: ['.xls'],
+    maxSize: 100 * 1024 * 1024, // 100MB
+    icon: '📗',
+    description: 'Excel 表格文件 (旧版)'
+  },
+  'db': {
+    mimeTypes: ['application/x-sqlite3', 'application/octet-stream'],
+    extensions: ['.db', '.sqlite', '.sqlite3'],
+    maxSize: 500 * 1024 * 1024, // 500MB
+    icon: '🗄️',
+    description: 'SQLite 数据库文件'
+  }
+}
 
 interface DataSourceFormProps {
   tenantId: string
@@ -19,6 +53,18 @@ interface DataSourceFormProps {
   isLoading?: boolean
 }
 
+interface FileDataSourceForm {
+  name: string
+  file: File | null
+  file_type: string
+}
+
+interface DatabaseConnectionForm {
+  name: string
+  connection_string: string
+  db_type: string
+}
+
 export function DataSourceForm({
   tenantId,
   initialData,
@@ -26,307 +72,514 @@ export function DataSourceForm({
   onCancel,
   isLoading: externalLoading = false,
 }: DataSourceFormProps) {
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-    watch,
-    setError,
-    setValue,
-  } = useForm<CreateDataSourceRequest>({
-    defaultValues: {
-      name: '',
-      connection_string: '',
-      db_type: 'postgresql',
-      ...initialData,
-    },
-  })
-
-  const [testResult, setTestResult] = useState<TestResult | null>(null)
-  const [isTesting, setIsTesting] = useState(false)
-
-  const { testConnection, createDataSource } = useDataSourceStore()
-
-  const watchedConnectionString = watch('connection_string')
-  const watchedDbType = watch('db_type')
-
-  // 连接字符串格式验证
-  const validateConnectionString = (connectionString: string, dbType: string): boolean => {
-    if (!connectionString) return false
-
-    // SQLite 使用文件路径，不是标准URL格式
-    if (dbType === 'sqlite') {
-      return connectionString.startsWith('sqlite:///') || connectionString.startsWith('sqlite://')
-    }
-
-    try {
-      const url = new URL(connectionString)
-
-      switch (dbType) {
-        case 'postgresql':
-          return url.protocol === 'postgresql:' && !!url.hostname && !!url.pathname
-        case 'mysql':
-          return url.protocol === 'mysql:' && !!url.hostname && !!url.pathname
-        default:
-          return false
-      }
-    } catch {
-      return false
-    }
-  }
-
-  // 获取连接字符串示例
-  const getConnectionStringExample = (dbType: string): string => {
-    switch (dbType) {
-      case 'postgresql':
-        return 'postgresql://username:password@localhost:5432/database_name'
-      case 'mysql':
-        return 'mysql://username:password@localhost:3306/database_name'
-      case 'sqlite':
-        return 'sqlite:///path/to/database.db'
-      default:
-        return ''
-    }
-  }
-
-  // 测试连接
-  const handleTestConnection = async () => {
-    const connectionString = watchedConnectionString
-    const dbType = watchedDbType
-
-    if (!connectionString) {
-      setError('connection_string', { message: '请输入连接字符串' })
-      return
-    }
-
-    if (!connectionString || !validateConnectionString(connectionString, dbType || 'postgresql')) {
-      setError('connection_string', { message: '连接字符串格式不正确' })
-      return
-    }
-
-    setIsTesting(true)
-    setTestResult(null)
-
-    try {
-      const result = await testConnection(connectionString, dbType)
-      setTestResult(result)
-
-      if (!result.success) {
-        setError('connection_string', { message: `连接测试失败: ${result.message}` })
-      }
-    } catch (error) {
-      const errorResult: TestResult = {
-        success: false,
-        message: error instanceof Error ? error.message : '连接测试失败',
-        response_time_ms: 0,
-        error_code: 'TEST_ERROR',
-        timestamp: new Date().toISOString(),
-      }
-      setTestResult(errorResult)
-      setError('connection_string', { message: errorResult.message })
-    } finally {
-      setIsTesting(false)
-    }
-  }
-
-  // 提交表单
-  const handleFormSubmit = async (data: CreateDataSourceRequest) => {
-    if (!data.connection_string || !validateConnectionString(data.connection_string, data.db_type || 'postgresql')) {
-      setError('connection_string', { message: '连接字符串格式不正确，请先测试连接' })
-      return
-    }
-
-    try {
-      await createDataSource(tenantId, data)
-      onSubmit?.(data)
-    } catch (error) {
-      // 错误已由store处理
-    }
-  }
-
-  const getStatusColor = (success?: boolean) => {
-    if (success === undefined) return 'secondary'
-    return success ? 'default' : 'destructive'
-  }
-
-  const getStatusText = (success?: boolean) => {
-    if (success === undefined) return '未测试'
-    return success ? '连接成功' : '连接失败'
-  }
+  const [activeTab, setActiveTab] = useState<'database' | 'file'>('database')
+  const { createDataSource, isLoading, error } = useDataSourceStore()
 
   return (
     <Card className="w-full max-w-2xl mx-auto">
       <CardHeader>
         <CardTitle>{initialData ? '编辑数据源' : '添加数据源'}</CardTitle>
         <CardDescription>
-          配置外部数据库连接，支持 PostgreSQL 和 MySQL
+          选择数据库连接或上传数据文件
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
-          {/* 数据源名称 */}
-          <div className="space-y-2">
-            <Label htmlFor="name">数据源名称 *</Label>
-            <Input
-              id="name"
-              placeholder="例如：生产数据库、测试环境"
-              {...register('name', {
-                required: '请输入数据源名称',
-                minLength: { value: 1, message: '数据源名称不能为空' },
-                maxLength: { value: 255, message: '数据源名称不能超过255个字符' },
-              })}
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'database' | 'file')}>
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="database" className="flex items-center gap-2">
+              <Database className="h-4 w-4" />
+              数据库连接
+            </TabsTrigger>
+            <TabsTrigger value="file" className="flex items-center gap-2">
+              <FileUp className="h-4 w-4" />
+              文件上传
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="database" className="space-y-4 mt-6">
+            <DatabaseConnectionFormContent
+              tenantId={tenantId}
+              initialData={initialData}
+              onSubmit={onSubmit}
+              onCancel={onCancel}
+              isLoading={externalLoading || isLoading}
+              error={error}
             />
-            {errors.name && (
-              <p className="text-sm text-destructive">{errors.name.message}</p>
-            )}
-          </div>
+          </TabsContent>
 
-          {/* 数据库类型 */}
-          <div className="space-y-2">
-            <Label htmlFor="db_type">数据库类型 *</Label>
-            <select
-              id="db_type"
-              className="w-full p-2 border rounded-md bg-background"
-              {...register('db_type', { required: '请选择数据库类型' })}
-            >
-              <option value="postgresql">PostgreSQL</option>
-              <option value="mysql">MySQL</option>
-              <option value="sqlite">SQLite</option>
-            </select>
-            {errors.db_type && (
-              <p className="text-sm text-destructive">{errors.db_type.message}</p>
-            )}
-          </div>
-
-          {/* 连接字符串 */}
-          <div className="space-y-2">
-            <Label htmlFor="connection_string">连接字符串 *</Label>
-            <Input
-              id="connection_string"
-              placeholder={getConnectionStringExample(watchedDbType || 'postgresql')}
-              className="font-mono text-sm"
-              {...register('connection_string', {
-                required: '请输入连接字符串',
-                validate: (value) => {
-                  if (!value) return '请输入连接字符串'
-                  if (!validateConnectionString(value, watchedDbType || 'postgresql')) {
-                    return '连接字符串格式不正确'
-                  }
-                  return true
-                },
-              })}
+          <TabsContent value="file" className="space-y-4 mt-6">
+            <FileUploadFormContent
+              tenantId={tenantId}
+              initialData={initialData}
+              onSubmit={onSubmit}
+              onCancel={onCancel}
+              isLoading={externalLoading || isLoading}
+              error={error}
             />
-            {errors.connection_string && (
-              <p className="text-sm text-destructive">{errors.connection_string.message}</p>
-            )}
-
-            {/* 连接字符串格式说明 */}
-            <div className="text-xs text-muted-foreground">
-              格式示例：{getConnectionStringExample(watchedDbType || 'postgresql')}
-            </div>
-
-            {/* 测试连接按钮 */}
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleTestConnection}
-                disabled={isTesting || !watchedConnectionString}
-              >
-                {isTesting ? (
-                  <>
-                    <LoadingSpinner className="mr-2 h-4 w-4" />
-                    测试中...
-                  </>
-                ) : (
-                  '测试连接'
-                )}
-              </Button>
-
-              {/* 测试结果 */}
-              {testResult && (
-                <Badge variant={getStatusColor(testResult.success)}>
-                  {getStatusText(testResult.success)}
-                </Badge>
-              )}
-            </div>
-          </div>
-
-          {/* 测试结果详情 */}
-          {testResult && (
-            <div className="p-4 border rounded-md bg-muted/50">
-              <h4 className="font-medium mb-2">连接测试结果</h4>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span>状态：</span>
-                  <Badge variant={getStatusColor(testResult.success)}>
-                    {getStatusText(testResult.success)}
-                  </Badge>
-                </div>
-                <div className="flex justify-between">
-                  <span>响应时间：</span>
-                  <span>{testResult.response_time_ms}ms</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>消息：</span>
-                  <span className={testResult.success ? 'text-green-600' : 'text-red-600'}>
-                    {testResult.message}
-                  </span>
-                </div>
-
-                {testResult.details && (
-                  <div className="mt-3 space-y-1">
-                    <div className="font-medium">连接详情：</div>
-                    {testResult.details.database_type && (
-                      <div>数据库类型：{testResult.details.database_type}</div>
-                    )}
-                    {testResult.details.server_version && (
-                      <div>服务器版本：{testResult.details.server_version}</div>
-                    )}
-                    {testResult.details.database_name && (
-                      <div>数据库名称：{testResult.details.database_name}</div>
-                    )}
-                    {testResult.details.connection_info?.host && (
-                      <div>主机：{testResult.details.connection_info.host}</div>
-                    )}
-                    {testResult.details.connection_info?.port && (
-                      <div>端口：{testResult.details.connection_info.port}</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* 错误信息 */}
-          {useDataSourceStore.getState().error && <ErrorMessage message={String(useDataSourceStore.getState().error)} />}
-
-          {/* 表单按钮 */}
-          <div className="flex gap-3 pt-4">
-            <Button
-              type="submit"
-              disabled={isSubmitting || externalLoading || !testResult?.success}
-              className="flex-1"
-            >
-              {(isSubmitting || externalLoading) ? (
-                <>
-                  <LoadingSpinner className="mr-2 h-4 w-4" />
-                  {initialData ? '更新中...' : '创建中...'}
-                </>
-              ) : (
-                initialData ? '更新数据源' : '创建数据源'
-              )}
-            </Button>
-
-            {onCancel && (
-              <Button type="button" variant="outline" onClick={onCancel}>
-                取消
-              </Button>
-            )}
-          </div>
-        </form>
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </Card>
   )
 }
+
+// 数据库连接表单组件
+function DatabaseConnectionFormContent({
+  tenantId,
+  initialData,
+  onSubmit,
+  onCancel,
+  isLoading,
+  error,
+}: {
+  tenantId: string
+  initialData?: Partial<CreateDataSourceRequest>
+  onSubmit?: (data: CreateDataSourceRequest) => void
+  onCancel?: () => void
+  isLoading: boolean
+  error: string | null
+}) {
+  const { createDataSource } = useDataSourceStore()
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+    watch,
+  } = useForm<DatabaseConnectionForm>({
+    defaultValues: {
+      name: initialData?.name || '',
+      connection_string: '',
+      db_type: 'postgresql',
+    },
+  })
+
+  // 监听表单值变化(用于调试)
+  const formValues = watch()
+
+  const handleFormSubmit = async (data: DatabaseConnectionForm) => {
+    try {
+      // 验证连接字符串不为空
+      if (!data.connection_string || data.connection_string.trim().length === 0) {
+        console.error('连接字符串为空:', data)
+        return
+      }
+
+      console.log('提交数据库连接表单:', data)
+
+      const createData: CreateDataSourceRequest = {
+        name: data.name.trim(),
+        connection_string: data.connection_string.trim(),
+        db_type: data.db_type,
+      }
+
+      console.log('准备创建数据源:', createData)
+
+      await createDataSource(tenantId, createData)
+      onSubmit?.(createData)
+    } catch (error) {
+      console.error('创建数据源失败:', error)
+      // 错误已由store处理
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
+      {error && <ErrorMessage message={error} />}
+
+      {/* 调试信息 */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-xs">
+          <p className="font-bold mb-1">🐛 调试信息:</p>
+          <p>名称: {formValues.name || '(空)'}</p>
+          <p>连接字符串: {formValues.connection_string || '(空)'}</p>
+          <p>数据库类型: {formValues.db_type || '(空)'}</p>
+        </div>
+      )}
+
+      {/* 数据源名称 */}
+      <div className="space-y-2">
+        <Label htmlFor="db-name">数据源名称 *</Label>
+        <Input
+          id="db-name"
+          placeholder="例如：生产数据库、ChatBI测试数据库"
+          {...register('name', {
+            required: '请输入数据源名称',
+            minLength: { value: 1, message: '数据源名称不能为空' },
+            maxLength: { value: 255, message: '数据源名称不能超过255个字符' },
+          })}
+        />
+        {errors.name && (
+          <p className="text-sm text-destructive">{errors.name.message}</p>
+        )}
+      </div>
+
+      {/* 数据库类型 */}
+      <div className="space-y-2">
+        <Label htmlFor="db-type">数据库类型 *</Label>
+        <select
+          id="db-type"
+          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          {...register('db_type', { required: '请选择数据库类型' })}
+        >
+          <option value="postgresql">PostgreSQL</option>
+          <option value="mysql">MySQL</option>
+          <option value="sqlite">SQLite</option>
+        </select>
+        {errors.db_type && (
+          <p className="text-sm text-destructive">{errors.db_type.message}</p>
+        )}
+      </div>
+
+      {/* 连接字符串 */}
+      <div className="space-y-2">
+        <Label htmlFor="connection-string">连接字符串 *</Label>
+        <Input
+          id="connection-string"
+          type="text"
+          placeholder="postgresql://user:password@localhost:5432/database"
+          {...register('connection_string', {
+            required: '请输入连接字符串',
+            minLength: { value: 1, message: '连接字符串不能为空' },
+          })}
+        />
+        {errors.connection_string && (
+          <p className="text-sm text-destructive">{errors.connection_string.message}</p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          示例: postgresql://username:password@host:port/database
+        </p>
+      </div>
+
+      {/* 表单按钮 */}
+      <div className="flex gap-3 pt-4">
+        <Button
+          type="submit"
+          disabled={isSubmitting || isLoading}
+          className="flex-1"
+        >
+          {(isSubmitting || isLoading) ? (
+            <>
+              <LoadingSpinner className="mr-2 h-4 w-4" />
+              {initialData ? '更新中...' : '创建中...'}
+            </>
+          ) : (
+            initialData ? '更新数据源' : '创建数据源'
+          )}
+        </Button>
+
+        {onCancel && (
+          <Button type="button" variant="outline" onClick={onCancel}>
+            取消
+          </Button>
+        )}
+      </div>
+    </form>
+  )
+}
+
+// 文件上传表单组件
+function FileUploadFormContent({
+  tenantId,
+  initialData,
+  onSubmit,
+  onCancel,
+  isLoading,
+  error,
+}: {
+  tenantId: string
+  initialData?: Partial<CreateDataSourceRequest>
+  onSubmit?: (data: CreateDataSourceRequest) => void
+  onCancel?: () => void
+  isLoading: boolean
+  error: string | null
+}) {
+  const { createDataSource } = useDataSourceStore()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+    setValue,
+    watch,
+  } = useForm<FileDataSourceForm>({
+    defaultValues: {
+      name: initialData?.name || '',
+      file: null,
+      file_type: '',
+    },
+  })
+
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
+  const [dragActive, setDragActive] = useState(false)
+
+  const watchedName = watch('name')
+
+  // 获取支持的文件扩展名
+  const getSupportedExtensions = (): string => {
+    return Object.values(SUPPORTED_FILE_TYPES)
+      .flatMap(type => type.extensions)
+      .join(',')
+  }
+
+  // 验证文件类型
+  const validateFileType = (file: File): { valid: boolean; fileType?: string; error?: string } => {
+    const fileName = file.name.toLowerCase()
+    const extension = '.' + fileName.split('.').pop()
+
+    for (const [key, config] of Object.entries(SUPPORTED_FILE_TYPES)) {
+      if (config.extensions.includes(extension)) {
+        if (file.size > config.maxSize) {
+          return {
+            valid: false,
+            error: `文件大小超出限制，${config.description}最大允许 ${config.maxSize / (1024 * 1024)}MB`
+          }
+        }
+        return { valid: true, fileType: key }
+      }
+    }
+
+    return {
+      valid: false,
+      error: '不支持的文件类型，请上传 CSV、Excel (.xls/.xlsx) 或 SQLite 数据库 (.db) 文件'
+    }
+  }
+
+  // 获取文件类型图标
+  const getFileTypeIcon = (fileType: string): string => {
+    return SUPPORTED_FILE_TYPES[fileType as keyof typeof SUPPORTED_FILE_TYPES]?.icon || '📁'
+  }
+
+  // 格式化文件大小
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  }
+
+  // 处理文件选择
+  const handleFileSelect = (file: File) => {
+    const validation = validateFileType(file)
+
+    if (!validation.valid) {
+      setFileError(validation.error || '文件验证失败')
+      setSelectedFile(null)
+      return
+    }
+
+    setFileError(null)
+    setSelectedFile(file)
+    setValue('file_type', validation.fileType || '')
+
+    if (!watchedName) {
+      const defaultName = file.name.replace(/\.[^/.]+$/, '')
+      setValue('name', defaultName)
+    }
+  }
+
+  // 处理文件输入变化
+  const handleFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files
+    if (files && files.length > 0) {
+      handleFileSelect(files[0])
+    }
+  }
+
+  // 处理拖拽事件
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true)
+    } else if (e.type === 'dragleave') {
+      setDragActive(false)
+    }
+  }
+
+  // 处理文件放置
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFileSelect(e.dataTransfer.files[0])
+    }
+  }
+
+  // 移除已选文件
+  const handleRemoveFile = () => {
+    setSelectedFile(null)
+    setFileError(null)
+    setValue('file_type', '')
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  // 提交表单
+  const handleFormSubmit = async (data: FileDataSourceForm) => {
+    if (!selectedFile) {
+      setFileError('请选择一个文件')
+      return
+    }
+
+    if (!data.name.trim()) {
+      return
+    }
+
+    try {
+      const createData: CreateDataSourceRequest = {
+        name: data.name,
+        connection_string: `file://${selectedFile.name}`,
+        db_type: data.file_type,
+        file: selectedFile,
+      }
+
+      await createDataSource(tenantId, createData)
+      onSubmit?.(createData)
+    } catch (error) {
+      // 错误已由store处理
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
+      {error && <ErrorMessage message={error} />}
+
+      {/* 数据源名称 */}
+      <div className="space-y-2">
+        <Label htmlFor="file-name">数据源名称 *</Label>
+        <Input
+          id="file-name"
+          placeholder="例如：销售数据、用户信息"
+          {...register('name', {
+            required: '请输入数据源名称',
+            minLength: { value: 1, message: '数据源名称不能为空' },
+            maxLength: { value: 255, message: '数据源名称不能超过255个字符' },
+          })}
+        />
+        {errors.name && (
+          <p className="text-sm text-destructive">{errors.name.message}</p>
+        )}
+      </div>
+
+      {/* 文件上传区域 */}
+      <div className="space-y-2">
+        <Label>上传文件 *</Label>
+        <div
+          className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+            dragActive
+              ? 'border-blue-400 bg-blue-50'
+              : fileError
+              ? 'border-red-300 bg-red-50'
+              : selectedFile
+              ? 'border-green-300 bg-green-50'
+              : 'border-gray-300 hover:border-gray-400'
+          }`}
+          onDragEnter={handleDrag}
+          onDragLeave={handleDrag}
+          onDragOver={handleDrag}
+          onDrop={handleDrop}
+        >
+          {selectedFile ? (
+            <div className="space-y-3">
+              <div className="text-4xl">{getFileTypeIcon(watch('file_type'))}</div>
+              <div>
+                <p className="text-lg font-medium text-gray-900">{selectedFile.name}</p>
+                <p className="text-sm text-gray-500">
+                  {formatFileSize(selectedFile.size)} · {watch('file_type').toUpperCase()}
+                </p>
+              </div>
+              <div className="flex justify-center gap-2">
+                <label className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground h-8 px-3 cursor-pointer">
+                  更换文件
+                  <input
+                    type="file"
+                    accept={getSupportedExtensions()}
+                    onChange={handleFileInputChange}
+                    className="sr-only"
+                  />
+                </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRemoveFile}
+                  className="text-red-600 hover:text-red-700"
+                >
+                  移除
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <label className="block space-y-4 cursor-pointer">
+              <input
+                type="file"
+                accept={getSupportedExtensions()}
+                onChange={handleFileInputChange}
+                className="sr-only"
+              />
+              <div className="text-4xl">📁</div>
+              <div>
+                <p className="text-base font-medium text-gray-900">
+                  拖拽文件到这里，或者点击选择文件
+                </p>
+                <p className="text-sm text-gray-500 mt-1">
+                  支持 CSV、Excel (.xls/.xlsx) 和 SQLite 数据库 (.db) 文件
+                </p>
+              </div>
+              <p className="text-xs text-gray-400">
+                文件大小限制：表格文件 100MB，数据库文件 500MB
+              </p>
+            </label>
+          )}
+        </div>
+        {fileError && (
+          <p className="text-sm text-destructive">{fileError}</p>
+        )}
+      </div>
+
+      {/* 支持的文件类型 */}
+      <div className="bg-gray-50 rounded-lg p-4">
+        <h4 className="text-sm font-medium text-gray-700 mb-2">支持的文件类型</h4>
+        <div className="grid grid-cols-2 gap-2">
+          {Object.entries(SUPPORTED_FILE_TYPES).map(([key, config]) => (
+            <div key={key} className="flex items-center gap-2 text-sm">
+              <span className="text-lg">{config.icon}</span>
+              <div>
+                <span className="font-medium">{config.extensions.join(', ')}</span>
+                <span className="text-gray-500 ml-2">{config.maxSize / (1024 * 1024)}MB</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 表单按钮 */}
+      <div className="flex gap-3 pt-4">
+        <Button
+          type="submit"
+          disabled={isSubmitting || isLoading || !selectedFile || !watchedName}
+          className="flex-1"
+        >
+          {(isSubmitting || isLoading) ? (
+            <>
+              <LoadingSpinner className="mr-2 h-4 w-4" />
+              {initialData ? '更新中...' : '创建中...'}
+            </>
+          ) : (
+            initialData ? '更新数据源' : '创建数据源'
+          )}
+        </Button>
+
+        {onCancel && (
+          <Button type="button" variant="outline" onClick={onCancel}>
+            取消
+          </Button>
+        )}
+      </div>
+    </form>
+  )
+}
+

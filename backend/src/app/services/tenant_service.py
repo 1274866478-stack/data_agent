@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from fastapi import Depends
 
-from src.app.data.models import Tenant, TenantStatus, DataSourceConnection, KnowledgeDocument
+from src.app.data.models import Tenant, TenantStatus, DataSourceConnection, KnowledgeDocument, DataSourceConnectionStatus
 from src.app.data.database import get_db
 
 
@@ -213,7 +213,7 @@ class TenantService:
         # 统计数据源连接数
         data_source_count = self.db.query(DataSourceConnection).filter(
             DataSourceConnection.tenant_id == tenant_id,
-            DataSourceConnection.is_active == True
+            DataSourceConnection.status != DataSourceConnectionStatus.INACTIVE
         ).count()
 
         # 统计文档数量

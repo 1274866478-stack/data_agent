@@ -250,9 +250,13 @@ class PostgreSQLAdapter(DatabaseAdapter):
             # 转换结果为字典列表
             data = [dict(row) for row in result]
 
+            # 提取列名
+            columns = list(result[0].keys()) if result else []
+
             return {
                 "success": True,
                 "data": data,
+                "columns": columns,
                 "row_count": len(data)
             }
 
@@ -262,6 +266,7 @@ class PostgreSQLAdapter(DatabaseAdapter):
                 "success": False,
                 "error": str(e),
                 "data": [],
+                "columns": [],
                 "row_count": 0
             }
         finally:

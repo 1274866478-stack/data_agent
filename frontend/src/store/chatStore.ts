@@ -52,6 +52,8 @@ interface ChatState {
   switchSession: (sessionId: string) => void
   deleteSession: (sessionId: string) => void
   updateSessionTitle: (sessionId: string, title: string) => void
+  searchSessions: (keyword: string) => ChatSession[]
+  startNewConversation: () => Promise<string>
 
   // 消息操作
   sendMessage: (content: string) => Promise<void>
@@ -203,6 +205,33 @@ export const useChatStore = create<ChatState>()(
         })
 
         get().saveToStorage()
+      },
+
+      // 搜索会话 - 按关键字搜索会话标题和消息内容
+      searchSessions: (keyword: string): ChatSession[] => {
+        const state = get()
+        if (!keyword.trim()) {
+          return state.sessions
+        }
+
+        const lowerKeyword = keyword.toLowerCase().trim()
+        return state.sessions.filter(session => {
+          // 搜索会话标题
+          if (session.title.toLowerCase().includes(lowerKeyword)) {
+            return true
+          }
+          // 搜索会话消息内容
+          return session.messages.some(msg =>
+            msg.content.toLowerCase().includes(lowerKeyword)
+          )
+        })
+      },
+
+      // 开始新对话 - 创建新会话并清空当前状态
+      startNewConversation: async (): Promise<string> => {
+        // 直接创建新会话
+        const sessionId = await get().createSession('新对话')
+        return sessionId
       },
 
       // 发送消息

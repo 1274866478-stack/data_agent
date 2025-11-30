@@ -463,7 +463,7 @@ export function MessageInput({
             {uploadedFiles.some(f => f.status === 'error') && (
               <div className="text-xs text-red-600 flex items-center gap-1 mt-1">
                 <AlertCircle className="h-3 w-3" />
-                <span>部分文件上传失败，点击"重试"重新上传</span>
+                <span>部分文件上传失败，点击&quot;重试&quot;重新上传</span>
               </div>
             )}
           </div>

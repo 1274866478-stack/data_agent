@@ -106,12 +106,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // 页面加载时检查认证状态
     const initAuth = async () => {
       // 开发模式：自动设置模拟用户
-      if (process.env.NODE_ENV === 'development' && !process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+      // 支持 NODE_ENV 和 NEXT_PUBLIC_ENVIRONMENT 两种方式判断开发模式
+      const isDevelopmentMode = process.env.NODE_ENV === 'development' ||
+                                process.env.NEXT_PUBLIC_ENVIRONMENT === 'development'
+      const hasClerkKey = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+
+      if (isDevelopmentMode && !hasClerkKey) {
         const mockUser = {
-          id: 'dev-user-001',
-          email: 'dev@dataagent.local',
+          id: 'anonymous',
+          email: 'admin@dataagent.local',
           name: 'Development User',
-          tenant_id: 'dev-tenant-001',
+          tenant_id: 'default_tenant',
         }
         setUser(mockUser)
         setToken('dev-mock-token')

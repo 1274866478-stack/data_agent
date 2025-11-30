@@ -29,7 +29,7 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
   } = useDataSourceStore()
 
   const [searchQuery, setSearchQuery] = useState('')
-  const [filterStatus, setFilterStatus] = useState<string>('all')
+  const [filterStatus, setFilterStatus] = useState<string>('active') // 默认只显示活跃的数据源
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingDataSource, setEditingDataSource] = useState<DataSourceConnection | null>(null)
   const [testingDataSource, setTestingDataSource] = useState<string | null>(null)
@@ -85,7 +85,7 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
     }
   }
 
-  // 获取数据库类型显示名称
+  // 获取数据源类型显示名称
   const getDatabaseTypeDisplay = (dbType: string) => {
     switch (dbType) {
       case 'postgresql':
@@ -94,6 +94,14 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
         return 'MySQL'
       case 'sqlite':
         return 'SQLite'
+      case 'csv':
+        return 'CSV'
+      case 'xlsx':
+        return 'Excel'
+      case 'xls':
+        return 'Excel (旧版)'
+      case 'db':
+        return 'SQLite 文件'
       default:
         return dbType.toUpperCase()
     }
@@ -181,7 +189,7 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
         <div>
           <h1 className="text-3xl font-bold">数据源管理</h1>
           <p className="text-muted-foreground">
-            管理和监控您的数据库连接
+            管理您的数据文件 (CSV, Excel, SQLite)
           </p>
         </div>
         <Button onClick={() => setShowCreateForm(true)}>

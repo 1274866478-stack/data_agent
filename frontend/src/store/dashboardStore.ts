@@ -2,10 +2,20 @@
 
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
+import { useAuthStore } from './authStore'
 
 // 获取 API 基础 URL
 const getApiBaseUrl = () => {
   return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'
+}
+
+// 获取当前用户的 tenant_id 和 user_id
+const getAuthParams = () => {
+  const user = useAuthStore.getState().user
+  return {
+    tenant_id: user?.tenant_id || 'default_tenant',
+    user_id: user?.id || 'anonymous'
+  }
 }
 
 // 数据源概览统计接口
@@ -140,9 +150,12 @@ export const useDashboardStore = create<DashboardState>()(
 
         try {
           const apiBaseUrl = getApiBaseUrl()
-          const response = await fetch(`${apiBaseUrl}/data-sources/overview`, {
+          const { tenant_id, user_id } = getAuthParams()
+          const params = new URLSearchParams({ tenant_id, user_id })
+
+          const response = await fetch(`${apiBaseUrl}/data-sources/overview?${params}`, {
             headers: {
-              'Authorization': `Bearer ${localStorage.getItem('token')}`,
+              'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
               'Content-Type': 'application/json',
             },
           })
@@ -222,11 +235,23 @@ export const useDashboardStore = create<DashboardState>()(
 
         try {
           const { searchQuery, filters, activeTab } = get()
+          const { tenant_id, user_id } = getAuthParams()
+
+          // 将前端的 tab 名称映射到后端期望的类型
+          const tabToType: Record<string, string> = {
+            'databases': 'database',
+            'documents': 'document'
+          }
+          const searchType = filters.type === 'all'
+            ? (tabToType[activeTab] || activeTab)
+            : filters.type
 
           // 构建查询参数
           const params = new URLSearchParams({
+            tenant_id,
+            user_id,
             q: searchQuery,
-            type: filters.type === 'all' ? activeTab : filters.type,
+            type: searchType,
             page: page.toString(),
             limit: '20',
           })
@@ -247,7 +272,7 @@ export const useDashboardStore = create<DashboardState>()(
           const apiBaseUrl = getApiBaseUrl()
           const response = await fetch(`${apiBaseUrl}/data-sources/search?${params}`, {
             headers: {
-              'Authorization': `Bearer ${localStorage.getItem('token')}`,
+              'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
               'Content-Type': 'application/json',
             },
           })
@@ -278,7 +303,10 @@ export const useDashboardStore = create<DashboardState>()(
 
         try {
           const apiBaseUrl = getApiBaseUrl()
-          const response = await fetch(`${apiBaseUrl}/data-sources/bulk-delete`, {
+          const { tenant_id, user_id } = getAuthParams()
+          const params = new URLSearchParams({ tenant_id, user_id })
+
+          const response = await fetch(`${apiBaseUrl}/data-sources/bulk-delete?${params}`, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${localStorage.getItem('token')}`,

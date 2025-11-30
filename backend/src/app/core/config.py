@@ -47,7 +47,7 @@ class Settings(BaseSettings):
 
     # 智谱 AI 配置
     zhipuai_api_key: str
-    zhipuai_default_model: str = "glm-4-flash"
+    zhipuai_default_model: str = "glm-4.6"
     zhipuai_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
     zhipuai_timeout: int = 30
     zhipuai_max_retries: int = 3

@@ -10,11 +10,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
 try:
-    from ..data.models import DataSourceConnection, Tenant
+    from ..data.models import DataSourceConnection, Tenant, DataSourceConnectionStatus
 except ImportError as e:
     logging.error(f"Failed to import models: {e}")
     DataSourceConnection = None
     Tenant = None
+    DataSourceConnectionStatus = None
 
 try:
     from .encryption_service import encryption_service
@@ -74,7 +75,7 @@ class DataSourceService:
             and_(
                 DataSourceConnection.tenant_id == tenant_id,
                 DataSourceConnection.name == name,
-                DataSourceConnection.is_active == True
+                DataSourceConnection.status != DataSourceConnectionStatus.INACTIVE
             )
         ).first()
 
@@ -100,7 +101,7 @@ class DataSourceService:
             host=host,
             port=port,
             database_name=database_name,
-            is_active=True
+            status=DataSourceConnectionStatus.ACTIVE
         )
 
         # 使用依赖注入的数据库会话
@@ -139,7 +140,7 @@ class DataSourceService:
         )
 
         if active_only:
-            query = query.filter(DataSourceConnection.is_active == True)
+            query = query.filter(DataSourceConnection.status != DataSourceConnectionStatus.INACTIVE)
 
         connections = query.order_by(
             DataSourceConnection.created_at.desc()
@@ -215,7 +216,7 @@ class DataSourceService:
                     DataSourceConnection.tenant_id == tenant_id,
                     DataSourceConnection.name == update_data["name"],
                     DataSourceConnection.id != data_source_id,
-                    DataSourceConnection.is_active == True
+                    DataSourceConnection.status != DataSourceConnectionStatus.INACTIVE
                 )
             ).first()
 
@@ -244,7 +245,10 @@ class DataSourceService:
             connection.connection_type = update_data["connection_type"]
 
         if "is_active" in update_data:
-            connection.is_active = update_data["is_active"]
+            if update_data["is_active"]:
+                connection.status = DataSourceConnectionStatus.ACTIVE
+            else:
+                connection.status = DataSourceConnectionStatus.INACTIVE
 
         connection.updated_at = datetime.now()
 
@@ -279,7 +283,7 @@ class DataSourceService:
             raise ValueError(f"Data source {data_source_id} not found for tenant '{tenant_id}'")
 
         # 软删除：设置为非活跃状态
-        connection.is_active = False
+        connection.status = DataSourceConnectionStatus.INACTIVE
         connection.updated_at = datetime.now()
 
         db.commit()
@@ -294,7 +298,7 @@ class DataSourceService:
         db: Session
     ) -> str:
         """
-        获取解密后的连接字符串（临时使用）
+        获取解密后的连接字符串
 
         Args:
             data_source_id: 数据源ID
@@ -309,9 +313,11 @@ class DataSourceService:
             raise ValueError(f"Data source {data_source_id} not found for tenant '{tenant_id}'")
 
         try:
-            return self.encryption_service.decrypt_connection_string(connection.connection_string)
+            # connection.connection_string 属性已经会自动解密
+            # 直接返回即可，不需要再次调用 decrypt_connection_string
+            return connection.connection_string
         except Exception as e:
-            logger.error(f"Failed to decrypt connection string for data source {data_source_id}: {e}")
+            logger.error(f"Failed to get connection string for data source {data_source_id}: {e}")
             raise RuntimeError("Failed to decrypt connection string")
 
     def _parse_connection_string(self, connection_string: str, db_type: str) -> Dict[str, Any]:

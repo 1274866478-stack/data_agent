@@ -19,7 +19,7 @@ import {
   Target
 } from 'lucide-react';
 
-interface ExplanationStep {
+export interface ExplanationStep {
   step_number: number;
   explanation_type: string;
   title: string;
@@ -32,7 +32,7 @@ interface ExplanationStep {
   timestamp: string;
 }
 
-interface SourceTrace {
+export interface SourceTrace {
   source_id: string;
   source_type: string;
   source_name: string;
@@ -42,7 +42,7 @@ interface SourceTrace {
   verification_status: string;
 }
 
-interface ConfidenceExplanation {
+export interface ConfidenceExplanation {
   overall_confidence: number;
   confidence_level: string;
   confidence_description: string;
@@ -50,7 +50,7 @@ interface ConfidenceExplanation {
   improvement_suggestions: string[];
 }
 
-interface AlternativeAnswer {
+export interface AlternativeAnswer {
   answer_id: string;
   title: string;
   content: string;

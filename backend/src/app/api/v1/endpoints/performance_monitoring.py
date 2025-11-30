@@ -9,9 +9,8 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import PlainTextResponse
 
-from src.app.core.auth import get_current_user_with_tenant as get_current_tenant_user
+from src.app.core.auth import get_current_user_with_tenant
 from src.app.services.query_performance_monitor import query_perf_monitor
-from src.app.data.models import Tenant
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ router = APIRouter()
 
 
 @router.get("/stats/real-time")
-async def get_real_time_stats(current_user: Tenant = Depends(get_current_user_with_tenant)):
+async def get_real_time_stats(current_user = Depends(get_current_user_with_tenant)):
     """
     获取实时性能统计信息
     """
@@ -38,7 +37,7 @@ async def get_real_time_stats(current_user: Tenant = Depends(get_current_user_wi
 async def get_tenant_performance(
     tenant_id: str,
     hours: int = Query(24, ge=1, le=168),  # 1小时到7天
-    current_user: Tenant = Depends(get_current_user_with_tenant)
+    current_user = Depends(get_current_user_with_tenant)
 ):
     """
     获取租户性能报告
@@ -66,7 +65,7 @@ async def get_tenant_performance(
 async def get_slow_queries(
     hours: int = Query(24, ge=1, le=168),
     limit: int = Query(50, ge=1, le=200),
-    current_user: Tenant = Depends(get_current_user_with_tenant)
+    current_user = Depends(get_current_user_with_tenant)
 ):
     """
     获取慢查询列表
@@ -89,7 +88,7 @@ async def get_slow_queries(
 
 @router.get("/queries/types")
 async def get_query_type_performance(
-    current_user: Tenant = Depends(get_current_user_with_tenant)
+    current_user = Depends(get_current_user_with_tenant)
 ):
     """
     获取按查询类型的性能分析
@@ -108,7 +107,7 @@ async def get_query_type_performance(
 @router.get("/warnings")
 async def get_performance_warnings(
     hours: int = Query(24, ge=1, le=168),
-    current_user: Tenant = Depends(get_current_user_with_tenant)
+    current_user = Depends(get_current_user_with_tenant)
 ):
     """
     获取性能警告
@@ -131,7 +130,7 @@ async def get_performance_warnings(
 @router.get("/export")
 async def export_performance_metrics(
     format: str = Query("json", regex="^(json|csv)$"),
-    current_user: Tenant = Depends(get_current_user_with_tenant)
+    current_user = Depends(get_current_user_with_tenant)
 ):
     """
     导出性能指标数据
@@ -165,7 +164,7 @@ async def export_performance_metrics(
 
 
 @router.post("/monitor/start")
-async def start_monitoring(current_user: Tenant = Depends(get_current_user_with_tenant)):
+async def start_monitoring(current_user = Depends(get_current_user_with_tenant)):
     """
     启动性能监控
     """
@@ -181,7 +180,7 @@ async def start_monitoring(current_user: Tenant = Depends(get_current_user_with_
 
 
 @router.post("/monitor/stop")
-async def stop_monitoring(current_user: Tenant = Depends(get_current_user_with_tenant)):
+async def stop_monitoring(current_user = Depends(get_current_user_with_tenant)):
     """
     停止性能监控
     """
@@ -199,7 +198,7 @@ async def stop_monitoring(current_user: Tenant = Depends(get_current_user_with_t
 @router.delete("/history")
 async def clear_performance_history(
     confirm: bool = Query(False, description="确认清除历史数据"),
-    current_user: Tenant = Depends(get_current_user_with_tenant)
+    current_user = Depends(get_current_user_with_tenant)
 ):
     """
     清除性能历史数据
@@ -234,7 +233,7 @@ async def clear_performance_history(
 
 @router.get("/health")
 async def get_performance_monitor_health(
-    current_user: Tenant = Depends(get_current_user_with_tenant)
+    current_user = Depends(get_current_user_with_tenant)
 ):
     """
     获取性能监控服务健康状态
@@ -358,7 +357,7 @@ def _export_to_csv() -> str:
 @router.get("/alerts/active")
 async def get_active_alerts(
     tenant_id: Optional[str] = Query(None, description="租户ID过滤"),
-    current_user: Tenant = Depends(get_current_user_with_tenant)
+    current_user = Depends(get_current_user_with_tenant)
 ):
     """
     获取活跃告警列表
@@ -393,7 +392,7 @@ async def get_active_alerts(
 @router.get("/alerts/history")
 async def get_alert_history(
     hours: int = Query(24, ge=1, le=168),
-    current_user: Tenant = Depends(get_current_user_with_tenant)
+    current_user = Depends(get_current_user_with_tenant)
 ):
     """
     获取告警历史
@@ -415,7 +414,7 @@ async def get_alert_history(
 
 @router.get("/system/metrics")
 async def get_system_metrics(
-    current_user: Tenant = Depends(get_current_user_with_tenant)
+    current_user = Depends(get_current_user_with_tenant)
 ):
     """
     获取系统资源指标
@@ -439,7 +438,7 @@ async def get_system_metrics(
 @router.get("/system/metrics/history")
 async def get_system_metrics_history(
     limit: int = Query(100, ge=1, le=1000),
-    current_user: Tenant = Depends(get_current_user_with_tenant)
+    current_user = Depends(get_current_user_with_tenant)
 ):
     """
     获取系统资源指标历史
@@ -461,7 +460,7 @@ async def get_system_metrics_history(
 
 @router.get("/health/detailed")
 async def get_detailed_health_status(
-    current_user: Tenant = Depends(get_current_user_with_tenant)
+    current_user = Depends(get_current_user_with_tenant)
 ):
     """
     获取详细的健康状态报告

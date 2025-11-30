@@ -53,7 +53,7 @@ export function Sidebar({ collapsed, onCollapse }: SidebarProps) {
       items: [
         {
           title: '仪表板',
-          href: '/',
+          href: '/dashboard',
           icon: LayoutDashboard
         },
         {
@@ -98,8 +98,8 @@ export function Sidebar({ collapsed, onCollapse }: SidebarProps) {
   ]
 
   const isActive = (href: string) => {
-    if (href === '/') {
-      return pathname === '/'
+    if (href === '/dashboard') {
+      return pathname === '/dashboard' || pathname === '/'
     }
     return pathname.startsWith(href)
   }

@@ -50,6 +50,7 @@ services:
       - ZHIPUAI_API_KEY=${ZHIPUAI_API_KEY}
       - CLERK_JWT_PUBLIC_KEY=${CLERK_JWT_PUBLIC_KEY:-test_public_key_placeholder}
       - CLERK_API_URL=${CLERK_API_URL:-https://api.clerk.dev}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - ENVIRONMENT=development
       - DEBUG=true
       - SECRET_KEY=${SECRET_KEY}

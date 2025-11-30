@@ -142,7 +142,8 @@ class PostgreSQLAdapter(DatabaseInterface):
                     SELECT a.attname
                     FROM pg_constraint c
                     JOIN pg_attribute a ON a.attnum = ANY(c.conkey) AND a.attrelid = c.conrelid
-                    WHERE c.conrelid = :table_name::regclass AND c.contype = 'p'
+                    WHERE c.conrelid = (SELECT oid FROM pg_class WHERE relname = :table_name AND relnamespace = 'public'::regnamespace)
+                      AND c.contype = 'p'
                     """
 
                     pk_result = conn.execute(text(pk_query), {"table_name": table_name})
@@ -201,7 +202,8 @@ class PostgreSQLAdapter(DatabaseInterface):
                     except Exception as e:
                         logger.warning(f"获取表 {table_name} 示例数据失败: {e}")
 
-                    if table_info["type"] == "table":
+                    # table_type 可能是 "BASE TABLE" 或 "VIEW"
+                    if table_info["type"] in ("table", "base table"):
                         schema_info["tables"].append(table_info)
                     else:
                         schema_info["views"].append(table_info)

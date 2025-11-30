@@ -12,6 +12,7 @@ import { SearchAndFilter } from '@/components/data-sources/SearchAndFilter'
 import { BulkOperations } from '@/components/data-sources/BulkOperations'
 import { DataSourceList } from '@/components/data-sources/DataSourceList'
 import { DocumentList } from '@/components/documents/DocumentList'
+import DocumentUpload from '@/components/documents/DocumentUpload'
 import { useTenantId } from '@/store/authStore'
 import { useDashboardStore } from '@/store/dashboardStore'
 import { Database, FileText, Plus, Eye, EyeOff } from 'lucide-react'
@@ -39,7 +40,8 @@ export default function DataSourcesPage() {
       fetchOverview()
       searchDataSources(1)
     }
-  }, [tenantId, fetchOverview, searchDataSources])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId])
 
   // 如果租户ID不存在，说明用户未正确认证
   if (!tenantId) {
@@ -73,6 +75,18 @@ export default function DataSourcesPage() {
     clearError()
   }
 
+  // 处理上传成功
+  const handleUploadSuccess = (files: File[]) => {
+    // 成功后刷新列表并退出创建模式
+    handleRefresh()
+    setIsCreateMode(false)
+  }
+
+  // 处理上传错误
+  const handleUploadError = (errorMessage: string) => {
+    console.error('Upload error:', errorMessage)
+  }
+
   if (isCreateMode) {
     return (
       <div className="container mx-auto px-4 py-8">
@@ -91,7 +105,11 @@ export default function DataSourcesPage() {
             onDataSourceSelect={() => {}}
           />
         ) : (
-          <DocumentList />
+          <DocumentUpload
+            onClose={() => setIsCreateMode(false)}
+            onSuccess={handleUploadSuccess}
+            onError={handleUploadError}
+          />
         )}
       </div>
     )

@@ -1,9 +1,9 @@
-"""
+﻿"""
 API v1 版本路由包
 """
 
 from fastapi import APIRouter
-from .endpoints import health, tenants, documents, data_sources, config, test, llm, auth, upload, reasoning
+from .endpoints import health, tenants, documents, data_sources, config, test, llm, auth, upload, reasoning, file_upload
 from .endpoints import performance_monitoring
 # 暂时禁用security端点，因为编码问题
 # from .endpoints import security
@@ -36,6 +36,9 @@ api_router.include_router(auth.router, tags=["Authentication"])
 
 # 新增分块上传端点
 api_router.include_router(upload.router, prefix="/upload", tags=["Chunked Upload"])
+
+# 新增文件上传端点 - 数据源文件上传
+api_router.include_router(file_upload.router, prefix="/file-upload", tags=["File Upload"])
 
 # 新增推理服务端点 - Story 3.4
 api_router.include_router(reasoning.router, tags=["Reasoning"])

@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
-import { Send, Bot, User, Sparkles, Paperclip, X, FileText, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Send, Bot, User, Sparkles, Paperclip, X, FileText, CheckCircle, AlertCircle, Loader2, Plus, History, Search, MessageSquare, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
 import { uploadFile, UploadProgress, fileUploadService } from '@/services/fileUploadService'
 import { cn } from '@/lib/utils'
@@ -20,11 +22,50 @@ export default function AIAssistantPage() {
   const [input, setInput] = useState('')
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null)
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showHistory, setShowHistory] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const { sendMessage, currentSession, createSession, isLoading } = useChatStore()
+  const {
+    sendMessage,
+    currentSession,
+    createSession,
+    isLoading,
+    sessions,
+    switchSession,
+    deleteSession,
+    searchSessions,
+    startNewConversation
+  } = useChatStore()
 
   // 获取当前会话的消息，如果没有会话则为空数组
   const messages = currentSession?.messages || []
+
+  // 搜索过滤后的历史会话
+  const filteredSessions = useMemo(() => {
+    return searchSessions(searchQuery).sort((a, b) =>
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    )
+  }, [sessions, searchQuery, searchSessions])
+
+  // 开始新对话
+  const handleStartNewConversation = async () => {
+    await startNewConversation()
+    setShowHistory(false)
+  }
+
+  // 切换到某个历史会话
+  const handleSwitchSession = (sessionId: string) => {
+    switchSession(sessionId)
+    setShowHistory(false)
+  }
+
+  // 删除某个会话
+  const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation()
+    if (confirm('确定要删除这个对话吗？')) {
+      deleteSession(sessionId)
+    }
+  }
 
   const handleSend = async () => {
     // 如果没有会话，先创建一个
@@ -177,28 +218,159 @@ export default function AIAssistantPage() {
   const completedUploads = uploadedFiles.filter(f => f.status === 'completed').length
 
   return (
-    <div className="h-full flex flex-col bg-gradient-to-br from-blue-50 to-indigo-50">
-      <div className="flex-1 max-w-6xl mx-auto w-full p-6 flex flex-col">
-        {/* Header */}
-        <Card className="mb-6 border-2 border-blue-200 shadow-lg">
-          <CardHeader className="pb-4">
-            <CardTitle className="flex items-center gap-3 text-2xl">
-              <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg">
-                <Sparkles className="w-6 h-6 text-white" />
+    <div className="h-[calc(100vh-8rem)] flex bg-gradient-to-br from-blue-50 to-indigo-50 -m-6">
+      {/* 历史对话侧边栏 */}
+      <div className={cn(
+        "h-full bg-white border-r shadow-lg transition-all duration-300 flex flex-col",
+        showHistory ? "w-80" : "w-0 overflow-hidden"
+      )}>
+        {showHistory && (
+          <>
+            {/* 侧边栏头部 */}
+            <div className="p-4 border-b flex-shrink-0">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                  <History className="w-4 h-4" />
+                  历史对话
+                </h3>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowHistory(false)}
+                  className="h-8 w-8"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
               </div>
-              AI 智能助手
-            </CardTitle>
-            <p className="text-sm text-muted-foreground mt-2">
-              基于智谱 GLM-4 的智能数据分析助手，支持多轮对话和上下文理解
-            </p>
-          </CardHeader>
-        </Card>
 
-        {/* Chat Area */}
-        <Card className="flex-1 flex flex-col shadow-lg">
-          <CardContent className="flex-1 flex flex-col p-6">
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+              {/* 搜索框 */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="搜索对话..."
+                  className="pl-9 h-9"
+                />
+                {searchQuery && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7"
+                  >
+                    <X className="w-3 h-3" />
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* 会话列表 */}
+            <ScrollArea className="flex-1">
+              <div className="p-2">
+                {filteredSessions.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <MessageSquare className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm">
+                      {searchQuery ? '没有找到匹配的对话' : '暂无历史对话'}
+                    </p>
+                  </div>
+                ) : (
+                  filteredSessions.map((session) => (
+                    <div
+                      key={session.id}
+                      onClick={() => handleSwitchSession(session.id)}
+                      className={cn(
+                        "p-3 rounded-lg cursor-pointer mb-1 group transition-colors",
+                        session.id === currentSession?.id
+                          ? "bg-blue-100 border border-blue-200"
+                          : "hover:bg-gray-100"
+                      )}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">{session.title}</p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {session.messages.length} 条消息
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {new Date(session.updatedAt).toLocaleDateString('zh-CN', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => handleDeleteSession(e, session.id)}
+                          className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-red-500"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </ScrollArea>
+          </>
+        )}
+      </div>
+
+      {/* 主内容区 */}
+      <div className="flex-1 flex flex-col p-6 min-h-0">
+        <div className="flex-1 max-w-6xl mx-auto w-full flex flex-col min-h-0 overflow-hidden">
+          {/* Header */}
+          <Card className="mb-6 border-2 border-blue-200 shadow-lg flex-shrink-0">
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-3 text-2xl">
+                  <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg">
+                    <Sparkles className="w-6 h-6 text-white" />
+                  </div>
+                  AI 智能助手
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  {/* 历史对话按钮 */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowHistory(!showHistory)}
+                    className="gap-2"
+                  >
+                    <History className="w-4 h-4" />
+                    历史对话
+                    {sessions.length > 0 && (
+                      <span className="bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full">
+                        {sessions.length}
+                      </span>
+                    )}
+                  </Button>
+                  {/* 新建对话按钮 */}
+                  <Button
+                    onClick={handleStartNewConversation}
+                    size="sm"
+                    className="gap-2 bg-gradient-to-br from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
+                  >
+                    <Plus className="w-4 h-4" />
+                    新建对话
+                  </Button>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground mt-2">
+                基于智谱 GLM-4.6 的智能数据分析助手，支持多轮对话和上下文理解
+              </p>
+            </CardHeader>
+          </Card>
+
+          {/* Chat Area */}
+          <Card className="flex-1 flex flex-col shadow-lg min-h-0 overflow-hidden">
+            <CardContent className="flex-1 flex flex-col p-6 min-h-0">
+              {/* Messages */}
+              <div className="flex-1 overflow-y-auto mb-4 space-y-4 min-h-0">
               {messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center">
                   <div className="p-4 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-full mb-4">
@@ -439,6 +611,7 @@ export default function AIAssistantPage() {
             </div>
           </CardContent>
         </Card>
+        </div>
       </div>
     </div>
   )

@@ -376,9 +376,9 @@ async def validate_api_key_and_token(
             return {
                 "auth_type": "dev_mock",
                 "user_info": {
-                    "user_id": "dev-user-001",
-                    "email": "dev@dataagent.local",
-                    "tenant_id": "dev-tenant-001",
+                    "user_id": "anonymous",
+                    "email": "admin@dataagent.local",
+                    "tenant_id": "default_tenant",
                     "first_name": "Development",
                     "last_name": "User",
                     "is_verified": True

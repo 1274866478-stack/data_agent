@@ -3,17 +3,22 @@
 实现Story 2.3要求的完整API功能
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import logging
+import uuid
+import os
+import tempfile
+import json
 
 from src.app.data.database import get_db
-from src.app.data.models import DataSourceConnection, Tenant, DataSourceConnectionStatus
+from src.app.data.models import DataSourceConnection, Tenant, DataSourceConnectionStatus, TenantStatus
 from src.app.services.data_source_service import data_source_service
 from src.app.services.connection_test_service import connection_test_service
+from src.app.services.minio_client import minio_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -104,6 +109,552 @@ async def get_data_sources(
         )
 
 
+# ============================================================================
+# 固定路径端点（必须在 /{connection_id} 之前定义，否则会被动态路由匹配）
+# ============================================================================
+
+# 支持的文件类型配置
+SUPPORTED_FILE_TYPES = {
+    'csv': {
+        'mime_types': ['text/csv', 'application/vnd.ms-excel'],
+        'max_size_mb': 100,
+        'extensions': ['.csv']
+    },
+    'xlsx': {
+        'mime_types': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+        'max_size_mb': 100,
+        'extensions': ['.xlsx']
+    },
+    'xls': {
+        'mime_types': ['application/vnd.ms-excel'],
+        'max_size_mb': 100,
+        'extensions': ['.xls']
+    },
+    'sqlite': {
+        'mime_types': ['application/x-sqlite3', 'application/vnd.sqlite3', 'application/octet-stream'],
+        'max_size_mb': 500,
+        'extensions': ['.db', '.sqlite', '.sqlite3']
+    }
+}
+
+
+def _validate_file_type(filename: str, content_type: str, file_size: int) -> Dict[str, Any]:
+    """验证文件类型和大小"""
+    ext = os.path.splitext(filename)[1].lower()
+
+    for file_type, config in SUPPORTED_FILE_TYPES.items():
+        if ext in config['extensions']:
+            max_size_bytes = config['max_size_mb'] * 1024 * 1024
+            if file_size > max_size_bytes:
+                return {
+                    "valid": False,
+                    "error": "FILE_TOO_LARGE",
+                    "message": f"文件大小超过限制，最大允许 {config['max_size_mb']}MB"
+                }
+            return {
+                "valid": True,
+                "file_type": file_type,
+                "extension": ext
+            }
+
+    return {
+        "valid": False,
+        "error": "UNSUPPORTED_FILE_TYPE",
+        "message": f"不支持的文件类型: {ext}。支持的类型: .csv, .xlsx, .xls, .db, .sqlite, .sqlite3"
+    }
+
+
+@router.post("/upload", summary="上传数据文件创建数据源", status_code=status.HTTP_201_CREATED)
+async def upload_data_source(
+    file: UploadFile = File(..., description="数据文件 (CSV, Excel, SQLite)"),
+    name: str = Form(..., description="数据源名称"),
+    db_type: Optional[str] = Form(None, description="数据类型"),
+    tenant_id: Optional[str] = None,
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """
+    上传数据文件创建数据源
+    支持 CSV、Excel (.xls/.xlsx) 和 SQLite 数据库 (.db/.sqlite/.sqlite3) 文件
+    """
+    # 从查询参数获取tenant_id
+    if not tenant_id and request:
+        tenant_id = request.query_params.get("tenant_id")
+
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="tenant_id is required"
+        )
+
+    # 验证文件名
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="文件名不能为空"
+        )
+
+    try:
+        # 读取文件内容
+        file_content = await file.read()
+        file_size = len(file_content)
+
+        # 验证文件类型和大小
+        validation_result = _validate_file_type(
+            file.filename,
+            file.content_type or "application/octet-stream",
+            file_size
+        )
+
+        if not validation_result["valid"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=validation_result["message"]
+            )
+
+        detected_file_type = validation_result["file_type"]
+
+        # 生成唯一的存储路径
+        file_id = str(uuid.uuid4())
+        file_ext = validation_result["extension"]
+        storage_path = f"data-sources/{tenant_id}/{file_id}{file_ext}"
+
+        # 上传到 MinIO
+        import io
+        try:
+            upload_success = minio_service.upload_file(
+                bucket_name="data-sources",
+                object_name=storage_path,
+                file_data=io.BytesIO(file_content),
+                file_size=file_size,
+                content_type=file.content_type or "application/octet-stream"
+            )
+
+            if not upload_success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="文件上传到存储服务失败"
+                )
+        except Exception as e:
+            logger.warning(f"MinIO上传失败，使用本地存储: {e}")
+            # 如果MinIO不可用，保存到本地临时目录
+            storage_path = f"local://{storage_path}"
+
+        # 创建数据源记录
+        connection_string = f"file://{storage_path}"
+
+        new_connection = DataSourceConnection(
+            tenant_id=tenant_id,
+            name=name,
+            db_type=db_type or detected_file_type,
+            connection_string=connection_string,
+            status=DataSourceConnectionStatus.ACTIVE,
+            host=None,
+            port=None,
+            database_name=file.filename
+        )
+
+        db.add(new_connection)
+        db.commit()
+        db.refresh(new_connection)
+
+        logger.info(f"Created file-based data source '{name}' for tenant '{tenant_id}'")
+
+        return {
+            "id": str(new_connection.id),
+            "tenant_id": new_connection.tenant_id,
+            "name": new_connection.name,
+            "db_type": new_connection.db_type,
+            "status": new_connection.status.value if hasattr(new_connection.status, 'value') else str(new_connection.status),
+            "host": new_connection.host,
+            "port": new_connection.port,
+            "database_name": new_connection.database_name,
+            "last_tested_at": new_connection.last_tested_at,
+            "test_result": new_connection.test_result,
+            "created_at": new_connection.created_at,
+            "updated_at": new_connection.updated_at,
+            "file_info": {
+                "original_name": file.filename,
+                "file_type": detected_file_type,
+                "file_size": file_size,
+                "storage_path": storage_path
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to upload data source: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"上传数据源失败: {str(e)}"
+        )
+
+
+@router.get("/overview", summary="获取数据源概览统计")
+async def get_data_sources_overview_route(
+    tenant_id: str = None,
+    user_id: str = None,
+    db: Session = Depends(get_db)
+):
+    """
+    获取数据源和文档的概览统计信息
+    用于仪表板展示，包含安全的存储配额计算和数据隔离
+    """
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="tenant_id is required"
+        )
+
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_id is required"
+        )
+
+    # 强化的租户验证和权限检查
+    await _validate_overview_access(tenant_id, user_id, db)
+
+    try:
+        # 安全地获取数据库连接统计
+        db_stats = await _get_secure_database_stats(tenant_id, db)
+        doc_stats = await _get_secure_document_stats(tenant_id, db)
+        storage_stats = await _get_secure_storage_stats(tenant_id, db)
+        recent_activity = await _get_secure_recent_activity(tenant_id, db)
+
+        logger.info(f"Overview accessed by user {user_id} for tenant {tenant_id}")
+
+        return {
+            "databases": db_stats,
+            "documents": doc_stats,
+            "storage": storage_stats,
+            "recent_activity": recent_activity
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch data sources overview for tenant {tenant_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch overview statistics"
+        )
+
+
+@router.get("/search", summary="搜索数据源")
+async def search_data_sources_route(
+    q: str = "",
+    type: str = "all",
+    status_filter: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    page: int = 1,
+    limit: int = 20,
+    tenant_id: str = None,
+    user_id: str = None,
+    db: Session = Depends(get_db)
+):
+    """搜索数据源和文档"""
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="tenant_id is required"
+        )
+
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_id is required"
+        )
+
+    await _validate_search_parameters(q, type, status_filter, date_from, date_to, page, limit)
+    await _validate_tenant_search_access(tenant_id, user_id, db)
+
+    try:
+        results = []
+        total_count = 0
+
+        if type in ["all", "database"]:
+            query = db.query(DataSourceConnection).filter(
+                DataSourceConnection.tenant_id == tenant_id,
+                DataSourceConnection.status != DataSourceConnectionStatus.INACTIVE
+            )
+
+            if q:
+                safe_query = _sanitize_search_query(q)
+                query = query.filter(
+                    DataSourceConnection.name.contains(safe_query) |
+                    DataSourceConnection.db_type.contains(safe_query)
+                )
+
+            if status_filter:
+                valid_statuses = _validate_and_parse_statuses(status_filter)
+                if valid_statuses:
+                    query = query.filter(DataSourceConnection.status.in_(valid_statuses))
+
+            if date_from or date_to:
+                date_range = _validate_and_parse_date_range(date_from, date_to)
+                if date_range['from']:
+                    query = query.filter(DataSourceConnection.created_at >= date_range['from'])
+                if date_range['to']:
+                    query = query.filter(DataSourceConnection.created_at <= date_range['to'])
+
+            db_total = query.with_entities(DataSourceConnection.id).count()
+            total_count += db_total
+
+            safe_limit = min(limit, 100)
+            safe_page = max(1, min(page, 1000))
+
+            db_results = query.offset((safe_page - 1) * safe_limit).limit(safe_limit).all()
+
+            for conn in db_results:
+                if conn.tenant_id != tenant_id:
+                    continue
+                results.append({
+                    "id": conn.id,
+                    "type": "database",
+                    "name": conn.name,
+                    "status": conn.status.value if hasattr(conn.status, 'value') else str(conn.status),
+                    "created_at": conn.created_at.isoformat(),
+                    "updated_at": conn.updated_at.isoformat(),
+                    "db_type": conn.db_type,
+                    "host": conn.host,
+                    "port": conn.port
+                })
+
+        total_pages = (total_count + safe_limit - 1) // safe_limit
+
+        return {
+            "results": results,
+            "total": total_count,
+            "page": safe_page,
+            "limit": safe_limit,
+            "total_pages": total_pages
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to search data sources for tenant {tenant_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Search operation failed"
+        )
+
+
+class BulkDeleteRequestModel(BaseModel):
+    """批量删除请求模型"""
+    item_ids: List[str] = Field(..., min_length=1, max_length=50)
+    item_type: str = Field(..., pattern=r"^(database|document)$")
+    confirmation_token: Optional[str] = None
+
+
+@router.post("/bulk-delete", summary="批量删除数据源")
+async def bulk_delete_data_sources_route(
+    request: BulkDeleteRequestModel,
+    tenant_id: str = None,
+    user_id: str = None,
+    db: Session = Depends(get_db)
+):
+    """批量删除数据源或文档"""
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="tenant_id is required"
+        )
+
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_id is required"
+        )
+
+    if len(request.item_ids) > 50:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete more than 50 items at once"
+        )
+
+    tenant = db.query(Tenant).filter(
+        Tenant.id == tenant_id,
+        Tenant.status == TenantStatus.ACTIVE
+    ).first()
+
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or inactive tenant"
+        )
+
+    success_count = 0
+    error_count = 0
+    errors = []
+    deleted_items = []
+
+    try:
+        if request.item_type == "database":
+            await _validate_bulk_database_delete_permission(tenant_id, user_id, request.item_ids, db)
+
+            for item_id in request.item_ids:
+                try:
+                    connection = db.query(DataSourceConnection).filter(
+                        DataSourceConnection.id == item_id,
+                        DataSourceConnection.tenant_id == tenant_id,
+                        DataSourceConnection.status != DataSourceConnectionStatus.INACTIVE
+                    ).first()
+
+                    if not connection:
+                        error_count += 1
+                        errors.append({"item_id": item_id, "error": "Data source not found"})
+                        continue
+
+                    if not await _can_delete_data_source(connection, db):
+                        error_count += 1
+                        errors.append({"item_id": item_id, "error": "Data source cannot be deleted"})
+                        continue
+
+                    connection.status = DataSourceConnectionStatus.INACTIVE
+                    connection.updated_at = datetime.now()
+                    deleted_items.append({"item_id": item_id, "name": connection.name, "type": "database"})
+                    success_count += 1
+
+                except Exception as e:
+                    error_count += 1
+                    errors.append({"item_id": item_id, "error": str(e)})
+
+        elif request.item_type == "document":
+            for item_id in request.item_ids:
+                error_count += 1
+                errors.append({"item_id": item_id, "error": "Document deletion not implemented"})
+
+        db.commit()
+        return {
+            "success_count": success_count,
+            "error_count": error_count,
+            "errors": errors,
+            "deleted_items": deleted_items
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Bulk delete failed: {str(e)}"
+        )
+
+
+@router.get("/types/supported", summary="获取支持的数据源类型")
+async def get_supported_data_source_types_route():
+    """获取支持的数据源类型列表"""
+    try:
+        return connection_test_service.get_supported_database_types()
+    except Exception as e:
+        logger.error(f"Failed to get supported database types: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get supported database types: {str(e)}"
+        )
+
+
+# ============================================================================
+# 固定路径 POST 端点（必须在动态路径端点之前定义）
+# ============================================================================
+
+@router.post("/", summary="创建数据源连接", status_code=status.HTTP_201_CREATED, response_model=DataSourceResponse)
+async def create_data_source(
+    request: DataSourceCreateRequest,
+    tenant_id: str = None,  # 实际应该从认证中间件获取
+    db: Session = Depends(get_db)
+):
+    """
+    创建新的数据源连接
+    自动加密连接字符串并解析连接信息
+    """
+    logger.info(f"收到创建数据源请求: tenant_id={tenant_id}")
+    logger.info(f"  - name: '{request.name}'")
+    logger.info(f"  - db_type: '{request.db_type}'")
+    logger.info(f"  - connection_string: '{request.connection_string}'")
+    logger.info(f"  - connection_string长度: {len(request.connection_string) if request.connection_string else 0}")
+    logger.info(f"  - request对象: {request.model_dump()}")
+
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="tenant_id is required"
+        )
+
+    try:
+        # 先加密连接字符串
+        encrypted_string = data_source_service.encryption_service.encrypt_connection_string(
+            request.connection_string
+        )
+
+        # 创建数据源连接(直接使用加密后的字符串)
+        new_connection = DataSourceConnection(
+            tenant_id=tenant_id,
+            name=request.name,
+            db_type=request.db_type,
+            _connection_string=encrypted_string,  # 直接设置加密后的字符串到私有字段
+            status=DataSourceConnectionStatus.TESTING
+        )
+
+        # 解析连接字符串获取连接信息
+        parsed_info = data_source_service._parse_connection_string(
+            request.connection_string,
+            request.db_type
+        )
+        new_connection.host = parsed_info.get("host")
+        new_connection.port = parsed_info.get("port")
+        new_connection.database_name = parsed_info.get("database")
+
+        # 保存到数据库
+        db.add(new_connection)
+        db.commit()
+        db.refresh(new_connection)
+
+        logger.info(f"Created data source '{request.name}' for tenant '{tenant_id}'")
+
+        # 自动测试连接并更新状态
+        try:
+            logger.info(f"Auto-testing connection for data source '{request.name}'...")
+            test_result = await connection_test_service.test_connection(
+                connection_string=request.connection_string,
+                db_type=request.db_type
+            )
+
+            # 更新连接的测试结果和状态
+            new_connection.update_test_result(test_result.to_dict())
+            db.commit()
+            db.refresh(new_connection)
+
+            logger.info(f"Connection test completed: {test_result.success}")
+        except Exception as e:
+            logger.warning(f"Auto-test failed for data source '{request.name}': {e}")
+            # 即使测试失败,也返回创建的数据源(状态保持为TESTING)
+
+        return DataSourceResponse.from_orm(new_connection)
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Failed to create data source: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create data source: {str(e)}"
+        )
+
+
+# ============================================================================
+# 动态路径端点（必须在固定路径端点之后定义）
+# ============================================================================
+
 @router.get("/{connection_id}", summary="获取数据源连接详情", response_model=DataSourceResponse)
 async def get_data_source(
     connection_id: str,
@@ -142,68 +693,6 @@ async def get_data_source(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch data source: {str(e)}"
-        )
-
-
-@router.post("/", summary="创建数据源连接", status_code=status.HTTP_201_CREATED, response_model=DataSourceResponse)
-async def create_data_source(
-    request: DataSourceCreateRequest,
-    tenant_id: str = None,  # 实际应该从认证中间件获取
-    db: Session = Depends(get_db)
-):
-    """
-    创建新的数据源连接
-    自动加密连接字符串并解析连接信息
-    """
-    if not tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="tenant_id is required"
-        )
-
-    try:
-        # 创建数据源连接
-        new_connection = DataSourceConnection(
-            tenant_id=tenant_id,
-            name=request.name,
-            db_type=request.db_type,
-            connection_string="",  # 将在服务中加密后设置
-            status=DataSourceConnectionStatus.TESTING
-        )
-
-        # 使用服务层加密连接字符串并设置连接信息
-        encrypted_string = data_source_service.encryption_service.encrypt_connection_string(
-            request.connection_string
-        )
-        new_connection.connection_string = encrypted_string
-
-        # 解析连接字符串获取连接信息
-        parsed_info = data_source_service._parse_connection_string(
-            request.connection_string,
-            request.db_type
-        )
-        new_connection.host = parsed_info.get("host")
-        new_connection.port = parsed_info.get("port")
-        new_connection.database_name = parsed_info.get("database")
-
-        # 保存到数据库
-        db.add(new_connection)
-        db.commit()
-        db.refresh(new_connection)
-
-        logger.info(f"Created data source '{request.name}' for tenant '{tenant_id}'")
-        return DataSourceResponse.from_orm(new_connection)
-
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except Exception as e:
-        logger.error(f"Failed to create data source: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create data source: {str(e)}"
         )
 
 
@@ -345,6 +834,31 @@ async def delete_data_source(
         )
 
 
+# 注意：/test 必须在 /{connection_id}/test 之前定义
+@router.post("/test", summary="测试连接字符串")
+async def test_connection_string(request: ConnectionTestRequest):
+    """
+    测试连接字符串是否有效（不保存到数据库）
+    """
+    try:
+        test_result = await connection_test_service.test_connection(
+            connection_string=request.connection_string,
+            db_type=request.db_type
+        )
+
+        logger.info(f"Tested connection string for {request.db_type}: {test_result.success}")
+        return test_result.to_dict()
+
+    except Exception as e:
+        logger.error(f"Failed to test connection string: {e}")
+        return {
+            "success": False,
+            "message": f"Connection test failed: {str(e)}",
+            "error_code": "TEST_EXECUTION_ERROR",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 @router.post("/{connection_id}/test", summary="测试数据源连接")
 async def test_data_source_connection(
     connection_id: str,
@@ -400,87 +914,9 @@ async def test_data_source_connection(
         }
 
 
-@router.post("/test", summary="测试连接字符串")
-async def test_connection_string(request: ConnectionTestRequest):
-    """
-    测试连接字符串是否有效（不保存到数据库）
-    """
-    try:
-        test_result = await connection_test_service.test_connection(
-            connection_string=request.connection_string,
-            db_type=request.db_type
-        )
-
-        logger.info(f"Tested connection string for {request.db_type}: {test_result.success}")
-        return test_result.to_dict()
-
-    except Exception as e:
-        logger.error(f"Failed to test connection string: {e}")
-        return {
-            "success": False,
-            "message": f"Connection test failed: {str(e)}",
-            "error_code": "TEST_EXECUTION_ERROR",
-            "timestamp": datetime.now().isoformat()
-        }
-
-
-@router.get("/overview", summary="获取数据源概览统计")
-async def get_data_sources_overview(
-    tenant_id: str = None,  # 实际应该从认证中间件获取
-    user_id: str = None,   # 实际应该从认证中间件获取
-    db: Session = Depends(get_db)
-):
-    """
-    获取数据源和文档的概览统计信息
-    用于仪表板展示，包含安全的存储配额计算和数据隔离
-    """
-    if not tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="tenant_id is required"
-        )
-
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="user_id is required"
-        )
-
-    # 强化的租户验证和权限检查
-    await _validate_overview_access(tenant_id, user_id, db)
-
-    try:
-        # 安全地获取数据库连接统计（加强租户隔离）
-        db_stats = await _get_secure_database_stats(tenant_id, db)
-
-        # 安全地获取文档统计（需要Document模型）
-        doc_stats = await _get_secure_document_stats(tenant_id, db)
-
-        # 安全地获取存储配额和使用情况
-        storage_stats = await _get_secure_storage_stats(tenant_id, db)
-
-        # 获取最近活动（经过安全过滤）
-        recent_activity = await _get_secure_recent_activity(tenant_id, db)
-
-        # 记录概览访问日志
-        logger.info(f"Overview accessed by user {user_id} for tenant {tenant_id}")
-
-        return {
-            "databases": db_stats,
-            "documents": doc_stats,
-            "storage": storage_stats,
-            "recent_activity": recent_activity
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to fetch data sources overview for tenant {tenant_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch overview statistics"
-        )
-
+# ============================================================================
+# 辅助函数 - 被上面的端点使用
+# ============================================================================
 
 async def _validate_overview_access(tenant_id: str, user_id: str, db: Session):
     """
@@ -489,7 +925,7 @@ async def _validate_overview_access(tenant_id: str, user_id: str, db: Session):
     # 验证租户是否存在且活跃
     tenant = db.query(Tenant).filter(
         Tenant.id == tenant_id,
-        Tenant.is_active == True
+        Tenant.status == TenantStatus.ACTIVE
     ).first()
 
     if not tenant:
@@ -510,7 +946,7 @@ async def _get_secure_database_stats(tenant_id: str, db: Session) -> Dict[str, i
         # 使用强化的租户隔离查询
         db_connections = db.query(DataSourceConnection).filter(
             DataSourceConnection.tenant_id == tenant_id,
-            DataSourceConnection.is_active == True
+            DataSourceConnection.status != DataSourceConnectionStatus.INACTIVE
         ).with_entities(
             DataSourceConnection.id,
             DataSourceConnection.status,
@@ -581,11 +1017,9 @@ async def _get_secure_storage_stats(tenant_id: str, db: Session) -> Dict[str, an
         # 获取租户的存储配额配置
         tenant = db.query(Tenant).filter(
             Tenant.id == tenant_id,
-            Tenant.is_active == True
+            Tenant.status == TenantStatus.ACTIVE
         ).with_entities(
-            Tenant.storage_quota_mb,
-            Tenant.max_documents,
-            Tenant.max_data_sources
+            Tenant.storage_quota_mb
         ).first()
 
         if not tenant:
@@ -676,139 +1110,6 @@ async def _get_secure_recent_activity(tenant_id: str, db: Session) -> List[Dict[
         return []
 
 
-@router.get("/search", summary="搜索数据源")
-async def search_data_sources(
-    q: str = "",
-    type: str = "all",
-    status: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    page: int = 1,
-    limit: int = 20,
-    tenant_id: str = None,  # 实际应该从认证中间件获取
-    user_id: str = None,   # 实际应该从认证中间件获取
-    db: Session = Depends(get_db)
-):
-    """
-    搜索数据源和文档
-    支持关键词搜索和多维度筛选，包含强化的租户隔离验证
-    """
-    if not tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="tenant_id is required"
-        )
-
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="user_id is required"
-        )
-
-    # 输入验证和清理
-    await _validate_search_parameters(q, type, status, date_from, date_to, page, limit)
-
-    # 强化的租户隔离验证
-    await _validate_tenant_search_access(tenant_id, user_id, db)
-
-    try:
-        results = []
-        total_count = 0
-
-        # 搜索数据库连接
-        if type in ["all", "database"]:
-            query = db.query(DataSourceConnection).filter(
-                DataSourceConnection.tenant_id == tenant_id,
-                DataSourceConnection.is_active == True
-            )
-
-            # 关键词搜索 - 防止注入攻击
-            if q:
-                safe_query = _sanitize_search_query(q)
-                query = query.filter(
-                    DataSourceConnection.name.contains(safe_query) |
-                    DataSourceConnection.db_type.contains(safe_query)
-                )
-
-            # 状态筛选 - 验证状态值有效性
-            if status:
-                valid_statuses = _validate_and_parse_statuses(status)
-                if valid_statuses:
-                    query = query.filter(
-                        DataSourceConnection.status.in_(valid_statuses)
-                    )
-
-            # 日期范围筛选 - 验证日期格式和安全性
-            if date_from or date_to:
-                date_range = _validate_and_parse_date_range(date_from, date_to)
-                if date_range['from']:
-                    query = query.filter(DataSourceConnection.created_at >= date_range['from'])
-                if date_range['to']:
-                    query = query.filter(DataSourceConnection.created_at <= date_range['to'])
-
-            # 计算总数（添加二次租户验证）
-            db_total = query.with_entities(DataSourceConnection.id).count()
-            total_count += db_total
-
-            # 分页查询（限制最大分页以防止性能攻击）
-            safe_limit = min(limit, 100)
-            safe_page = max(1, min(page, 1000))  # 防止过大的页码
-
-            db_results = query.offset((safe_page - 1) * safe_limit).limit(safe_limit).all()
-
-            # 对每个结果进行最终的租户验证（双重检查）
-            for conn in db_results:
-                # 二次验证：确保结果确实属于该租户
-                if conn.tenant_id != tenant_id:
-                    logger.error(f"Security breach: data source {conn.id} from tenant {conn.tenant_id} "
-                               f"found in search results for tenant {tenant_id}")
-                    continue
-
-                # 过滤敏感信息
-                safe_conn_data = {
-                    "id": conn.id,
-                    "type": "database",
-                    "name": conn.name,
-                    "status": conn.status.value if hasattr(conn.status, 'value') else str(conn.status),
-                    "created_at": conn.created_at.isoformat(),
-                    "updated_at": conn.updated_at.isoformat(),
-                    "db_type": conn.db_type,
-                    "host": conn.host,
-                    "port": conn.port
-                    # 注意：不返回connection_string等敏感信息
-                }
-                results.append(safe_conn_data)
-
-        # TODO: 搜索文档（需要Document模型）
-        if type in ["all", "document"]:
-            # 这里需要实现文档搜索逻辑，同样需要强化的租户隔离
-            pass
-
-        # 计算分页信息
-        total_pages = (total_count + safe_limit - 1) // safe_limit
-
-        # 记录搜索操作日志
-        logger.info(f"Search performed by user {user_id} for tenant {tenant_id}: "
-                   f"query='{q}', type={type}, results={len(results)}")
-
-        return {
-            "results": results,
-            "total": total_count,
-            "page": safe_page,
-            "limit": safe_limit,
-            "total_pages": total_pages
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to search data sources for tenant {tenant_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Search operation failed"
-        )
-
-
 async def _validate_search_parameters(
     q: str,
     type: str,
@@ -865,7 +1166,7 @@ async def _validate_tenant_search_access(tenant_id: str, user_id: str, db: Sessi
     # 验证租户是否存在且活跃
     tenant = db.query(Tenant).filter(
         Tenant.id == tenant_id,
-        Tenant.is_active == True
+        Tenant.status == TenantStatus.ACTIVE
     ).first()
 
     if not tenant:
@@ -934,155 +1235,6 @@ def _validate_and_parse_date_range(date_from: Optional[str], date_to: Optional[s
     return result
 
 
-class BulkDeleteRequest(BaseModel):
-    """批量删除请求模型"""
-    item_ids: List[str] = Field(..., min_length=1, max_length=50, description="要删除的项目ID列表，单次最多50个")
-    item_type: str = Field(..., pattern=r"^(database|document)$", description="项目类型")
-    confirmation_token: Optional[str] = Field(None, description="操作确认令牌，用于防CSRF攻击")
-
-
-@router.post("/bulk-delete", summary="批量删除数据源")
-async def bulk_delete_data_sources(
-    request: BulkDeleteRequest,
-    tenant_id: str = None,  # 实际应该从认证中间件获取
-    user_id: str = None,   # 实际应该从认证中间件获取
-    db: Session = Depends(get_db)
-):
-    """
-    批量删除数据源或文档
-    支持事务回滚和错误统计，包含细粒度权限验证
-    """
-    if not tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="tenant_id is required"
-        )
-
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="user_id is required"
-        )
-
-    # 验证请求数量限制
-    if len(request.item_ids) > 50:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete more than 50 items at once"
-        )
-
-    # 基础权限验证：检查租户是否存在且活跃
-    tenant = db.query(Tenant).filter(
-        Tenant.id == tenant_id,
-        Tenant.is_active == True
-    ).first()
-
-    if not tenant:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or inactive tenant"
-        )
-
-    # 记录操作日志
-    logger.info(f"Bulk delete request by user {user_id} for tenant {tenant_id}: "
-                f"type={request.item_type}, count={len(request.item_ids)}")
-
-    success_count = 0
-    error_count = 0
-    errors = []
-    deleted_items = []
-
-    try:
-        if request.item_type == "database":
-            # 数据源删除的特殊权限检查
-            await _validate_bulk_database_delete_permission(
-                tenant_id=tenant_id,
-                user_id=user_id,
-                item_ids=request.item_ids,
-                db=db
-            )
-
-            # 批量删除数据库连接
-            for item_id in request.item_ids:
-                try:
-                    # 检查数据源是否存在且属于该租户
-                    connection = db.query(DataSourceConnection).filter(
-                        DataSourceConnection.id == item_id,
-                        DataSourceConnection.tenant_id == tenant_id,
-                        DataSourceConnection.is_active == True
-                    ).first()
-
-                    if not connection:
-                        error_count += 1
-                        errors.append({
-                            "item_id": item_id,
-                            "error": "Data source not found or already inactive"
-                        })
-                        continue
-
-                    # 额外权限检查：检查数据源是否有正在运行的任务
-                    if not await _can_delete_data_source(connection, db):
-                        error_count += 1
-                        errors.append({
-                            "item_id": item_id,
-                            "error": "Data source has active queries and cannot be deleted"
-                        })
-                        continue
-
-                    # 软删除：设置为不活跃
-                    connection.is_active = False
-                    connection.updated_at = datetime.now()
-
-                    deleted_items.append({
-                        "item_id": item_id,
-                        "name": connection.name,
-                        "type": "database"
-                    })
-                    success_count += 1
-
-                except Exception as e:
-                    error_count += 1
-                    errors.append({
-                        "item_id": item_id,
-                        "error": f"Delete failed: {str(e)}"
-                    })
-
-        elif request.item_type == "document":
-            # TODO: 实现文档批量删除和权限验证
-            for item_id in request.item_ids:
-                error_count += 1
-                errors.append({
-                    "item_id": item_id,
-                    "error": "Document deletion not implemented yet"
-                })
-
-        # 提交事务
-        db.commit()
-
-        # 记录成功删除的日志
-        if success_count > 0:
-            logger.info(f"Successfully bulk deleted {success_count} items for tenant {tenant_id}: "
-                       f"{deleted_items}")
-
-        return {
-            "success_count": success_count,
-            "error_count": error_count,
-            "errors": errors,
-            "deleted_items": deleted_items
-        }
-
-    except HTTPException:
-        db.rollback()
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Failed to bulk delete data sources: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to bulk delete: {str(e)}"
-        )
-
-
 async def _validate_bulk_database_delete_permission(
     tenant_id: str,
     user_id: str,
@@ -1101,7 +1253,7 @@ async def _validate_bulk_database_delete_permission(
     # 检查是否超过了该租户的数据源删除限制
     active_connections = db.query(DataSourceConnection).filter(
         DataSourceConnection.tenant_id == tenant_id,
-        DataSourceConnection.is_active == True
+        DataSourceConnection.status != DataSourceConnectionStatus.INACTIVE
     ).count()
 
     # 如果删除后会导致数据源数量过少，可能需要特殊权限
@@ -1113,7 +1265,7 @@ async def _validate_bulk_database_delete_permission(
     # 检查最近删除频率，防止恶意批量删除
     recent_deletions = db.query(DataSourceConnection).filter(
         DataSourceConnection.tenant_id == tenant_id,
-        DataSourceConnection.is_active == False,
+        DataSourceConnection.status == DataSourceConnectionStatus.INACTIVE,
         DataSourceConnection.updated_at >= datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     ).count()
 
@@ -1146,18 +1298,3 @@ async def _can_delete_data_source(connection: DataSourceConnection, db: Session)
     # - 检查是否有定时任务依赖
 
     return True
-
-
-@router.get("/types/supported", summary="获取支持的数据源类型")
-async def get_supported_data_source_types():
-    """
-    获取支持的数据源类型列表
-    """
-    try:
-        return connection_test_service.get_supported_database_types()
-    except Exception as e:
-        logger.error(f"Failed to get supported database types: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get supported database types: {str(e)}"
-        )

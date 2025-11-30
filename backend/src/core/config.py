@@ -51,7 +51,7 @@ class Settings(BaseSettings):
 
     # ZhipuAI settings
     ZHIPUAI_API_KEY: str = ""
-    ZHIPUAI_DEFAULT_MODEL: str = "glm-4-flash"
+    ZHIPUAI_DEFAULT_MODEL: str = "glm-4.6"
     ZHIPUAI_BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4/"
     ZHIPUAI_TIMEOUT: int = 30
     ZHIPUAI_MAX_RETRIES: int = 3

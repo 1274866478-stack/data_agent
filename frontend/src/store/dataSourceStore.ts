@@ -40,6 +40,7 @@ export interface CreateDataSourceRequest {
   name: string
   connection_string: string
   db_type?: string
+  file?: File  // 用于文件上传
 }
 
 export interface UpdateDataSourceRequest {
@@ -169,9 +170,52 @@ class ApiClient {
   }
 
   async createDataSource(tenantId: string, data: CreateDataSourceRequest): Promise<DataSourceConnection> {
+    console.log('ApiClient.createDataSource 调用:', { tenantId, data })
+
+    // 如果包含文件，使用 FormData 进行上传
+    if (data.file) {
+      console.log('使用文件上传模式')
+      const formData = new FormData()
+      formData.append('file', data.file)
+      formData.append('name', data.name)
+      if (data.db_type) {
+        formData.append('db_type', data.db_type)
+      }
+
+      const url = `${this.baseURL}/data-sources/upload?tenant_id=${tenantId}`
+      const token = this.getAuthToken()
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          ...(token && { Authorization: `Bearer ${token}` }),
+        },
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      return await response.json()
+    }
+
+    // 传统的连接字符串方式
+    console.log('使用连接字符串模式')
+
+    // 清理数据,移除file字段
+    const cleanData = {
+      name: data.name,
+      connection_string: data.connection_string,
+      db_type: data.db_type || 'postgresql',
+    }
+
+    console.log('发送到API的数据:', cleanData)
+
     return this.request<DataSourceConnection>(`/data-sources?tenant_id=${tenantId}`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(cleanData),
     })
   }
 
