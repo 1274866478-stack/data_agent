@@ -6,13 +6,15 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      target: development
     container_name: dataagent-frontend
     restart: unless-stopped
     environment:
       - NODE_ENV=development
-      - NEXT_PUBLIC_API_URL=http://localhost:8004
+      - NEXT_PUBLIC_API_URL=http://localhost:8004/api/v1
       - NEXT_PUBLIC_MINIO_ENDPOINT=http://localhost:9000
       - NEXT_PUBLIC_MINIO_BUCKET=dataagent-files
+      - WATCHPACK_POLLING=true
     volumes:
       - ./frontend:/app
       - /app/node_modules
@@ -24,10 +26,11 @@ services:
     networks:
       - dataagent-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ["CMD-SHELL", "curl -f http://localhost:3000 || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 40s
 
   # Backend FastAPI Application
   backend:
@@ -41,7 +44,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:password@db:5432/dataagent
       - DATABASE_SYNC_URL=postgresql://postgres:password@db:5432/dataagent
-      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ENDPOINT=storage:9000
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
       - MINIO_SECURE=false
