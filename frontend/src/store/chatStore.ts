@@ -51,12 +51,13 @@ interface ChatState {
   createSession: (title?: string) => Promise<string>
   switchSession: (sessionId: string) => void
   deleteSession: (sessionId: string) => void
+  deleteSessions: (sessionIds: string[]) => void
   updateSessionTitle: (sessionId: string, title: string) => void
   searchSessions: (keyword: string) => ChatSession[]
   startNewConversation: () => Promise<string>
 
   // 消息操作
-  sendMessage: (content: string) => Promise<void>
+  sendMessage: (content: string, dataSourceId?: string) => Promise<void>
   addMessage: (message: Omit<ChatMessage, 'id'>) => void
   updateMessage: (messageId: string, updates: Partial<ChatMessage>) => void
   deleteMessage: (messageId: string) => void
@@ -79,7 +80,7 @@ interface ChatState {
   saveToStorage: () => void
 
   // 内部方法
-  _sendOnlineMessage: (content: string, sessionId: string) => Promise<void>
+  _sendOnlineMessage: (content: string, sessionId: string, dataSourceId?: string) => Promise<void>
 }
 
 // 生成唯一ID
@@ -95,7 +96,7 @@ export const useChatStore = create<ChatState>()(
       isLoading: false,
       isTyping: false,
       error: null,
-      isOnline: navigator.onLine,
+      isOnline: typeof window !== 'undefined' ? navigator.onLine : true,
       isSyncing: false,
       stats: {
         totalMessages: 0,
@@ -189,6 +190,35 @@ export const useChatStore = create<ChatState>()(
         get().saveToStorage()
       },
 
+      // 批量删除会话
+      deleteSessions: (sessionIds: string[]) => {
+        if (sessionIds.length === 0) return
+
+        set((state) => {
+          const sessionIdsSet = new Set(sessionIds)
+          const deletedMessages = state.sessions
+            .filter(s => sessionIdsSet.has(s.id))
+            .reduce((total, s) => total + s.messages.length, 0)
+
+          const updatedSessions = state.sessions.filter(s => !sessionIdsSet.has(s.id))
+          const currentSession = state.currentSession && sessionIdsSet.has(state.currentSession.id)
+            ? (updatedSessions.length > 0 ? updatedSessions[0] : null)
+            : state.currentSession
+
+          return {
+            sessions: updatedSessions,
+            currentSession,
+            stats: {
+              ...state.stats,
+              totalSessions: Math.max(0, state.stats.totalSessions - sessionIds.length),
+              totalMessages: Math.max(0, state.stats.totalMessages - deletedMessages),
+            }
+          }
+        })
+
+        get().saveToStorage()
+      },
+
       // 更新会话标题
       updateSessionTitle: (sessionId: string, title: string) => {
         set((state) => {
@@ -235,9 +265,9 @@ export const useChatStore = create<ChatState>()(
       },
 
       // 发送消息
-      sendMessage: async (content: string) => {
+      sendMessage: async (content: string, dataSourceId?: string) => {
         const state = get()
-        console.log('[ChatStore] sendMessage 调用, currentSession:', state.currentSession?.id, 'isLoading:', state.isLoading, 'isOnline:', state.isOnline)
+        console.log('[ChatStore] sendMessage 调用, currentSession:', state.currentSession?.id, 'isLoading:', state.isLoading, 'isOnline:', state.isOnline, 'dataSourceId:', dataSourceId)
 
         if (!state.currentSession || state.isLoading) {
           console.warn('[ChatStore] 无法发送消息: currentSession 或 isLoading 状态不正确')
@@ -307,11 +337,11 @@ export const useChatStore = create<ChatState>()(
 
         // 在线时直接发送消息
         console.log('[ChatStore] 在线模式，调用 _sendOnlineMessage')
-        await state._sendOnlineMessage(content, state.currentSession.id)
+        await state._sendOnlineMessage(content, state.currentSession.id, dataSourceId)
       },
 
       // 内部方法：在线发送消息
-      _sendOnlineMessage: async (content: string, sessionId: string) => {
+      _sendOnlineMessage: async (content: string, sessionId: string, dataSourceId?: string) => {
         const state = get()
         console.log('[ChatStore] _sendOnlineMessage 开始, sessionId:', sessionId)
 
@@ -320,10 +350,24 @@ export const useChatStore = create<ChatState>()(
         state.setTyping(true)
 
         try {
-          // 调用API发送消息
+          // 获取当前会话的历史消息（不包含刚添加的用户消息，因为它已经被添加了）
+          const currentSession = state.sessions.find(s => s.id === sessionId)
+          const historyMessages = currentSession?.messages
+            .filter(m => m.role !== 'system' && m.status !== 'error')  // 排除系统消息和错误消息
+            .slice(0, -1)  // 排除刚刚添加的当前消息（避免重复）
+            .map(m => ({
+              role: m.role as 'user' | 'assistant' | 'system',
+              content: m.content
+            })) || []
+
+          console.log('[ChatStore] 历史消息数量:', historyMessages.length, '数据源ID:', dataSourceId)
+
+          // 调用API发送消息，包含历史上下文和数据源选择
           const queryRequest: ChatQueryRequest = {
             query: content,
             session_id: sessionId,
+            history: historyMessages,  // 添加历史消息
+            context: dataSourceId ? { data_sources: [dataSourceId] } : undefined,  // 添加数据源选择
           }
 
           console.log('[ChatStore] 准备调用 API, request:', queryRequest)
@@ -598,13 +642,11 @@ export const useChatStore = create<ChatState>()(
             }))
           })) || []
 
-          const currentSession = parsedData.currentSession
-            ? sessions.find((s: ChatSession) => s.id === parsedData.currentSession.id) || null
-            : null
-
+          // 不自动恢复 currentSession，每次打开都是新对话（类似ChatGPT行为）
+          // 历史会话仍然保存在 sessions 列表中，用户可以从历史对话中选择恢复
           set({
             sessions,
-            currentSession,
+            currentSession: null,  // 每次打开都是空白新对话
             stats: parsedData.stats || {
               totalMessages: 0,
               totalSessions: 0,
@@ -709,10 +751,20 @@ export const useChatStore = create<ChatState>()(
 
             const currentState = get()
             if (currentState.currentSession?.id === sessionId) {
+              // 获取历史消息用于上下文
+              const currentSession = currentState.sessions.find(s => s.id === sessionId)
+              const historyMessages = currentSession?.messages
+                .filter(m => m.role !== 'system' && m.status !== 'error')
+                .map(m => ({
+                  role: m.role as 'user' | 'assistant' | 'system',
+                  content: m.content
+                })) || []
+
               // 直接调用API而不是通过store的sendMessage
               const queryRequest: ChatQueryRequest = {
                 query: content,
                 session_id: sessionId,
+                history: historyMessages,  // 添加历史上下文
               }
 
               const response = await api.chat.sendQuery(queryRequest)

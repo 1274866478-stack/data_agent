@@ -476,7 +476,7 @@ describe('chatStore', () => {
       )
     })
 
-    it('应该从本地存储加载数据', () => {
+    it('应该从本地存储加载数据但不恢复当前会话（类似ChatGPT每次打开新对话）', () => {
       const mockStoredData = {
         sessions: [
           {
@@ -512,9 +512,11 @@ describe('chatStore', () => {
       // 重新创建hook以触发加载
       const { result } = renderHook(() => useChatStore())
 
+      // 历史会话应该被加载
       expect(result.current.sessions).toHaveLength(1)
       expect(result.current.sessions[0].title).toBe('存储的会话')
-      expect(result.current.currentSession?.title).toBe('存储的会话')
+      // 但当前会话应该是null（每次打开都是新对话）
+      expect(result.current.currentSession).toBeNull()
       expect(result.current.stats.totalMessages).toBe(1)
     })
 

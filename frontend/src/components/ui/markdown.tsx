@@ -13,7 +13,7 @@ interface MarkdownProps {
 
 export function Markdown({ content, className }: MarkdownProps) {
   return (
-    <div className={cn('prose prose-sm max-w-none dark:prose-invert', className)}>
+    <div className={cn('prose prose-gray max-w-none dark:prose-invert prose-p:text-gray-700 prose-li:text-gray-700 prose-strong:text-gray-900', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -112,13 +112,13 @@ export function Markdown({ content, className }: MarkdownProps) {
           ),
 
           th: ({ children, ...props }) => (
-            <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider" {...props}>
+            <th className="px-3 py-2 text-left text-sm font-semibold text-gray-900 uppercase tracking-wider" {...props}>
               {children}
             </th>
           ),
 
           td: ({ children, ...props }) => (
-            <td className="px-3 py-2 text-sm border-t border-border" {...props}>
+            <td className="px-3 py-2 text-sm text-gray-800 font-medium border-t border-border" {...props}>
               {children}
             </td>
           ),

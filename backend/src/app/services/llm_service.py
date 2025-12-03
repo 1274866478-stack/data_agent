@@ -90,7 +90,7 @@ class ZhipuProvider(BaseLLMProvider):
     def __init__(self, api_key: str, tenant_id: str):
         super().__init__(api_key, tenant_id)
         self.client = ZhipuAI(api_key=api_key)
-        self.default_model = "glm-4-flash"
+        self.default_model = getattr(settings, 'zhipuai_default_model', 'glm-4.6')
         self.thinking_indicators = [
             "分析", "比较", "评估", "解释", "设计", "规划",
             "为什么", "如何", "原因", "影响", "建议", "步骤",

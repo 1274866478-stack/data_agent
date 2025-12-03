@@ -1,13 +1,18 @@
 'use client'
 
-import { useState, useRef, useCallback, useMemo } from 'react'
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Send, Bot, User, Sparkles, Paperclip, X, FileText, CheckCircle, AlertCircle, Loader2, Plus, History, Search, MessageSquare, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
+import { Send, Bot, User, Sparkles, Paperclip, X, FileText, CheckCircle, AlertCircle, Loader2, Plus, History, Search, MessageSquare, Trash2, ChevronLeft, ChevronRight, CheckSquare, Square, Database } from 'lucide-react'
+import { Markdown } from '@/components/ui/markdown'
 import { useChatStore } from '@/store/chatStore'
+import { useDataSourceStore, DataSourceConnection } from '@/store/dataSourceStore'
 import { uploadFile, UploadProgress, fileUploadService } from '@/services/fileUploadService'
 import { cn } from '@/lib/utils'
 
@@ -24,6 +29,9 @@ export default function AIAssistantPage() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [showHistory, setShowHistory] = useState(false)
+  const [batchSelectMode, setBatchSelectMode] = useState(false)
+  const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
+  const [selectedDataSourceId, setSelectedDataSourceId] = useState<string>('__all__')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const {
     sendMessage,
@@ -33,9 +41,35 @@ export default function AIAssistantPage() {
     sessions,
     switchSession,
     deleteSession,
+    deleteSessions,
     searchSessions,
     startNewConversation
   } = useChatStore()
+
+  // 数据源相关
+  const {
+    dataSources,
+    isLoading: isLoadingDataSources,
+    fetchDataSources
+  } = useDataSourceStore()
+
+  // 加载数据源列表
+  useEffect(() => {
+    // TODO: 从认证上下文获取租户ID，现在使用默认值
+    const tenantId = 'default_tenant'
+    fetchDataSources(tenantId, { active_only: true })
+  }, [fetchDataSources])
+
+  // 获取活跃的数据源列表
+  const activeDataSources = useMemo(() => {
+    return dataSources.filter(ds => ds.status === 'active')
+  }, [dataSources])
+
+  // 获取选中的数据源对象（__all__ 表示使用所有数据源）
+  const selectedDataSource = useMemo(() => {
+    if (selectedDataSourceId === '__all__') return null
+    return activeDataSources.find(ds => ds.id === selectedDataSourceId)
+  }, [activeDataSources, selectedDataSourceId])
 
   // 获取当前会话的消息，如果没有会话则为空数组
   const messages = currentSession?.messages || []
@@ -67,6 +101,43 @@ export default function AIAssistantPage() {
     }
   }
 
+  // 切换批量选择模式
+  const toggleBatchSelectMode = () => {
+    setBatchSelectMode(!batchSelectMode)
+    setSelectedSessions(new Set())
+  }
+
+  // 切换单个会话的选择状态
+  const toggleSessionSelection = (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation()
+    const newSelected = new Set(selectedSessions)
+    if (newSelected.has(sessionId)) {
+      newSelected.delete(sessionId)
+    } else {
+      newSelected.add(sessionId)
+    }
+    setSelectedSessions(newSelected)
+  }
+
+  // 全选/取消全选
+  const toggleSelectAll = () => {
+    if (selectedSessions.size === filteredSessions.length) {
+      setSelectedSessions(new Set())
+    } else {
+      setSelectedSessions(new Set(filteredSessions.map(s => s.id)))
+    }
+  }
+
+  // 批量删除选中的会话
+  const handleBatchDelete = () => {
+    if (selectedSessions.size === 0) return
+    if (confirm(`确定要删除选中的 ${selectedSessions.size} 个对话吗？`)) {
+      deleteSessions(Array.from(selectedSessions))
+      setSelectedSessions(new Set())
+      setBatchSelectMode(false)
+    }
+  }
+
   const handleSend = async () => {
     // 如果没有会话，先创建一个
     if (!currentSession) {
@@ -76,7 +147,9 @@ export default function AIAssistantPage() {
     if (!input.trim() || isLoading) return
     const content = input.trim()
     setInput('')
-    await sendMessage(content)
+    // 传递选中的数据源ID（__all__ 表示使用所有数据源，不传递ID）
+    const dataSourceId = selectedDataSourceId === '__all__' ? undefined : selectedDataSourceId
+    await sendMessage(content, dataSourceId)
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -233,15 +306,52 @@ export default function AIAssistantPage() {
                   <History className="w-4 h-4" />
                   历史对话
                 </h3>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setShowHistory(false)}
-                  className="h-8 w-8"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  {/* 批量选择按钮 */}
+                  <Button
+                    variant={batchSelectMode ? "default" : "ghost"}
+                    size="icon"
+                    onClick={toggleBatchSelectMode}
+                    className="h-8 w-8"
+                    title={batchSelectMode ? "取消批量选择" : "批量选择"}
+                  >
+                    <CheckSquare className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setShowHistory(false)}
+                    className="h-8 w-8"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
+
+              {/* 批量操作栏 */}
+              {batchSelectMode && (
+                <div className="flex items-center justify-between mb-3 p-2 bg-blue-50 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={filteredSessions.length > 0 && selectedSessions.size === filteredSessions.length}
+                      onCheckedChange={toggleSelectAll}
+                    />
+                    <span className="text-sm text-gray-600">
+                      {selectedSessions.size > 0 ? `已选 ${selectedSessions.size} 项` : '全选'}
+                    </span>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleBatchDelete}
+                    disabled={selectedSessions.size === 0}
+                    className="h-7 text-xs"
+                  >
+                    <Trash2 className="w-3 h-3 mr-1" />
+                    删除
+                  </Button>
+                </div>
+              )}
 
               {/* 搜索框 */}
               <div className="relative">
@@ -279,15 +389,26 @@ export default function AIAssistantPage() {
                   filteredSessions.map((session) => (
                     <div
                       key={session.id}
-                      onClick={() => handleSwitchSession(session.id)}
+                      onClick={() => batchSelectMode ? null : handleSwitchSession(session.id)}
                       className={cn(
                         "p-3 rounded-lg cursor-pointer mb-1 group transition-colors",
-                        session.id === currentSession?.id
-                          ? "bg-blue-100 border border-blue-200"
-                          : "hover:bg-gray-100"
+                        selectedSessions.has(session.id)
+                          ? "bg-blue-100 border border-blue-300"
+                          : session.id === currentSession?.id
+                            ? "bg-blue-50 border border-blue-200"
+                            : "hover:bg-gray-100"
                       )}
                     >
-                      <div className="flex items-start justify-between">
+                      <div className="flex items-start gap-2">
+                        {/* 批量选择复选框 */}
+                        {batchSelectMode && (
+                          <div className="pt-0.5" onClick={(e) => toggleSessionSelection(e, session.id)}>
+                            <Checkbox
+                              checked={selectedSessions.has(session.id)}
+                              onCheckedChange={() => {}}
+                            />
+                          </div>
+                        )}
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-sm truncate">{session.title}</p>
                           <p className="text-xs text-gray-500 mt-1">
@@ -302,14 +423,17 @@ export default function AIAssistantPage() {
                             })}
                           </p>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={(e) => handleDeleteSession(e, session.id)}
-                          className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-red-500"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
+                        {/* 非批量模式显示删除按钮 */}
+                        {!batchSelectMode && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => handleDeleteSession(e, session.id)}
+                            className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-red-500"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))
@@ -360,9 +484,62 @@ export default function AIAssistantPage() {
                   </Button>
                 </div>
               </div>
-              <p className="text-sm text-muted-foreground mt-2">
-                基于智谱 GLM-4.6 的智能数据分析助手，支持多轮对话和上下文理解
-              </p>
+              <div className="flex items-center justify-between mt-3">
+                <p className="text-sm text-muted-foreground">
+                  基于智谱 GLM-4.6 的智能数据分析助手，支持多轮对话和上下文理解
+                </p>
+                {/* 数据源选择器 */}
+                <div className="flex items-center gap-2">
+                  <Database className="w-4 h-4 text-muted-foreground" />
+                  <Select
+                    value={selectedDataSourceId}
+                    onValueChange={setSelectedDataSourceId}
+                  >
+                    <SelectTrigger className="w-[220px] h-8">
+                      <SelectValue placeholder="选择数据源进行分析...">
+                        {selectedDataSource ? (
+                          <div className="flex items-center gap-2">
+                            <span className="truncate">{selectedDataSource.name}</span>
+                            <Badge variant="outline" className="text-[10px] px-1 py-0">
+                              {selectedDataSource.db_type.toUpperCase()}
+                            </Badge>
+                          </div>
+                        ) : (
+                          "选择数据源进行分析..."
+                        )}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">
+                        <span className="text-muted-foreground">所有数据源（自动）</span>
+                      </SelectItem>
+                      {isLoadingDataSources ? (
+                        <SelectItem value="__loading__" disabled>
+                          <div className="flex items-center gap-2">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            加载中...
+                          </div>
+                        </SelectItem>
+                      ) : activeDataSources.length === 0 ? (
+                        <SelectItem value="__empty__" disabled>
+                          <span className="text-muted-foreground">暂无可用数据源</span>
+                        </SelectItem>
+                      ) : (
+                        activeDataSources.map((ds) => (
+                          <SelectItem key={ds.id} value={ds.id}>
+                            <div className="flex items-center gap-2">
+                              <span>{ds.name}</span>
+                              <Badge variant="outline" className="text-[10px] px-1 py-0">
+                                {ds.db_type.toUpperCase()}
+                              </Badge>
+                            </div>
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </CardHeader>
           </Card>
 
@@ -428,7 +605,13 @@ export default function AIAssistantPage() {
                             ? 'bg-gradient-to-br from-blue-500 to-indigo-600 text-white'
                             : 'bg-white border border-gray-200 shadow-sm'
                         }`}>
-                          <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                          {message.role === 'user' ? (
+                            <p className="text-base whitespace-pre-wrap">{message.content}</p>
+                          ) : (
+                            <div className="text-gray-800">
+                              <Markdown content={message.content} className="prose-base" />
+                            </div>
+                          )}
                         </div>
                         <div className={`text-xs text-gray-500 mt-1 px-2 ${
                           message.role === 'user' ? 'text-right' : ''

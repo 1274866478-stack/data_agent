@@ -85,15 +85,15 @@ async def get_documents(
     """
     tenant_id = get_tenant_id_from_request()
 
-    # 转换状态字符串为枚举
+    # 转换状态字符串为枚举（枚举值为小写）
     status_enum = None
     if doc_status:
         try:
-            status_enum = DocumentStatus(doc_status.upper())
+            status_enum = DocumentStatus(doc_status.lower())
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"无效的状态值: {doc_status}。支持的状态: PENDING, INDEXING, READY, ERROR"
+                detail=f"无效的状态值: {doc_status}。支持的状态: pending, indexing, ready, error"
             )
 
     # 调用文档服务

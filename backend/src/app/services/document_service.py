@@ -499,12 +499,14 @@ class DocumentService:
             ).scalar() or 0
 
             # 转换为字典格式
+            # 确保数值类型正确（避免Decimal/BigInteger序列化为字符串）
+            total_size_int = int(total_size) if total_size else 0
             stats = {
                 "by_status": {status.value: count for status, count in status_counts},
                 "by_file_type": {file_type: count for file_type, count in type_counts},
                 "total_documents": sum(count for _, count in status_counts),
-                "total_size_bytes": total_size,
-                "total_size_mb": round(total_size / (1024 * 1024), 2)
+                "total_size_bytes": total_size_int,
+                "total_size_mb": round(total_size_int / (1024 * 1024), 2)
             }
 
             return stats

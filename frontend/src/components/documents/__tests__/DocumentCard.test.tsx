@@ -7,14 +7,14 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { DocumentCard } from '../DocumentCard';
 import { useDocumentStore, DocumentStatus, KnowledgeDocument } from '@/store/documentStore';
 
-// Mock store
+// Mock store - 使用小写值与后端一致
 jest.mock('@/store/documentStore', () => ({
   useDocumentStore: jest.fn(),
   DocumentStatus: {
-    PENDING: 'PENDING',
-    INDEXING: 'INDEXING',
-    READY: 'READY',
-    ERROR: 'ERROR',
+    PENDING: 'pending',
+    INDEXING: 'indexing',
+    READY: 'ready',
+    ERROR: 'error',
   },
 }));
 

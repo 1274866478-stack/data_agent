@@ -7,6 +7,7 @@ import json
 import asyncio
 import logging
 import io
+import time
 from typing import Dict, Any, Optional, List, Union
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -26,9 +27,10 @@ from src.app.data.models import Tenant, DataSourceConnection, DataSourceConnecti
 from src.app.data.database import get_db
 from src.app.services.data_source_service import data_source_service
 from src.app.services.minio_client import minio_service
-from src.services.database_interface import PostgreSQLAdapter
+from src.app.services.database_interface import PostgreSQLAdapter
 from src.app.services.zhipu_client import zhipu_service
 import re
+import duckdb
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,7 @@ class ChatCompletionRequest(BaseModel):
     temperature: Optional[float] = Field(None, description="温度参数(0-1)")
     stream: bool = Field(False, description="是否启用流式输出")
     enable_thinking: bool = Field(False, description="是否启用深度思考模式（仅Zhipu支持）")
+    data_source_ids: Optional[List[str]] = Field(None, description="指定使用的数据源ID列表，不指定则使用所有活跃数据源")
 
 
 class ChatCompletionResponse(BaseModel):
@@ -93,9 +96,59 @@ def _convert_chat_messages(messages: List[ChatMessage]) -> List[LLMMessage]:
     return llm_messages
 
 
+def _get_column_type(dtype_str: str) -> str:
+    """将pandas数据类型转换为友好的类型描述"""
+    if 'int' in dtype_str:
+        return 'integer'
+    elif 'float' in dtype_str:
+        return 'float'
+    elif 'datetime' in dtype_str:
+        return 'datetime'
+    elif 'bool' in dtype_str:
+        return 'boolean'
+    else:
+        return 'text'
+
+
+def _build_table_schema(df: pd.DataFrame, table_name: str) -> Dict[str, Any]:
+    """从DataFrame构建单个表的schema信息"""
+    columns = []
+    for col in df.columns:
+        dtype = str(df[col].dtype)
+        columns.append({
+            "name": str(col),
+            "type": _get_column_type(dtype),
+            "nullable": df[col].isnull().any()
+        })
+
+    # 获取示例数据（前5行）
+    sample_rows = []
+    for _, row in df.head(5).iterrows():
+        row_data = {}
+        for col in df.columns[:10]:  # 限制列数
+            value = row[col]
+            if pd.isna(value):
+                row_data[str(col)] = None
+            else:
+                row_data[str(col)] = str(value)
+        sample_rows.append(row_data)
+
+    return {
+        "table_info": {
+            "name": table_name,
+            "columns": columns,
+            "row_count": len(df)
+        },
+        "sample_data": {
+            "columns": [str(c) for c in df.columns[:10]],
+            "data": sample_rows
+        }
+    }
+
+
 async def _get_file_schema(connection_string: str, db_type: str, data_source_name: str) -> Dict[str, Any]:
     """
-    从文件数据源获取schema信息
+    从文件数据源获取schema信息（支持Excel多Sheet）
 
     Args:
         connection_string: 文件存储路径（格式: file://data-sources/{tenant_id}/{file_id}.xlsx）
@@ -103,7 +156,7 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
         data_source_name: 数据源名称
 
     Returns:
-        schema信息字典，包含列名、类型和示例数据
+        schema信息字典，包含所有表（Sheet）的列名、类型和示例数据
     """
     try:
         # 解析存储路径
@@ -123,12 +176,34 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
             logger.warning(f"无法从MinIO获取文件: {storage_path}")
             return {}
 
-        # 根据文件类型读取数据
-        df = None
+        tables = []
+        sample_data = {}
+
         if db_type in ["xlsx", "xls"]:
-            df = pd.read_excel(io.BytesIO(file_data), sheet_name=0)
+            # 读取所有Sheet
+            excel_file = pd.ExcelFile(io.BytesIO(file_data))
+            sheet_names = excel_file.sheet_names
+            logger.info(f"Excel文件包含 {len(sheet_names)} 个Sheet: {sheet_names}")
+
+            for sheet_name in sheet_names:
+                try:
+                    df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                    if df.empty:
+                        logger.debug(f"跳过空Sheet: {sheet_name}")
+                        continue
+
+                    # 使用Sheet名称作为表名
+                    table_schema = _build_table_schema(df, sheet_name)
+                    tables.append(table_schema["table_info"])
+                    sample_data[sheet_name] = table_schema["sample_data"]
+                    logger.info(f"Sheet '{sheet_name}': {len(df)}行, {len(df.columns)}列")
+                except Exception as e:
+                    logger.warning(f"读取Sheet '{sheet_name}' 失败: {e}")
+                    continue
+
         elif db_type == "csv":
-            # 尝试不同编码
+            # CSV文件只有一个表
+            df = None
             for encoding in ['utf-8', 'gbk', 'gb2312', 'gb18030']:
                 try:
                     df = pd.read_csv(io.BytesIO(file_data), encoding=encoding)
@@ -136,59 +211,22 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
                 except UnicodeDecodeError:
                     continue
 
-        if df is None:
-            logger.warning(f"无法解析文件: {storage_path}")
+            if df is not None:
+                table_schema = _build_table_schema(df, data_source_name)
+                tables.append(table_schema["table_info"])
+                sample_data[data_source_name] = table_schema["sample_data"]
+
+        if not tables:
+            logger.warning(f"无法从文件解析任何表: {storage_path}")
             return {}
 
-        # 构建schema信息
-        columns = []
-        for col in df.columns:
-            dtype = str(df[col].dtype)
-            # 转换pandas类型到更友好的描述
-            if 'int' in dtype:
-                col_type = 'integer'
-            elif 'float' in dtype:
-                col_type = 'float'
-            elif 'datetime' in dtype:
-                col_type = 'datetime'
-            elif 'bool' in dtype:
-                col_type = 'boolean'
-            else:
-                col_type = 'text'
-
-            columns.append({
-                "name": str(col),
-                "type": col_type,
-                "nullable": df[col].isnull().any()
-            })
-
-        # 获取示例数据（前5行）
-        sample_rows = []
-        for _, row in df.head(5).iterrows():
-            row_data = {}
-            for col in df.columns[:10]:  # 限制列数
-                value = row[col]
-                if pd.isna(value):
-                    row_data[str(col)] = None
-                else:
-                    row_data[str(col)] = str(value)
-            sample_rows.append(row_data)
-
         schema_info = {
-            "tables": [{
-                "name": data_source_name,
-                "columns": columns,
-                "row_count": len(df)
-            }],
-            "sample_data": {
-                data_source_name: {
-                    "columns": [str(c) for c in df.columns[:10]],
-                    "data": sample_rows
-                }
-            }
+            "tables": tables,
+            "sample_data": sample_data
         }
 
-        logger.info(f"成功获取文件schema: {len(columns)}列, {len(df)}行")
+        total_rows = sum(t.get("row_count", 0) for t in tables)
+        logger.info(f"成功获取文件schema: {len(tables)}个表, 共{total_rows}行")
         return schema_info
 
     except Exception as e:
@@ -234,7 +272,7 @@ async def _try_find_file_in_minio(tenant_id: str, data_source_id: str, db_type: 
 
 async def _try_get_file_schema_fallback(tenant_id: str, data_source_id: str, db_type: str, data_source_name: str) -> Dict[str, Any]:
     """
-    备选方案：尝试从MinIO直接获取文件schema
+    备选方案：尝试从MinIO直接获取文件schema（支持Excel多Sheet）
 
     Args:
         tenant_id: 租户ID
@@ -262,11 +300,29 @@ async def _try_get_file_schema_fallback(tenant_id: str, data_source_id: str, db_
                 )
 
                 if file_data:
-                    # 成功获取文件，解析schema
-                    df = None
+                    tables = []
+                    sample_data = {}
+
                     if db_type in ["xlsx", "xls"]:
-                        df = pd.read_excel(io.BytesIO(file_data), sheet_name=0)
+                        # 读取所有Sheet
+                        excel_file = pd.ExcelFile(io.BytesIO(file_data))
+                        sheet_names = excel_file.sheet_names
+                        logger.info(f"备选方案: Excel包含 {len(sheet_names)} 个Sheet: {sheet_names}")
+
+                        for sheet_name in sheet_names:
+                            try:
+                                df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                                if df.empty:
+                                    continue
+                                table_schema = _build_table_schema(df, sheet_name)
+                                tables.append(table_schema["table_info"])
+                                sample_data[sheet_name] = table_schema["sample_data"]
+                            except Exception as e:
+                                logger.debug(f"读取Sheet '{sheet_name}' 失败: {e}")
+                                continue
+
                     elif db_type == "csv":
+                        df = None
                         for encoding in ['utf-8', 'gbk', 'gb2312', 'gb18030']:
                             try:
                                 df = pd.read_csv(io.BytesIO(file_data), encoding=encoding)
@@ -274,53 +330,19 @@ async def _try_get_file_schema_fallback(tenant_id: str, data_source_id: str, db_
                             except UnicodeDecodeError:
                                 continue
 
-                    if df is not None:
-                        # 构建schema信息
-                        columns = []
-                        for col in df.columns:
-                            dtype = str(df[col].dtype)
-                            if 'int' in dtype:
-                                col_type = 'integer'
-                            elif 'float' in dtype:
-                                col_type = 'float'
-                            elif 'datetime' in dtype:
-                                col_type = 'datetime'
-                            elif 'bool' in dtype:
-                                col_type = 'boolean'
-                            else:
-                                col_type = 'text'
+                        if df is not None:
+                            table_schema = _build_table_schema(df, data_source_name)
+                            tables.append(table_schema["table_info"])
+                            sample_data[data_source_name] = table_schema["sample_data"]
 
-                            columns.append({
-                                "name": str(col),
-                                "type": col_type,
-                                "nullable": df[col].isnull().any()
-                            })
-
-                        sample_rows = []
-                        for _, row in df.head(5).iterrows():
-                            row_data = {}
-                            for col in df.columns[:10]:
-                                value = row[col]
-                                if pd.isna(value):
-                                    row_data[str(col)] = None
-                                else:
-                                    row_data[str(col)] = str(value)
-                            sample_rows.append(row_data)
-
-                        logger.info(f"备选方案成功获取schema: {len(columns)}列, {len(df)}行")
+                    if tables:
+                        total_rows = sum(t.get("row_count", 0) for t in tables)
+                        logger.info(f"备选方案成功获取schema: {len(tables)}个表, 共{total_rows}行")
                         return {
-                            "tables": [{
-                                "name": data_source_name,
-                                "columns": columns,
-                                "row_count": len(df)
-                            }],
-                            "sample_data": {
-                                data_source_name: {
-                                    "columns": [str(c) for c in df.columns[:10]],
-                                    "data": sample_rows
-                                }
-                            }
+                            "tables": tables,
+                            "sample_data": sample_data
                         }
+
             except Exception as e:
                 logger.debug(f"尝试路径 {path} 失败: {e}")
                 continue
@@ -333,62 +355,106 @@ async def _try_get_file_schema_fallback(tenant_id: str, data_source_id: str, db_
         return {}
 
 
-async def _get_data_sources_context(tenant_id: str, db: Session) -> str:
+async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids: Optional[List[str]] = None) -> str:
     """
     获取租户数据源的上下文信息（包括schema）
 
     Args:
         tenant_id: 租户ID
         db: 数据库会话
+        data_source_ids: 指定的数据源ID列表，如果为None则获取所有活跃数据源
 
     Returns:
         数据源上下文字符串
     """
+    start_time = time.time()
     try:
         # 获取租户的所有活跃数据源
+        t1 = time.time()
         data_sources = await data_source_service.get_data_sources(
             tenant_id=tenant_id,
             db=db,
             active_only=True
         )
+        perf_msg = f"[PERF] get_data_sources took {time.time() - t1:.2f}s, found {len(data_sources) if data_sources else 0} sources"
+        print(perf_msg)  # 直接打印到控制台
+        logger.info(perf_msg)
 
         if not data_sources:
             return ""
+
+        # 如果指定了数据源ID，则只获取指定的数据源
+        if data_source_ids:
+            data_sources = [ds for ds in data_sources if ds.id in data_source_ids]
+            logger.info(f"筛选指定数据源: {data_source_ids}, 找到 {len(data_sources)} 个匹配的数据源")
+            if not data_sources:
+                return ""
 
         context_parts = []
         context_parts.append("## 可用数据源\n")
 
         for ds in data_sources:
             try:
+                ds_start = time.time()
                 schema_info = None
                 connection_string = None
 
                 # 尝试获取解密后的连接字符串
                 try:
+                    t2 = time.time()
                     connection_string = await data_source_service.get_decrypted_connection_string(
                         data_source_id=ds.id,
                         tenant_id=tenant_id,
                         db=db
                     )
+                    print(f"[PERF] get_decrypted_connection_string for {ds.name} took {time.time() - t2:.2f}s")
                 except Exception as decrypt_error:
-                    logger.warning(f"解密数据源 {ds.name} 连接字符串失败: {decrypt_error}")
+                    print(f"[PERF] 解密数据源 {ds.name} 连接字符串失败: {decrypt_error}")
                     # 对于文件类型数据源，尝试从MinIO直接搜索文件
                     if ds.db_type in ["xlsx", "xls", "csv"]:
                         connection_string = await _try_find_file_in_minio(tenant_id, ds.id, ds.db_type)
 
                 # 根据数据源类型获取schema
                 if ds.db_type == "postgresql" and connection_string:
-                    adapter = PostgreSQLAdapter()
-                    schema_info = await adapter.get_schema(connection_string)
+                    t3 = time.time()
+                    adapter = PostgreSQLAdapter(connection_string)
+                    try:
+                        await adapter.connect()
+                        schema_result = await adapter.get_schema_info()
+                        # 将SchemaInfo对象转换为字典格式
+                        schema_info = {
+                            "database_type": schema_result.database_type.value if schema_result.database_type else "postgresql",
+                            "tables": [
+                                {
+                                    "name": table.name,
+                                    "columns": [
+                                        {
+                                            "name": col.name,
+                                            "type": col.data_type,
+                                            "nullable": col.is_nullable
+                                        }
+                                        for col in table.columns
+                                    ]
+                                }
+                                for table in schema_result.tables.values()
+                            ] if schema_result.tables else []
+                        }
+                    finally:
+                        await adapter.disconnect()
+                    print(f"[PERF] PostgreSQL get_schema for {ds.name} took {time.time() - t3:.2f}s")
 
                 elif ds.db_type in ["xlsx", "xls", "csv"]:
                     if connection_string:
                         # 文件类型数据源：从MinIO读取文件并解析schema
+                        t4 = time.time()
                         schema_info = await _get_file_schema(connection_string, ds.db_type, ds.name)
+                        print(f"[PERF] _get_file_schema for {ds.name} took {time.time() - t4:.2f}s")
                     else:
                         # 连接字符串获取失败，尝试备选方案
-                        logger.info(f"尝试备选方案获取数据源 {ds.name} 的schema")
+                        print(f"[PERF] 尝试备选方案获取数据源 {ds.name} 的schema")
                         schema_info = await _try_get_file_schema_fallback(tenant_id, ds.id, ds.db_type, ds.name)
+
+                print(f"[PERF] Total processing for data source {ds.name} took {time.time() - ds_start:.2f}s")
 
                 if schema_info and schema_info.get("tables"):
                     context_parts.append(f"\n### 数据源: {ds.name}")
@@ -460,6 +526,8 @@ async def _get_data_sources_context(tenant_id: str, db: Session) -> str:
                 context_parts.append(f"- 类型: {ds.db_type}")
                 context_parts.append(f"- 注: 无法获取schema信息 ({str(e)[:50]})")
 
+        total_time = time.time() - start_time
+        logger.info(f"[PERF] _get_data_sources_context TOTAL took {total_time:.2f}s")
         return "\n".join(context_parts)
 
     except Exception as e:
@@ -469,7 +537,7 @@ async def _get_data_sources_context(tenant_id: str, db: Session) -> str:
 
 def _build_system_prompt_with_context(data_sources_context: str) -> str:
     """
-    构建包含数据源上下文的系统提示词
+    构建包含数据源上下文的系统提示词（简洁版本）
 
     Args:
         data_sources_context: 数据源上下文信息
@@ -477,269 +545,60 @@ def _build_system_prompt_with_context(data_sources_context: str) -> str:
     Returns:
         系统提示词
     """
-    base_prompt = """你是一个智能数据分析助手。你的任务是帮助用户分析和查询他们的数据。
-
-你具有以下能力：
-1. 理解用户的自然语言查询
-2. 基于用户的数据源信息回答问题
-3. 生成SQL查询来获取数据
-4. 解释数据分析结果
-
-"""
-
     if data_sources_context:
-        # 有数据源时的完整提示
-        base_prompt += f"""
-# 用户的数据源信息
+        # 有数据源时的简洁提示，强调必须使用schema中的实际表名和列名
+        return f"""你是一个SQL数据分析助手。
+
+## 🔴🔴🔴 最重要的规则：必须使用下面提供的实际表名和列名 🔴🔴🔴
+
+你只能使用以下Schema中列出的表名和列名。**禁止**根据用户描述猜测或翻译表名。
 
 {data_sources_context}
 
-# 🔥🔥🔥 极其重要的系统能力说明 🔥🔥🔥
+## 核心规则
 
-**你必须理解并牢记：**
-1. ✅ **你拥有完整的数据库访问能力** - 系统会自动执行你生成的SQL查询
-2. ✅ **环境完全支持数据库访问** - 不要说"当前环境不支持"
-3. ✅ **你不需要手动执行SQL** - 系统会在后台自动执行
-4. ❌ **绝对禁止说**"我无法访问数据库"、"我无法执行查询"、"当前环境不支持直接访问数据库"等话
+1. **必须使用上述Schema中的实际表名和列名**：
+   - ❌ 错误：用户问"客户消费"，你用 `SELECT * FROM 客户` （这是猜测的中文表名！）
+   - ✅ 正确：用户问"客户消费"，你查看Schema，发现实际表名是 `customers`，则用 `SELECT * FROM customers`
+   - ❌ 错误：用户问"订单金额"，你用 `SELECT 金额 FROM 订单` （这是猜测的中文列名！）
+   - ✅ 正确：用户问"订单金额"，你查看Schema，发现实际是 `orders` 表的 `amount` 列
 
----
+2. **直接生成SQL**：当用户问数据相关问题时，立即生成SQL查询。
 
-# 重要说明 - 如何回答数据查询问题
+3. **SQL代码块格式**：将SQL放在 ```sql 代码块中。
 
-当用户询问数据相关问题时（例如："2024年总销售额是多少？"、"哪个产品销售最好？"），你必须按照以下步骤回答：
+4. **系统自动执行**：系统会自动执行SQL并显示结果，**你不需要也不应该自己编写或猜测查询结果**。
 
-## 第1步：仔细阅读schema信息
-**🔥 在生成SQL之前，你必须：**
-1. 仔细查看上述"表结构"部分，确认每个表有哪些列
-2. 确认列的准确名称（不要假设或猜测）
-3. 确认列的数据类型和是否可空
+5. **🔴 极值查询必须使用 LIMIT 1**：当用户问"最大"、"最小"、"最长"、"最短"、"最高"、"最低"、"第一个"、"最早"、"最晚"等极值问题时，**必须只返回一条记录**：
+   - ❌ 错误：`SELECT name, hire_date FROM employees ORDER BY hire_date ASC` （可能返回多行！）
+   - ✅ 正确：`SELECT name, hire_date FROM employees ORDER BY hire_date ASC LIMIT 1` （只返回一行）
+   - 用户问"谁工作时间最长"→ 意思是"谁入职最早"→ 用 `ORDER BY hire_date ASC LIMIT 1`
+   - 用户问"谁薪资最高"→ 用 `ORDER BY salary DESC LIMIT 1`
 
-## 第2步：生成SQL查询
-基于上述数据源schema信息，生成准确的PostgreSQL SQL查询语句。
+6. **只生成一个SQL查询**：每次回答只生成一个SQL语句，不要生成多个独立的查询。
 
-**🔴🔴🔴 SQL生成规则（必须严格遵守）：**
-1. **⚠️ 最重要：严格使用上述schema中的列名** - 绝对不要假设或猜测列名！
-   - ❌ 错误示例：假设有`department_id`列
-   - ✅ 正确做法：查看schema，使用实际存在的列名（如`department`）
-2. **仔细检查每个列名** - 在生成SQL前，必须先在上述schema中确认列名存在
-3. **只使用SELECT查询** - 禁止UPDATE/DELETE/DROP等危险操作
-4. **添加适当的WHERE、GROUP BY、ORDER BY子句**
-5. **使用LIMIT限制结果数量**（默认100行）
-6. **处理NULL值和日期时间格式**
-7. **对于聚合查询，使用SUM、COUNT、AVG等函数**
+## 回答流程
 
-**🚨 常见错误警告：**
-- ❌ 不要假设列名为`department_id`，实际可能是`department`
-- ❌ 不要假设列名为`product_id`，实际可能是`product`
-- ❌ 不要假设列名为`customer_id`，实际可能是`customer`
-- ✅ **必须查看上述schema，使用实际存在的列名！**
+1. 阅读用户问题，理解意图
+2. 查看上方的Schema信息，找到对应的**实际表名**和**实际列名**
+3. 使用Schema中的实际名称生成SQL
+4. **只提供SQL语句**，不要自己编造结果表格
 
-**🔴 关于表关联的重要规则：**
-- **必须仔细查看上述"表关系（外键）"部分**，了解表之间的关联方式
-- **不要假设表之间的直接关联** - 如果两个表没有直接外键关系，必须通过中间表进行JOIN
-- **典型的订单-产品关系**：orders表通常不直接包含product_id，而是通过order_items（订单明细）表关联：
-  - orders.id -> order_items.order_id
-  - order_items.product_id -> products.id
-- **查询产品销售额时**，必须JOIN三个表：orders + order_items + products
-- **正确示例：**
-```sql
--- 查询销售额最高的产品
-SELECT p.name as product_name, SUM(oi.subtotal) as total_sales
-FROM order_items oi
-JOIN products p ON oi.product_id = p.id
-JOIN orders o ON oi.order_id = o.id
-WHERE o.status != 'cancelled'
-GROUP BY p.id, p.name
-ORDER BY total_sales DESC
-LIMIT 10;
-```
-
-## 第3步：显示SQL查询
-在回答中明确显示生成的SQL语句，格式如下：
-
-```sql
-SELECT SUM(total_amount) as total_sales
-FROM orders
-WHERE EXTRACT(YEAR FROM order_date) = 2024
-  AND status != 'cancelled';
-```
-
-## 第4步：系统自动执行SQL
-**🔥🔥🔥 极其重要：SQL自动执行机制 🔥🔥🔥**
-
-⚠️ **你必须理解：你拥有完整的数据库访问能力！**
-
-当你在回答中包含SQL代码块（```sql ... ```）时，系统会**立即自动执行**这个SQL查询，并将结果以表格形式插入到你的回答中。
-
-**执行流程：**
-1. 你生成SQL查询并放在 ```sql 代码块中
-2. 系统**立即自动执行**SQL（在后台完成，你看不到这个过程）
-3. 系统自动在SQL代码块后插入**真实的查询结果表格**
-4. 用户看到的是：SQL + **真实的数据库查询结果**
-
-**🎯 你的职责（必须遵守）：**
-✅ 生成正确的SQL查询
-✅ 将SQL放在 ```sql 代码块中
-✅ 可以在SQL之前简单说明查询的目的
-✅ SQL代码块后，**只需说**"系统会自动执行查询并显示结果"
-✅ **相信系统会执行SQL** - 你不需要担心执行问题
-
-**🚫🚫🚫 严格禁止（违反将导致错误）：**
-❌ **绝对禁止说**"我无法访问数据库" - **这是错误的！你可以访问！**
-❌ **绝对禁止说**"我无法执行查询" - **这是错误的！系统会自动执行！**
-❌ **绝对禁止说**"当前环境不支持直接访问数据库" - **这是错误的！环境完全支持！**
-❌ **绝对禁止说**"请您自己执行" - **这是错误的！系统会自动执行！**
-❌ **绝对禁止说**"我将执行这个查询"、"现在执行查询"、"让我执行SQL"
-❌ **绝对禁止说**"如果您提供查询结果"、"您可以在数据库中执行"
-❌ **绝对不要**在SQL代码块后编造或猜测查询结果
-❌ **绝对不要**写"根据查询结果，XXX是YYY"这样的话（因为你还没看到结果）
-❌ 不要给出推测性的回答（如"可能是..."、"大概..."）
-
-**💡 记住：**
-- 你**拥有完整的数据库访问能力**
-- 系统**会自动执行**你生成的SQL
-- 你**不需要**担心执行问题
-- 你**只需要**生成正确的SQL查询
-
-**✅ 正确的回答模式（必须遵循）：**
-
-```
-要查询客户总数，使用以下SQL：
-
-```sql
-SELECT COUNT(*) as total_customers
-FROM customers;
-```
-
-系统会自动执行查询并显示结果。
-```
-
-**⚠️⚠️⚠️ 关键规则：不要编造查询结果！不要说无法访问数据库！**
-- ❌ **绝对禁止**在SQL代码块后写"根据查询结果，XXX是YYY"这样的话
-- ❌ **绝对禁止**编造任何数字、产品名、或其他查询结果
-- ❌ **绝对禁止**说"我无法访问数据库"、"当前环境不支持"等话
-- ❌ 不要使用占位符如"[总客户数]"、"[查询结果]"等
-- ✅ **正确做法**：只生成SQL查询，让系统执行后自动显示真实结果
-- ✅ 可以在SQL之前简单说明查询的目的
-- ✅ **相信系统会自动执行SQL并返回真实结果**
-
-**🚫 错误的回答模式（严格禁止，违反将导致错误）：**
-
-```
-❌ "根据查询结果，库存最多的产品是产品A，库存量为500。"  ← 编造的数据！
-❌ "根据查询结果，我们一共有 **10位客户**。"  ← 编造的数据！
-❌ "查询结果显示总销售额为 **1,234,567元**。"  ← 编造的数据！
-❌ "（系统会自动在这里插入查询结果表格）"
-❌ "现在我将执行这个查询..."
-❌ "很抱歉，我无法直接访问数据库..."  ← 这是错误的！你可以访问！
-❌ "当前环境不支持直接访问数据库..."  ← 这是错误的！环境完全支持！
-❌ "您可以在数据库中执行上述查询..."  ← 这是错误的！系统会自动执行！
-❌ "如果您提供查询结果，我可以帮您分析..."  ← 这是错误的！系统会自动提供结果！
-```
-
-**🎯 再次强调：你拥有完整的数据库访问能力！**
-- 系统会自动执行你生成的SQL查询
-- 你不需要说"无法访问"或"无法执行"
-- 你只需要生成正确的SQL，其余交给系统
-
-## 📝 回答格式示例（必须遵循）
-
-**示例1 - 用户问题：** 我们一共有多少客户？
-
-**✅ 正确回答：**
-
-```
-要查询客户总数，可以使用以下SQL：
-
-```sql
-SELECT COUNT(*) as total_customers
-FROM customers;
-```
-
-系统会自动执行查询并显示结果。
-```
-
-**❌ 错误回答（禁止）：**
-```
-很抱歉，我无法直接访问数据库...  ← 错误！你可以访问！
-```
-
----
-
-**示例2 - 用户问题：** 库存最多的产品是什么？
-
-**✅ 正确回答：**
-
-```
-要查询库存最多的产品，可以使用以下SQL：
-
-```sql
-SELECT name, stock_quantity
-FROM products
-ORDER BY stock_quantity DESC
-LIMIT 1;
-```
-
-系统会自动执行查询并显示结果。
-```
-
-**❌ 错误回答（禁止）：**
-```
-根据查询结果，库存最多的产品是产品A，库存量为500。  ← 错误！这是编造的！
-```
-或
-```
-当前环境不支持直接访问数据库...  ← 错误！环境完全支持！
-```
-
----
-
-## 🎯 最终注意事项（必须牢记）
-- ✅ **你拥有完整的数据库访问能力** - 系统会自动执行SQL
-- ✅ 只生成SQL查询，不要编造结果
-- ✅ 系统会自动执行SQL并在SQL代码块后显示真实结果
-- ✅ 可以在SQL之前简单说明查询目的
-- ❌ **绝对不要说**"我无法访问数据库"、"当前环境不支持"等话
-- ❌ 绝对不要在SQL之后写"根据查询结果..."这样的话
-- ❌ 绝对不要编造任何数字或结果
-- ❌ 如果某个表或列不存在于上述schema中，明确告知用户并建议正确的表名/列名
-"""
+**重要提醒**：
+- 不要翻译表名！如果Schema中是 `customers`，就用 `customers`，不要用 `客户`
+- 不要翻译列名！如果Schema中是 `total_amount`，就用 `total_amount`，不要用 `总金额`
+- 系统会自动执行SQL并显示真实结果
+- **🚫 禁止自己生成或猜测查询结果表格！** 只需提供SQL语句，结果由系统自动执行后展示
+- **🔴 极值问题必须使用 LIMIT 1 确保只返回一条记录！**"""
     else:
-        # 没有数据源时的明确提示
-        base_prompt += """
-# 🚨🚨🚨 重要提示：当前没有数据源连接 🚨🚨🚨
+        # 没有数据源时的提示
+        return """你是一个数据分析助手。
 
-**当前状态：** 系统未检测到任何已连接的数据源。
+当前系统中还没有连接任何数据源。
 
-**如果用户询问数据相关问题，你必须：**
+如果用户询问数据相关问题，请告诉他们需要先在"数据源管理"页面添加数据库连接。
 
-1. ❌ **绝对不要假设或猜测数据库结构**
-   - ❌ 不要说"我们可以假设存在一个XXX表"
-   - ❌ 不要说"假设有employees表和departments表"
-   - ❌ 不要生成任何SQL查询（因为没有数据源可以执行）
-
-2. ✅ **正确的回答方式：**
-   ```
-   抱歉，当前系统中还没有连接任何数据源。要查询数据，您需要：
-
-   1. 在"数据源管理"页面添加数据库连接
-   2. 配置PostgreSQL连接字符串
-   3. 连接成功后，我就可以帮您查询数据了
-
-   请问您需要帮助配置数据源吗？
-   ```
-
-3. ❌ **错误的回答方式（严格禁止）：**
-   ```
-   ❌ "我们可以假设存在一个部门表(departments)和员工表(employees)..."
-   ❌ "以下是可能的SQL查询：SELECT COUNT(*) FROM employees..."
-   ❌ 任何包含SQL代码块的回答
-   ```
-
-**记住：** 没有数据源 = 不能生成SQL = 必须提示用户先添加数据源！
-"""
-
-    return base_prompt
+不要假设或猜测数据库结构，不要生成任何SQL查询。"""
 
 
 def _parse_sql_error(error_message: str) -> Dict[str, str]:
@@ -864,7 +723,7 @@ async def _fix_sql_with_ai(
 # PostgreSQL数据库提示
 {error_details.get('hint', '无')}
 
-# 数据库Schema信息
+# 🔴🔴🔴 数据库Schema信息（必须使用这里的实际表名和列名）
 {schema_context}
 
 # 🔥🔥🔥 修复要求（必须严格遵守）
@@ -872,24 +731,32 @@ async def _fix_sql_with_ai(
 ## 第1步：理解错误
 - **主要错误**: {error_details['main_error']}
 - **数据库提示**: {error_details.get('hint', '无提示')}
-- **关键**: PostgreSQL的HINT通常会告诉你正确的列名或表名！
 
-## 第2步：查找正确的列名/表名
-1. **仔细阅读PostgreSQL的HINT** - 它通常会建议正确的列名
-   - 例如：HINT: Perhaps you meant to reference the column "employees.department"
-   - 这意味着应该使用 `department` 而不是 `department_id`
-2. **在上述Schema信息中确认** - 验证HINT中建议的列名确实存在
-3. **常见错误模式：**
-   - ❌ 错误：使用`department_id`，但实际列名是`department`
-   - ❌ 错误：使用`product_id`，但实际列名是`product`
-   - ❌ 错误：使用`customer_id`，但实际列名是`customer`
-   - ✅ 正确：查看Schema和HINT，使用实际存在的列名
+## 第2步：查找正确的表名/列名
+**🔴 核心问题：SQL中使用了不存在的表名或列名！**
+
+1. **如果错误是"Table does not exist"**：
+   - 这通常意味着SQL中使用了错误的表名（可能是用户想象的中文名）
+   - 必须从上面的Schema信息中找到实际存在的表名
+   - 例如：用户说"客户"，但Schema中实际的表可能叫 `customers`
+   - 例如：用户说"订单"，但Schema中实际的表可能叫 `orders`
+
+2. **如果错误是"Column does not exist"**：
+   - 查看PostgreSQL的HINT提示
+   - 在Schema中找到正确的列名
+
+3. **常见错误模式（中文表名→英文实际表名）：**
+   - ❌ `FROM 客户` → ✅ `FROM customers`（或Schema中的实际表名）
+   - ❌ `FROM 订单` → ✅ `FROM orders`（或Schema中的实际表名）
+   - ❌ `FROM 产品` → ✅ `FROM products`（或Schema中的实际表名）
+   - ❌ `FROM 员工` → ✅ `FROM employees`（或Schema中的实际表名）
 
 ## 第3步：修复SQL
-1. 找出SQL中的错误列名/表名
-2. 替换为正确的列名/表名（来自HINT或Schema）
-3. 确保其他部分的SQL语法正确
-4. 只使用SELECT查询，禁止UPDATE/DELETE/DROP等操作
+1. 仔细阅读上面的Schema信息，找到对应的**实际表名和列名**
+2. 将SQL中错误的表名/列名替换为Schema中的实际名称
+3. 确保SQL语法正确
+4. 只使用SELECT查询
+5. 🔴 极值查询必须使用 LIMIT 1：如果原始问题涉及"最大"、"最小"、"最长"、"最短"等极值，确保SQL使用 ORDER BY + LIMIT 1
 
 ## 第4步：返回结果
 - **只返回修复后的SQL语句** - 不要包含任何解释或markdown标记
@@ -900,15 +767,16 @@ async def _fix_sql_with_ai(
 
 **错误SQL:**
 ```sql
-SELECT COUNT(*) FROM employees WHERE department_id = 'Sales'
+SELECT 客户.name, SUM(订单.total_amount) FROM 客户 JOIN 订单 ON 客户.id = 订单.customer_id
 ```
 
 **错误信息:**
-column "department_id" does not exist
-HINT: Perhaps you meant to reference the column "employees.department"
+Table with name 客户 does not exist
+
+**Schema信息中显示实际表名是：customers, orders**
 
 **修复后的SQL:**
-SELECT COUNT(*) FROM employees WHERE department = 'Sales'
+SELECT customers.name, SUM(orders.total_amount) as total_spent FROM customers JOIN orders ON customers.id = orders.customer_id GROUP BY customers.name
 
 ---
 
@@ -919,12 +787,13 @@ SELECT COUNT(*) FROM employees WHERE department = 'Sales'
             {"role": "user", "content": fix_prompt}
         ]
 
-        # 调用智谱AI修复SQL
+        # 调用智谱AI修复SQL（跳过安全检查，因为这是内部调用）
         response = await zhipu_service.chat_completion(
             messages=messages,
             max_tokens=1000,
             temperature=0.1,  # 低温度确保准确性
-            stream=False
+            stream=False,
+            skip_security_check=True  # 内部SQL修复调用，跳过安全检查
         )
 
         if response and response.get("content"):
@@ -956,11 +825,177 @@ SELECT COUNT(*) FROM employees WHERE department = 'Sales'
         return None
 
 
+async def _execute_sql_on_file_datasource(
+    connection_string: str,
+    db_type: str,
+    sql_query: str,
+    data_source_name: str
+) -> Dict[str, Any]:
+    """
+    在文件类型数据源上执行SQL查询（使用duckdb，支持Excel多Sheet）
+
+    Args:
+        connection_string: 文件存储路径
+        db_type: 文件类型（xlsx, csv, xls）
+        sql_query: SQL查询语句
+        data_source_name: 数据源名称（用于表名）
+
+    Returns:
+        查询结果字典
+    """
+    try:
+        # 解析存储路径
+        if connection_string.startswith("file://"):
+            storage_path = connection_string[7:]
+        else:
+            storage_path = connection_string
+
+        # 从MinIO下载文件
+        logger.info(f"从MinIO下载文件用于SQL执行: {storage_path}")
+        file_data = minio_service.download_file(
+            bucket_name="data-sources",
+            object_name=storage_path
+        )
+
+        if not file_data:
+            return {
+                "success": False,
+                "error": f"无法从MinIO获取文件: {storage_path}",
+                "data": [],
+                "columns": [],
+                "row_count": 0
+            }
+
+        # 创建duckdb连接
+        conn = duckdb.connect(':memory:')
+        registered_tables = []
+
+        if db_type in ["xlsx", "xls"]:
+            # 读取所有Sheet并注册为不同的表
+            excel_file = pd.ExcelFile(io.BytesIO(file_data))
+            sheet_names = excel_file.sheet_names
+            logger.info(f"Excel包含 {len(sheet_names)} 个Sheet: {sheet_names}")
+
+            for sheet_name in sheet_names:
+                try:
+                    df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                    if df.empty:
+                        logger.debug(f"跳过空Sheet: {sheet_name}")
+                        continue
+
+                    # 使用Sheet名称作为表名（清理特殊字符）
+                    # 保留中文字符，因为DuckDB支持中文表名
+                    clean_table_name = re.sub(r'[^\w\u4e00-\u9fff]', '_', sheet_name)
+                    if not clean_table_name or clean_table_name[0].isdigit():
+                        clean_table_name = f"sheet_{clean_table_name}"
+
+                    conn.register(clean_table_name, df)
+                    registered_tables.append(clean_table_name)
+                    logger.info(f"注册表 '{clean_table_name}' (来自Sheet '{sheet_name}'): {len(df)}行")
+
+                    # 同时用原始Sheet名注册（如果不同）
+                    if sheet_name != clean_table_name:
+                        try:
+                            conn.register(sheet_name, df)
+                            registered_tables.append(sheet_name)
+                        except Exception:
+                            pass  # 如果原名注册失败，忽略
+
+                except Exception as e:
+                    logger.warning(f"读取Sheet '{sheet_name}' 失败: {e}")
+                    continue
+
+            # 如果第一个Sheet存在，也用数据源名称注册（向后兼容）
+            if sheet_names:
+                try:
+                    first_df = pd.read_excel(excel_file, sheet_name=0)
+                    if not first_df.empty:
+                        ds_table_name = re.sub(r'[^\w\u4e00-\u9fff]', '_', data_source_name)
+                        if ds_table_name not in registered_tables:
+                            conn.register(ds_table_name, first_df)
+                            registered_tables.append(ds_table_name)
+                except Exception:
+                    pass
+
+        elif db_type == "csv":
+            # CSV文件只有一个表
+            df = None
+            for encoding in ['utf-8', 'gbk', 'gb2312', 'gb18030']:
+                try:
+                    df = pd.read_csv(io.BytesIO(file_data), encoding=encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+
+            if df is not None:
+                table_name = re.sub(r'[^\w\u4e00-\u9fff]', '_', data_source_name)
+                if not table_name or table_name[0].isdigit():
+                    table_name = f"data_{table_name}"
+                conn.register(table_name, df)
+                registered_tables.append(table_name)
+                # 同时注册为 'data' 作为备用
+                conn.register('data', df)
+
+        if not registered_tables:
+            conn.close()
+            return {
+                "success": False,
+                "error": f"无法从文件读取任何数据: {storage_path}",
+                "data": [],
+                "columns": [],
+                "row_count": 0
+            }
+
+        logger.info(f"成功注册 {len(registered_tables)} 个表: {registered_tables}")
+
+        # 执行SQL查询
+        try:
+            result_df = conn.execute(sql_query).fetchdf()
+        except Exception as sql_error:
+            error_msg = str(sql_error)
+            logger.warning(f"SQL执行失败: {error_msg}")
+            # 提供更友好的错误信息，包含可用的表名
+            conn.close()
+            return {
+                "success": False,
+                "error": f"SQL执行失败: {error_msg}\n\n可用的表: {', '.join(registered_tables)}",
+                "data": [],
+                "columns": [],
+                "row_count": 0
+            }
+
+        conn.close()
+
+        # 转换结果为字典列表
+        columns = list(result_df.columns)
+        data = result_df.to_dict('records')
+
+        logger.info(f"文件数据源SQL执行成功，返回 {len(data)} 行")
+
+        return {
+            "success": True,
+            "data": data,
+            "columns": columns,
+            "row_count": len(data)
+        }
+
+    except Exception as e:
+        logger.error(f"文件数据源SQL执行失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "data": [],
+            "columns": [],
+            "row_count": 0
+        }
+
+
 async def _execute_sql_if_needed(
     content: str,
     tenant_id: str,
     db: Session,
-    original_question: str = ""
+    original_question: str = "",
+    data_source_ids: Optional[List[str]] = None
 ) -> str:
     """
     检测AI回复中的SQL查询并执行，将结果插入回复中（带智能重试）
@@ -970,6 +1005,7 @@ async def _execute_sql_if_needed(
         tenant_id: 租户ID
         db: 数据库会话
         original_question: 用户原始问题（用于SQL修复）
+        data_source_ids: 指定的数据源ID列表，如果为None则使用第一个活跃数据源
 
     Returns:
         增强后的回复内容（包含查询结果）
@@ -982,9 +1018,21 @@ async def _execute_sql_if_needed(
         if not sql_matches:
             return content
 
-        logger.info(f"检测到 {len(sql_matches)} 个SQL查询，准备执行")
+        # 去重：如果有多个相同的SQL，只保留第一个
+        seen_sqls = set()
+        unique_sql_matches = []
+        for sql in sql_matches:
+            normalized_sql = sql.strip().upper()  # 标准化比较
+            if normalized_sql not in seen_sqls:
+                seen_sqls.add(normalized_sql)
+                unique_sql_matches.append(sql)
+            else:
+                logger.warning(f"检测到重复SQL，已跳过: {sql[:50]}...")
 
-        # 获取租户的第一个活跃数据源
+        sql_matches = unique_sql_matches
+        logger.info(f"检测到 {len(sql_matches)} 个唯一SQL查询，准备执行")
+
+        # 获取租户的活跃数据源
         data_sources = await data_source_service.get_data_sources(
             tenant_id=tenant_id,
             db=db,
@@ -995,8 +1043,17 @@ async def _execute_sql_if_needed(
             logger.warning("没有找到活跃的数据源，无法执行SQL")
             return content + "\n\n⚠️ **注意**: 未找到已连接的数据源，无法执行SQL查询。请先在数据源管理中添加数据库连接。"
 
-        # 使用第一个数据源
-        data_source = data_sources[0]
+        # 如果指定了数据源ID，使用指定的第一个；否则使用第一个活跃数据源
+        if data_source_ids:
+            matching_sources = [ds for ds in data_sources if ds.id in data_source_ids]
+            if matching_sources:
+                data_source = matching_sources[0]
+                logger.info(f"使用指定的数据源: {data_source.name} ({data_source.id})")
+            else:
+                data_source = data_sources[0]
+                logger.warning(f"未找到指定的数据源，使用第一个活跃数据源: {data_source.name}")
+        else:
+            data_source = data_sources[0]
 
         # 获取解密的连接字符串
         connection_string = await data_source_service.get_decrypted_connection_string(
@@ -1006,7 +1063,7 @@ async def _execute_sql_if_needed(
         )
 
         # 获取schema上下文（用于SQL修复）
-        schema_context = await _get_data_sources_context(tenant_id, db)
+        schema_context = await _get_data_sources_context(tenant_id, db, data_source_ids)
 
         # 执行每个SQL查询
         enhanced_content = content
@@ -1024,34 +1081,52 @@ async def _execute_sql_if_needed(
                         logger.warning(f"跳过非SELECT查询: {current_sql[:50]}")
                         break
 
-                    # 执行查询
-                    adapter = PostgreSQLAdapter()
-                    result = await adapter.execute_query(connection_string, current_sql)
+                    # 根据数据源类型选择执行方式
+                    if data_source.db_type in ["xlsx", "xls", "csv"]:
+                        # 文件类型数据源：使用duckdb执行
+                        logger.info(f"使用duckdb执行文件数据源查询: {data_source.db_type}")
+                        result = await _execute_sql_on_file_datasource(
+                            connection_string=connection_string,
+                            db_type=data_source.db_type,
+                            sql_query=current_sql,
+                            data_source_name=data_source.name
+                        )
+                        if not result.get("success", False) and result.get("error"):
+                            raise Exception(result["error"])
+                    else:
+                        # 数据库类型数据源：使用PostgreSQLAdapter
+                        adapter = PostgreSQLAdapter(connection_string)
+                        try:
+                            await adapter.connect()
+                            query_result = await adapter.execute_query(current_sql)
+                            # 将QueryResult对象转换为字典格式
+                            result = {
+                                "data": query_result.data,
+                                "columns": query_result.columns,
+                                "row_count": query_result.row_count
+                            }
+                        finally:
+                            await adapter.disconnect()
 
-                    # 格式化结果
-                    result_text = "\n\n**📊 查询结果：**\n\n"
+                    # 格式化结果 - 简洁版
+                    row_count = len(result.get("data", []))
 
-                    if result.get("data") and len(result["data"]) > 0:
-                        # 显示结果统计
-                        result_text += f"- 返回行数：{len(result['data'])}\n"
-                        result_text += f"- 执行时间：{result.get('execution_time', 0):.2f}秒\n\n"
-
-                        # 显示前几行数据
-                        result_text += "**数据预览（前5行）：**\n\n"
-
+                    if result.get("data") and row_count > 0:
                         # 获取列名：优先使用columns字段，否则从数据中提取
                         columns = result.get("columns") or list(result["data"][0].keys())
-                        result_text += "| " + " | ".join(columns) + " |\n"
+                        # 构建简洁的Markdown表格
+                        result_text = "\n\n| " + " | ".join(columns) + " |\n"
                         result_text += "|" + "|".join(["---" for _ in columns]) + "|\n"
 
-                        for row in result["data"][:5]:
+                        for row in result["data"][:10]:
                             row_values = [str(row.get(col, "")) for col in columns]
                             result_text += "| " + " | ".join(row_values) + " |\n"
 
-                        if len(result["data"]) > 5:
-                            result_text += f"\n*...还有 {len(result['data']) - 5} 行数据*\n"
+                        # 只有当返回行数超过10行时才显示提示
+                        if row_count > 10:
+                            result_text += f"\n*（共{row_count}行，仅显示前10行）*\n"
                     else:
-                        result_text += "查询未返回数据。\n"
+                        result_text = "\n\n*查询未返回数据*\n"
 
                     # 如果经过了重试，替换为修复后的SQL和结果
                     if retry_count > 0:
@@ -1162,7 +1237,8 @@ async def _stream_response_generator(
     stream_generator,
     tenant_id: str,
     db: Session,
-    original_question: str = ""
+    original_question: str = "",
+    data_source_ids: Optional[List[str]] = None
 ):
     """
     流式响应生成器
@@ -1199,9 +1275,21 @@ async def _stream_response_generator(
                 sql_matches = re.findall(sql_pattern, full_content, re.DOTALL | re.IGNORECASE)
 
                 if sql_matches:
-                    logger.info(f"检测到 {len(sql_matches)} 个SQL查询，准备执行")
+                    # 去重：如果有多个相同的SQL，只保留第一个
+                    seen_sqls = set()
+                    unique_sql_matches = []
+                    for sql in sql_matches:
+                        normalized_sql = sql.strip().upper()  # 标准化比较
+                        if normalized_sql not in seen_sqls:
+                            seen_sqls.add(normalized_sql)
+                            unique_sql_matches.append(sql)
+                        else:
+                            logger.warning(f"流式响应：检测到重复SQL，已跳过: {sql[:50]}...")
 
-                    # 获取租户的第一个活跃数据源
+                    sql_matches = unique_sql_matches
+                    logger.info(f"检测到 {len(sql_matches)} 个唯一SQL查询，准备执行")
+
+                    # 获取租户的活跃数据源
                     data_sources = await data_source_service.get_data_sources(
                         tenant_id=tenant_id,
                         db=db,
@@ -1209,7 +1297,17 @@ async def _stream_response_generator(
                     )
 
                     if data_sources:
-                        data_source = data_sources[0]
+                        # 如果指定了数据源ID，使用指定的第一个；否则使用第一个活跃数据源
+                        if data_source_ids:
+                            matching_sources = [ds for ds in data_sources if ds.id in data_source_ids]
+                            if matching_sources:
+                                data_source = matching_sources[0]
+                                logger.info(f"流式响应：使用指定的数据源: {data_source.name} ({data_source.id})")
+                            else:
+                                data_source = data_sources[0]
+                                logger.warning(f"流式响应：未找到指定的数据源，使用第一个活跃数据源: {data_source.name}")
+                        else:
+                            data_source = data_sources[0]
 
                         # 获取解密的连接字符串
                         connection_string = await data_source_service.get_decrypted_connection_string(
@@ -1219,7 +1317,7 @@ async def _stream_response_generator(
                         )
 
                         # 获取schema上下文（用于SQL修复）
-                        schema_context = await _get_data_sources_context(tenant_id, db)
+                        schema_context = await _get_data_sources_context(tenant_id, db, data_source_ids)
 
                         # 执行每个SQL查询（带智能重试）
                         for sql_query in sql_matches:
@@ -1236,32 +1334,55 @@ async def _stream_response_generator(
                                         logger.warning(f"跳过非SELECT查询: {current_sql[:50]}")
                                         break
 
-                                    # 执行查询
-                                    adapter = PostgreSQLAdapter()
-                                    result = await adapter.execute_query(connection_string, current_sql)
+                                    # 根据数据源类型选择执行方式
+                                    if data_source.db_type in ["xlsx", "xls", "csv"]:
+                                        # 文件类型数据源：使用duckdb执行
+                                        logger.info(f"流式响应：使用duckdb执行文件数据源查询: {data_source.db_type}")
+                                        result = await _execute_sql_on_file_datasource(
+                                            connection_string=connection_string,
+                                            db_type=data_source.db_type,
+                                            sql_query=current_sql,
+                                            data_source_name=data_source.name
+                                        )
+                                        if not result.get("success", False) and result.get("error"):
+                                            raise Exception(result["error"])
+                                    else:
+                                        # 数据库类型数据源：使用PostgreSQLAdapter
+                                        adapter = PostgreSQLAdapter(connection_string)
+                                        try:
+                                            await adapter.connect()
+                                            query_result = await adapter.execute_query(current_sql)
+                                            # 将QueryResult对象转换为字典格式
+                                            result = {
+                                                "data": query_result.data,
+                                                "columns": query_result.columns,
+                                                "row_count": query_result.row_count
+                                            }
+                                        finally:
+                                            await adapter.disconnect()
 
-                                    # 格式化结果
-                                    result_text = "\n\n**📊 查询结果：**\n\n"
-                                    result_text += f"- 返回行数：{result.get('row_count', 0)}\n"
-                                    result_text += f"- 执行时间：0.00秒\n\n"
+                                    # 格式化结果 - 简洁版
+                                    row_count = result.get('row_count', 0)
 
                                     if result.get('data'):
-                                        result_text += "**数据预览（前5行）：**\n\n"
-
-                                        # 构建Markdown表格
-                                        data = result['data'][:5]
+                                        data = result['data'][:10]
                                         if data:
                                             headers = list(data[0].keys())
-                                            result_text += "| " + " | ".join(headers) + " |\n"
+                                            # 构建简洁的Markdown表格
+                                            result_text = "\n\n| " + " | ".join(headers) + " |\n"
                                             result_text += "|" + "|".join(["---"] * len(headers)) + "|\n"
 
                                             for row in data:
                                                 values = [str(row.get(h, '')) for h in headers]
                                                 result_text += "| " + " | ".join(values) + " |\n"
 
-                                        result_text += "\n"
+                                            # 只有当返回行数超过10行时才显示提示
+                                            if row_count > 10:
+                                                result_text += f"\n*（共{row_count}行，仅显示前10行）*\n"
+                                        else:
+                                            result_text = "\n\n*查询未返回数据*\n"
                                     else:
-                                        result_text += "*查询未返回数据*\n\n"
+                                        result_text = "\n\n*查询未返回数据*\n"
 
                                     # 如果经过了重试，发送修复说明
                                     if retry_count > 0:
@@ -1400,10 +1521,16 @@ async def chat_completion(
                     detail=f"Invalid provider: {request.provider}"
                 )
 
-        # 获取数据源上下文
-        data_sources_context = await _get_data_sources_context(tenant_id, db)
+        # 获取数据源上下文，如果指定了数据源ID则只获取指定的数据源
+        print(f"[DEBUG] Starting _get_data_sources_context for tenant: {tenant_id}, data_source_ids: {request.data_source_ids}")
+        import time as _time
+        _ctx_start = _time.time()
+        data_sources_context = await _get_data_sources_context(tenant_id, db, request.data_source_ids)
+        print(f"[DEBUG] _get_data_sources_context took {_time.time() - _ctx_start:.2f}s")
         if data_sources_context:
             logger.info(f"Data sources context retrieved for tenant {tenant_id}, length: {len(data_sources_context)}")
+            # 调试日志：打印数据源上下文的前1000个字符
+            logger.debug(f"Data sources context content (first 1000 chars): {data_sources_context[:1000]}")
         else:
             logger.info(f"No data sources found for tenant {tenant_id}")
 
@@ -1418,12 +1545,13 @@ async def chat_completion(
             messages.insert(0, system_message)
             logger.info("Added system message with data sources context")
         elif data_sources_context:
-            # 如果已有system消息，将数据源上下文追加到第一个system消息中
+            # 如果已有system消息，替换为完整的数据分析系统提示（包含SQL生成指令）
+            # 这样确保AI知道如何正确生成SQL查询
+            full_system_prompt = _build_system_prompt_with_context(data_sources_context)
             for i, msg in enumerate(messages):
                 if msg.role == "system":
-                    enhanced_content = f"{msg.content}\n\n# 用户的数据源信息\n\n{data_sources_context}"
-                    messages[i] = LLMMessage(role="system", content=enhanced_content, thinking=msg.thinking)
-                    logger.info("Enhanced existing system message with data sources context")
+                    messages[i] = LLMMessage(role="system", content=full_system_prompt, thinking=msg.thinking)
+                    logger.info("Replaced existing system message with full data sources context and SQL instructions")
                     break
 
         # 提取用户的最后一条消息作为原始问题
@@ -1448,7 +1576,7 @@ async def chat_completion(
             )
 
             return StreamingResponse(
-                _stream_response_generator(response_generator, tenant_id, db, original_question),
+                _stream_response_generator(response_generator, tenant_id, db, original_question, request.data_source_ids),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -1459,6 +1587,7 @@ async def chat_completion(
             )
         else:
             # 非流式响应
+            llm_start = time.time()
             response = await llm_service.chat_completion(
                 tenant_id=tenant_id,
                 messages=messages,
@@ -1469,14 +1598,16 @@ async def chat_completion(
                 stream=request.stream,
                 enable_thinking=request.enable_thinking
             )
+            logger.info(f"[PERF] llm_service.chat_completion took {time.time() - llm_start:.2f}s")
 
             if isinstance(response, LLMResponse):
-                # 检测并执行SQL查询（使用之前提取的原始问题）
+                # 检测并执行SQL查询（使用之前提取的原始问题和指定的数据源）
                 enhanced_content = await _execute_sql_if_needed(
                     response.content,
                     tenant_id,
                     db,
-                    original_question
+                    original_question,
+                    request.data_source_ids
                 )
 
                 # 更新响应内容
@@ -1863,6 +1994,23 @@ async def test_tenant_isolation(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Tenant isolation test failed: {str(e)}")
+
+
+@router.get("/test/data-sources-context")
+async def test_data_sources_context(
+    current_user: Dict[str, Any] = Depends(get_current_user_with_tenant),
+    db: Session = Depends(get_db)
+):
+    """
+    测试数据源上下文获取
+    """
+    tenant_id = current_user.get("tenant_id", "")
+    context = await _get_data_sources_context(tenant_id, db)
+    return {
+        "tenant_id": tenant_id,
+        "context_length": len(context),
+        "context": context
+    }
 
 
 @router.get("/test/all-features")

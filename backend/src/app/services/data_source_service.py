@@ -140,6 +140,10 @@ class DataSourceService:
         )
 
         if active_only:
+            # 只获取ACTIVE状态的数据源
+            query = query.filter(DataSourceConnection.status == DataSourceConnectionStatus.ACTIVE)
+        else:
+            # 即使选择"所有状态"，也要排除已软删除的INACTIVE状态
             query = query.filter(DataSourceConnection.status != DataSourceConnectionStatus.INACTIVE)
 
         connections = query.order_by(

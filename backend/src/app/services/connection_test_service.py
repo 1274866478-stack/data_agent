@@ -95,6 +95,9 @@ class ConnectionTestService:
                 result = await self._test_postgresql_connection(connection_string)
             elif db_type == "mysql":
                 result = await self._test_mysql_connection(connection_string)
+            elif db_type in ["xlsx", "xls", "csv", "sqlite"]:
+                # 文件类型的数据源，测试文件是否存在
+                result = await self._test_file_connection(connection_string, db_type)
             else:
                 result = ConnectionTestResult(
                     success=False,
@@ -440,6 +443,95 @@ class ConnectionTestService:
             return None
         except Exception:
             return None
+
+    async def _test_file_connection(self, connection_string: str, db_type: str) -> ConnectionTestResult:
+        """
+        测试文件类型数据源连接（验证MinIO中的文件是否存在）
+
+        Args:
+            connection_string: 文件路径（格式：file://... 或直接路径）
+            db_type: 文件类型（xlsx, xls, csv, sqlite）
+
+        Returns:
+            连接测试结果
+        """
+        try:
+            from .minio_client import minio_service
+
+            # 解析存储路径
+            if connection_string.startswith("file://"):
+                storage_path = connection_string[7:]  # 去掉 "file://" 前缀
+            else:
+                storage_path = connection_string
+
+            # 处理本地存储的情况
+            if storage_path.startswith("local://"):
+                return ConnectionTestResult(
+                    success=False,
+                    message="本地文件存储暂不支持连接测试",
+                    error_code="LOCAL_STORAGE_NOT_TESTABLE",
+                    details={"storage_type": "local", "path": storage_path}
+                )
+
+            # 检查MinIO连接
+            if not minio_service.check_connection():
+                return ConnectionTestResult(
+                    success=False,
+                    message="无法连接到文件存储服务",
+                    error_code="STORAGE_CONNECTION_FAILED"
+                )
+
+            # 尝试从MinIO获取文件信息（不下载完整文件）
+            bucket_name = "data-sources"
+
+            # 尝试列出文件来验证是否存在
+            try:
+                files = minio_service.list_files(bucket_name=bucket_name, prefix=storage_path)
+                file_exists = any(f.get("name") == storage_path for f in files)
+
+                if not file_exists:
+                    # 直接尝试下载一小部分来验证
+                    file_data = minio_service.download_file(
+                        bucket_name=bucket_name,
+                        object_name=storage_path
+                    )
+                    file_exists = file_data is not None
+
+            except Exception as e:
+                logger.warning(f"检查文件时出错: {e}")
+                file_exists = False
+
+            if file_exists:
+                return ConnectionTestResult(
+                    success=True,
+                    message=f"文件存在且可访问 ({db_type.upper()})",
+                    details={
+                        "file_type": db_type,
+                        "storage_path": storage_path,
+                        "bucket": bucket_name
+                    }
+                )
+            else:
+                return ConnectionTestResult(
+                    success=False,
+                    message=f"文件不存在或无法访问: {storage_path}",
+                    error_code="FILE_NOT_FOUND",
+                    details={"storage_path": storage_path}
+                )
+
+        except ImportError:
+            return ConnectionTestResult(
+                success=False,
+                message="MinIO客户端未配置",
+                error_code="MINIO_NOT_AVAILABLE"
+            )
+        except Exception as e:
+            logger.error(f"文件连接测试失败: {e}")
+            return ConnectionTestResult(
+                success=False,
+                message=f"文件连接测试失败: {str(e)}",
+                error_code="FILE_TEST_ERROR"
+            )
 
     def get_supported_database_types(self) -> Dict[str, Any]:
         """获取支持的数据库类型信息"""

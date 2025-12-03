@@ -16,7 +16,7 @@ from src.app.core.auth import get_current_user_with_tenant
 from src.app.data.models import Tenant
 from src.app.data.database import get_db
 from src.app.services.data_source_service import data_source_service
-from src.services.database_interface import PostgreSQLAdapter
+from src.app.services.database_interface import PostgreSQLAdapter
 
 logger = logging.getLogger(__name__)
 

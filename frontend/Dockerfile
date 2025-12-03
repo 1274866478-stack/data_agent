@@ -31,6 +31,10 @@ RUN npm run build
 # Development stage
 FROM base AS development
 WORKDIR /app
+
+# Install curl for health check
+RUN apk add --no-cache curl
+
 ENV NODE_ENV development
 ENV NEXT_TELEMETRY_DISABLED 1
 
@@ -50,7 +54,7 @@ ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=5 \
     CMD curl -f http://localhost:3000 || exit 1
 
 CMD ["npm", "run", "dev"]
@@ -58,6 +62,9 @@ CMD ["npm", "run", "dev"]
 # Production image, copy all the files and run next
 FROM base AS production
 WORKDIR /app
+
+# Install curl for health check
+RUN apk add --no-cache curl
 
 ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
@@ -83,7 +90,7 @@ ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:3000 || exit 1
 
 CMD ["node", "server.js"]

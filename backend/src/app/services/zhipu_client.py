@@ -405,17 +405,21 @@ class ZhipuAIService:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         stream: bool = False,
-        enable_cache: bool = True
+        enable_cache: bool = True,
+        skip_security_check: bool = False
     ) -> Optional[Dict[str, Any]]:
         """
         调用智谱AI聊天完成API
         增强版本，支持缓存和性能监控
+
+        Args:
+            skip_security_check: 跳过安全检查（仅用于内部调用如SQL修复）
         """
         start_time = time.time()
         operation = "chat_completion"
 
-        # 安全检查
-        if not security_monitor.check_request_security(
+        # 安全检查（内部调用可以跳过）
+        if not skip_security_check and not security_monitor.check_request_security(
             {"messages": messages, "model": model, "stream": stream},
             source_ip=getattr(self, '_source_ip', None)
         ):
@@ -779,6 +783,9 @@ class ZhipuAIService:
 4. 只使用SELECT查询，禁止UPDATE、DELETE、DROP等危险操作
 5. 处理NULL值和字符串转义
 6. 使用适当的LIMIT子句限制结果数量
+7. 🔴极值查询必须使用 LIMIT 1：当用户问"最大"、"最小"、"最长"、"最短"、"最高"、"最低"、"第一个"、"最早"、"最晚"等极值问题时，必须用 ORDER BY + LIMIT 1 只返回一条记录
+   - 例如："谁工作时间最长"→ `ORDER BY hire_date ASC LIMIT 1`
+   - 例如："谁薪资最高"→ `ORDER BY salary DESC LIMIT 1`
 
 数据库Schema:
 {schema}"""

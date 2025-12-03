@@ -23,7 +23,6 @@ from .services.minio_client import minio_service
 from .services.chromadb_client import chromadb_service
 from .services.zhipu_client import zhipu_service
 from .services.query_performance_monitor import query_perf_monitor
-from ..services.rag_sql_service import RAGSQLService
 from .api.v1 import api_router
 
 # 设置结构化日志
@@ -157,14 +156,6 @@ async def lifespan(app: FastAPI):
         logger.info("Performance monitoring service stopped")
     except Exception as e:
         logger.error(f"Failed to stop performance monitoring: {e}")
-
-    # 清理RAG-SQL服务资源
-    try:
-        rag_sql_service = RAGSQLService()
-        await rag_sql_service.cleanup()
-        logger.info("RAG-SQL service cleanup completed")
-    except Exception as e:
-        logger.error(f"Failed to cleanup RAG-SQL service: {e}")
 
     # 记录应用关闭事件
     try:

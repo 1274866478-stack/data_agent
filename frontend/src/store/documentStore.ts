@@ -8,12 +8,12 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { immer } from 'zustand/middleware/immer'
 
-// 文档状态枚举 - 与后端一致
+// 文档状态枚举 - 与后端一致（小写值）
 export enum DocumentStatus {
-  PENDING = 'PENDING',
-  INDEXING = 'INDEXING',
-  READY = 'READY',
-  ERROR = 'ERROR'
+  PENDING = 'pending',
+  INDEXING = 'indexing',
+  READY = 'ready',
+  ERROR = 'error'
 }
 
 // 文档类型定义 - Story 2.4规范

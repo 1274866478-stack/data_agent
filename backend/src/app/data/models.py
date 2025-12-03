@@ -17,7 +17,7 @@ from .database import Base
 # 在 PostgreSQL 中会自动使用 JSONB
 JSONB = JSON
 from ..services.encryption_service import encryption_service
-from ...services.database_factory import DatabaseAdapterFactory
+from ..services.database_factory import DatabaseAdapterFactory
 
 
 class TenantStatus(str, enum.Enum):
@@ -113,12 +113,14 @@ class DataSourceConnectionStatus(enum.Enum):
     TESTING = "testing"
 
 
-class DocumentStatus(enum.Enum):
-    """文档状态枚举 - Story 2.4规范"""
-    PENDING = "PENDING"
-    INDEXING = "INDEXING"
-    READY = "READY"
-    ERROR = "ERROR"
+class DocumentStatus(str, enum.Enum):
+    """文档状态枚举 - Story 2.4规范
+    注意：值必须为小写，与数据库中的document_status枚举类型匹配
+    """
+    PENDING = "pending"
+    INDEXING = "indexing"
+    READY = "ready"
+    ERROR = "error"
 
 
 class DataSourceConnection(Base):
@@ -315,7 +317,13 @@ class KnowledgeDocument(Base):
     mime_type = Column(String(100), nullable=False)  # MIME类型 (Story规范要求)
 
     # Story规范: 状态枚举
-    status = Column(Enum(DocumentStatus), default=DocumentStatus.PENDING, nullable=False, index=True)
+    # 使用values_callable确保枚举值与数据库中的document_status类型匹配
+    status = Column(
+        Enum(DocumentStatus, name='document_status', values_callable=lambda x: [e.value for e in x]),
+        default=DocumentStatus.PENDING,
+        nullable=False,
+        index=True
+    )
     processing_error = Column(Text, nullable=True)  # 处理错误信息
 
     # Story规范: 索引时间

@@ -129,7 +129,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
         </div>
         <div>
           <span className="text-gray-500">存储:</span>
-          <span className="ml-1 font-medium">{stats.total_size_mb.toFixed(1)} MB</span>
+          <span className="ml-1 font-medium">{parseFloat(String(stats.total_size_mb)).toFixed(1)} MB</span>
         </div>
       </div>
     )

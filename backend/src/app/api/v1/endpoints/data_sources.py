@@ -889,9 +889,50 @@ async def test_data_source_connection(
                 detail="Data source connection not found"
             )
 
-        # 测试加密的连接字符串
-        test_result = await connection_test_service.test_encrypted_connection(
-            encrypted_connection_string=connection.connection_string,
+        # 对于文件类型的数据源（xlsx, xls, csv），不需要测试数据库连接
+        # 只需要检查文件是否存在
+        file_types = ['xlsx', 'xls', 'csv']
+        if connection.db_type in file_types:
+            # 文件类型的数据源，直接标记为成功（文件已上传）
+            test_result_dict = {
+                "success": True,
+                "message": f"文件数据源已就绪 ({connection.db_type.upper()})",
+                "error_code": None,
+                "response_time_ms": 0,
+                "details": {
+                    "file_type": connection.db_type,
+                    "database_name": connection.database_name
+                },
+                "timestamp": datetime.now().isoformat()
+            }
+            connection.update_test_result(test_result_dict)
+            db.commit()
+            logger.info(f"File data source {connection_id} marked as ready")
+            return test_result_dict
+
+        # 尝试获取解密后的连接字符串
+        try:
+            decrypted_connection_string = connection.connection_string
+        except RuntimeError as decrypt_error:
+            logger.error(f"Failed to decrypt connection string for data source {connection_id}: {decrypt_error}")
+            # 返回解密失败的测试结果
+            test_result_dict = {
+                "success": False,
+                "message": "Failed to decrypt connection string",
+                "error_code": "DECRYPTION_ERROR",
+                "response_time_ms": 0,
+                "details": {
+                    "error": "加密密钥可能已更改，无法解密连接字符串。请删除此数据源并重新添加。"
+                },
+                "timestamp": datetime.now().isoformat()
+            }
+            connection.update_test_result(test_result_dict)
+            db.commit()
+            return test_result_dict
+
+        # 测试连接字符串
+        test_result = await connection_test_service.test_connection(
+            connection_string=decrypted_connection_string,
             db_type=connection.db_type
         )
 

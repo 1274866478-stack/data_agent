@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // 暂时注释掉 standalone 模式以消除构建警告，在生产环境需要时可以启用
-  // output: 'standalone',
+  // 启用 standalone 模式以支持 Docker 部署
+  output: 'standalone',
   transpilePackages: [],
   experimental: {
     optimizePackageImports: ['lucide-react', '@radix-ui/react-slot', '@radix-ui/react-label']
