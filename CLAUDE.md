@@ -2,8 +2,8 @@
 
 **项目**: 多租户SaaS数据智能分析平台
 **版本**: V4.1 (SaaS MVP)
-**技术栈**: Next.js 14 + FastAPI + PostgreSQL + Docker
-**最后更新**: 2025-11-18 23:59:28
+**技术栈**: Next.js 14 + FastAPI + PostgreSQL + Docker + LangGraph
+**最后更新**: 2025-12-05 11:43:00
 
 ---
 
@@ -27,41 +27,49 @@ graph TD
     A --> C["frontend"];
     A --> D["docs"];
     A --> E["scripts"];
+    A --> F["Agent"];
 
-    B --> F["src/app"];
-    F --> G["api"];
-    F --> H["core"];
-    F --> I["data"];
-    F --> J["services"];
+    B --> G["src/app"];
+    G --> H["api"];
+    G --> I["core"];
+    G --> J["data"];
+    G --> K["services"];
 
-    G --> K["v1/endpoints"];
-    K --> L["health"];
-    K --> M["tenants"];
-    K --> N["documents"];
-    K --> O["data_sources"];
-    K --> P["auth"];
-    K --> Q["llm"];
+    H --> L["v1/endpoints"];
+    L --> M["health"];
+    L --> N["tenants"];
+    L --> O["documents"];
+    L --> P["data_sources"];
+    L --> Q["auth"];
+    L --> R["llm"];
 
-    H --> R["config"];
-    H --> S["logging"];
-    H --> T["security"];
+    I --> S["config"];
+    I --> T["logging"];
+    I --> U["security"];
 
-    I --> U["models"];
-    I --> V["database"];
+    J --> V["models"];
+    J --> W["database"];
 
-    J --> W["minio_client"];
-    J --> X["chromadb_client"];
-    J --> Y["zhipu_client"];
-    J --> Z["llm_service"];
+    K --> X["minio_client"];
+    K --> Y["chromadb_client"];
+    K --> Z["zhipu_client"];
+    K --> AA["llm_service"];
 
-    C --> AA["src/app"];
-    C --> BB["package.json"];
-    C --> CC["tsconfig.json"];
+    C --> BB["src/app"];
+    C --> CC["package.json"];
+    C --> DD["tsconfig.json"];
+
+    F --> EE["sql_agent.py"];
+    F --> FF["chart_service.py"];
+    F --> GG["data_transformer.py"];
+    F --> HH["terminal_viz.py"];
+    F --> II["charts/"];
 
     click B "./backend/CLAUDE.md" "查看后端模块文档"
     click C "./frontend/CLAUDE.md" "查看前端模块文档"
     click D "./docs/CLAUDE.md" "查看文档模块"
     click E "./scripts/CLAUDE.md" "查看脚本模块"
+    click F "./Agent/CLAUDE.md" "查看Agent模块文档"
 ```
 
 ---
@@ -72,6 +80,7 @@ graph TD
 |---------|----------|--------|------|----------|
 | [backend](./backend/CLAUDE.md) | FastAPI后端服务，API接口，业务逻辑 | Python 3.8+, FastAPI, SQLAlchemy | ✅ 核心完成 | 75% |
 | [frontend](./frontend/CLAUDE.md) | Next.js前端应用，用户界面，交互体验 | Next.js 14, TypeScript, Tailwind CSS | 🚧 基础完成 | 30% |
+| [Agent](./Agent/CLAUDE.md) | LangGraph SQL智能代理，自然语言查询与图表可视化 | LangGraph, DeepSeek, MCP, PyEcharts | 🆕 新增模块 | 40% |
 | [docs](./docs/CLAUDE.md) | 项目文档，PRD，架构设计，用户故事 | Markdown | ✅ 完整 | - |
 | [scripts](./scripts/CLAUDE.md) | 自动化脚本，Docker管理，配置验证 | Shell, Batch, Python | ✅ 实用工具 | 60% |
 | **[Bug修复日志](./docs/bug-fixes-log.md)** | **历史问题与解决方案** | Markdown | 🔴 必读 | - |
@@ -131,8 +140,11 @@ npm run dev
 - **向量化**: ChromaDB向量数据库，支持语义检索
 
 ### AI分析引擎
-- **LLM服务**: 智谱GLM-4-flash模型集成
+- **LLM服务**: 智谱GLM-4-flash模型集成 + DeepSeek API
+- **LangGraph Agent**: 独立SQL智能代理，支持自然语言查询
+- **MCP协议**: Model Context Protocol 连接数据库
 - **多轮对话**: 支持上下文理解的对话式分析
+- **图表可视化**: 自动生成ECharts图表
 - **结果溯源**: XAI可解释推理路径
 
 ---
@@ -293,6 +305,7 @@ curl "http://localhost:8004/api/v1/data-sources/overview?tenant_id=default_tenan
 
 | 日期 | 版本 | 变更类型 | 描述 | 作者 |
 |------|------|----------|------|------|
+| 2025-12-05 | V4.1 | 🆕 新增 | 添加LangGraph SQL Agent模块，支持自然语言查询和图表可视化 | AI Assistant |
 | 2025-12-01 | V4.1 | 📚 新增 | 添加常见问题规避章节，整合bug修复日志 | AI Assistant |
 | 2025-11-18 | V4.1 | 🔄 更新 | AI上下文完整初始化，模块文档完善 | AI Assistant |
 | 2025-11-17 | V4.1 | 🆕 新增 | AI上下文初始化文档创建 | AI Assistant |

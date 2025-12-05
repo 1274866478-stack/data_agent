@@ -17,3 +17,7 @@ sqlalchemy>=2.0.0
 python-dotenv>=1.0.0
 pydantic>=2.0.0
 
+# 可视化 (本地图表生成)
+pyecharts>=2.0.0
+rich>=13.0.0
+
