@@ -294,3 +294,7 @@ alembic/versions/*.py
 
 # Local development
 .local/
+
+# Temporary files
+nul
+~$*
