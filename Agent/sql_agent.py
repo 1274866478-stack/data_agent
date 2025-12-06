@@ -404,19 +404,18 @@ def _generate_chart_file(
 # 是否启用 mcp-echarts（需要先运行: mcp-echarts -t sse -p 3033）
 ENABLE_ECHARTS_MCP = True  # 已启用 mcp-echarts
 
+# ============================================================
+# 🚀 性能优化：持久化单例模式
+# ============================================================
+# 全局缓存，避免每次查询都重新初始化
+_cached_agent = None
+_cached_mcp_client = None
+_cached_tools = None
+_cached_checkpointer = None
 
-async def run_agent(question: str, thread_id: str = "1", verbose: bool = True) -> VisualizationResponse:
-    """Run the SQL Agent with a question
 
-    Args:
-        question: 用户问题
-        thread_id: 会话ID
-        verbose: 是否打印详细过程
-
-    Returns:
-        VisualizationResponse: 结构化的可视化响应
-    """
-    # MCP 服务器配置
+def _get_mcp_config():
+    """获取 MCP 服务器配置"""
     mcp_config = {
         "postgres": {
             "transport": "stdio",
@@ -429,7 +428,6 @@ async def run_agent(question: str, thread_id: str = "1", verbose: bool = True) -
         }
     }
 
-    # 如果启用 mcp-echarts，添加 SSE 连接
     if ENABLE_ECHARTS_MCP:
         mcp_config["echarts"] = {
             "transport": "sse",
@@ -438,14 +436,35 @@ async def run_agent(question: str, thread_id: str = "1", verbose: bool = True) -
             "sse_read_timeout": 120.0,
         }
 
-    mcp_client = MultiServerMCPClient(mcp_config)
+    return mcp_config
 
-    # 直接获取工具
-    tools = await mcp_client.get_tools()
+
+async def _get_or_create_agent():
+    """获取或创建持久化的 Agent 实例（单例模式）
+
+    Returns:
+        tuple: (agent, mcp_client) - 编译好的agent和MCP客户端
+    """
+    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer
+
+    # 如果已缓存，直接返回
+    if _cached_agent is not None and _cached_mcp_client is not None:
+        return _cached_agent, _cached_mcp_client
+
+    print("🔄 首次初始化 Agent（后续查询将复用连接）...")
+
+    # 创建 MCP 客户端
+    mcp_config = _get_mcp_config()
+    _cached_mcp_client = MultiServerMCPClient(mcp_config)
+
+    # 获取工具
+    _cached_tools = await _cached_mcp_client.get_tools()
+
+    # 创建 LLM
     llm = create_llm()
-    llm_with_tools = llm.bind_tools(tools)
+    llm_with_tools = llm.bind_tools(_cached_tools)
 
-    # Define nodes
+    # 定义节点
     async def call_model(state: MessagesState):
         messages = state["messages"]
         if not any(isinstance(m, SystemMessage) for m in messages):
@@ -460,9 +479,9 @@ async def run_agent(question: str, thread_id: str = "1", verbose: bool = True) -
             return "tools"
         return END
 
-    tool_node = ToolNode(tools)
+    tool_node = ToolNode(_cached_tools)
 
-    # Build graph
+    # 构建图
     builder = StateGraph(MessagesState)
     builder.add_node("agent", call_model)
     builder.add_node("tools", tool_node)
@@ -470,8 +489,38 @@ async def run_agent(question: str, thread_id: str = "1", verbose: bool = True) -
     builder.add_conditional_edges("agent", should_continue)
     builder.add_edge("tools", "agent")
 
-    checkpointer = MemorySaver()
-    agent = builder.compile(checkpointer=checkpointer)
+    # 持久化 checkpointer
+    _cached_checkpointer = MemorySaver()
+    _cached_agent = builder.compile(checkpointer=_cached_checkpointer)
+
+    print("✅ Agent 初始化完成！")
+
+    return _cached_agent, _cached_mcp_client
+
+
+async def reset_agent():
+    """重置 Agent 缓存（用于重新连接或配置变更）"""
+    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer
+    _cached_agent = None
+    _cached_mcp_client = None
+    _cached_tools = None
+    _cached_checkpointer = None
+    print("🔄 Agent 缓存已重置")
+
+
+async def run_agent(question: str, thread_id: str = "1", verbose: bool = True) -> VisualizationResponse:
+    """Run the SQL Agent with a question
+
+    Args:
+        question: 用户问题
+        thread_id: 会话ID
+        verbose: 是否打印详细过程
+
+    Returns:
+        VisualizationResponse: 结构化的可视化响应
+    """
+    # 🚀 使用持久化的 Agent（首次调用会初始化，后续复用）
+    agent, mcp_client = await _get_or_create_agent()
 
     # Run the agent
     config_dict = {"configurable": {"thread_id": thread_id}}
@@ -547,9 +596,13 @@ async def interactive_mode():
     """Run the agent in interactive mode"""
     print("\n" + "="*60)
     print("🤖 SQL Agent 交互模式（可视化版）")
-    print("输入 'exit' 或 'quit' 退出")
-    print("输入 'debug' 切换调试模式")
-    print("="*60 + "\n")
+    print("="*60)
+    print("命令:")
+    print("  exit/quit - 退出程序")
+    print("  debug     - 切换调试模式")
+    print("  reset     - 重置连接（如遇连接问题）")
+    print("="*60)
+    print("\n💡 提示: 首次查询需要初始化连接（约5-10秒），后续查询将很快！\n")
 
     thread_id = "interactive_session"
     verbose = False  # 默认关闭详细输出，只显示漂亮的可视化结果
@@ -567,21 +620,35 @@ async def interactive_mode():
                 print(f"\n🔧 调试模式: {'开启' if verbose else '关闭'}")
                 continue
 
+            if question.lower() == "reset":
+                await reset_agent()
+                continue
+
             if not question:
                 continue
+
+            # 计时
+            import time
+            start_time = time.time()
 
             # 运行Agent并获取结构化响应
             viz_response = await run_agent(question, thread_id, verbose=verbose)
 
+            # 计算耗时
+            elapsed = time.time() - start_time
+
             # 使用漂亮的可视化渲染
             if not verbose:  # 非调试模式下显示漂亮输出
                 render_response(viz_response)
+
+            print(f"\n⏱️  响应时间: {elapsed:.2f} 秒")
 
         except KeyboardInterrupt:
             print("\n\n👋 再见!")
             break
         except Exception as e:
             print(f"\n❌ 错误: {e}")
+            print("💡 提示: 输入 'reset' 可重置连接")
 
 
 if __name__ == "__main__":
