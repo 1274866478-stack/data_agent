@@ -17,6 +17,12 @@ from src.app.data.models import QueryStatus, QueryType
 from src.app.middleware.tenant_context import get_current_tenant_from_request, get_current_tenant_id
 from src.app.services.query_context import get_query_context
 from src.app.services.llm_service import llm_service
+from src.app.services.agent_service import (
+    run_agent_query,
+    convert_agent_response_to_query_response,
+    is_agent_available
+)
+from src.app.services.data_source_service import DataSourceService
 from src.app.core.jwt_utils import get_current_user_from_token
 from fastapi import Request
 from src.app.schemas.query import (
@@ -423,12 +429,18 @@ class QueryService:
 
 
 # 创建查询服务的依赖注入
-async def get_query_service(query_context=Depends(get_query_context)) -> QueryService:
+async def get_query_service(
+    tenant=Depends(get_current_tenant_from_request),
+    user_info: Dict[str, Any] = Depends(get_current_user_info_from_request),
+    db: Session = Depends(get_db)
+) -> QueryService:
     """获取查询服务实例"""
+    user_id = user_info["user_id"]
+    query_context = get_query_context(db, tenant.id, user_id)
     return QueryService(query_context)
 
 
-@router.post("/query", response_model=QueryResponseV3)
+@router.post("/query", response_model=None)
 async def create_query(
     request: QueryRequest,
     background_tasks: BackgroundTasks,
@@ -440,14 +452,15 @@ async def create_query(
     """
     创建查询请求
     Story 3.1: 核心查询端点，处理自然语言查询
+    集成 LangGraph SQL Agent（使用 DeepSeek 作为默认 LLM）
     """
     try:
         query_id = str(uuid.uuid4())
-        query_hash = request.get_query_hash()
-
+        start_time = time.time()
+        
         # 获取用户ID（从JWT中正确提取）
         user_id = user_info["user_id"]
-        logger.info(f"Query request - user_id: {user_id}, tenant_id: {tenant.id}, auth_type: {user_info.get('auth_type')}")
+        logger.info(f"Query request - user_id: {user_id}, tenant_id: {tenant.id}, query: {request.query[:100]}")
 
         # 创建查询上下文
         query_context = get_query_context(db, tenant.id, user_id)
@@ -457,59 +470,87 @@ async def create_query(
         if not can_proceed:
             raise HTTPException(status_code=429, detail=error_msg)
 
-        # 检查缓存
-        cached_query = query_context.get_cached_query(query_hash)
-        if cached_query and request.options.cache_enabled if request.options else True:
-            # 返回缓存结果
-            response_data = cached_query.response_data or {}
+        # 尝试使用 Agent 处理查询（如果可用且指定了数据源）
+        use_agent = is_agent_available() and request.connection_id is not None
+        
+        if use_agent:
+            try:
+                # 获取数据源连接字符串
+                data_source_service = DataSourceService()
+                database_url = await data_source_service.get_decrypted_connection_string(
+                    data_source_id=request.connection_id,
+                    tenant_id=tenant.id,
+                    db=db
+                )
+                
+                # 生成线程ID（用于会话管理）
+                thread_id = f"{tenant.id}_{user_id}_{query_id}"
+                
+                # 运行 Agent 查询
+                logger.info(f"使用 Agent 处理查询: {request.query[:100]}")
+                agent_response = await run_agent_query(
+                    question=request.query,
+                    thread_id=thread_id,
+                    database_url=database_url,
+                    verbose=False
+                )
+                
+                if agent_response and agent_response.success:
+                    # 转换 Agent 响应为 QueryResponseV3 格式
+                    processing_time_ms = int((time.time() - start_time) * 1000)
+                    response_data = convert_agent_response_to_query_response(
+                        agent_response=agent_response,
+                        query_id=query_id,
+                        tenant_id=tenant.id,
+                        original_query=request.query,
+                        processing_time_ms=processing_time_ms
+                    )
+                    
+                    return QueryResponseV3(**response_data)
+                else:
+                    logger.warning(f"Agent 查询失败，回退到标准查询处理: {agent_response.error if agent_response else 'Agent unavailable'}")
+                    # 回退到标准处理流程
+                    use_agent = False
+            
+            except Exception as e:
+                logger.error(f"Agent 查询出错，回退到标准查询处理: {e}", exc_info=True)
+                use_agent = False
+        
+        # 标准查询处理流程（原有逻辑）
+        if not use_agent:
+            # 检查缓存（简化版，使用 query 作为 hash）
+            query_hash = hash(request.query)
+            
+            # 处理查询（使用原有逻辑）
+            response_data = await query_service.process_query(
+                query_id=query_id,
+                question=request.query,  # 使用 query 字段
+                context=None,
+                options=None
+            )
+            
+            # 构建响应（转换为 QueryResponseV3 格式）
+            processing_time_ms = int((time.time() - start_time) * 1000)
             return QueryResponseV3(
                 query_id=query_id,
-                answer=response_data.get("answer", "缓存结果"),
-                citations=response_data.get("citations", []),
-                data_sources=response_data.get("data_sources", []),
-                explainability_log=response_data.get("explainability_log", ""),
-                response_time_ms=cached_query.response_time_ms or 0,
-                tokens_used=cached_query.tokens_used,
-                cache_hit=True,
-                query_type=QueryType(response_data.get("query_type", "mixed")),
-                created_at=datetime.utcnow()
+                tenant_id=tenant.id,
+                original_query=request.query,
+                generated_sql=response_data.get("generated_sql", ""),
+                results=response_data.get("results", []),
+                row_count=response_data.get("row_count", 0),
+                processing_time_ms=processing_time_ms,
+                confidence_score=response_data.get("confidence", 0.5),
+                explanation=response_data.get("answer", ""),
+                processing_steps=response_data.get("processing_steps", []),
+                validation_result=None,
+                execution_result=None,
+                correction_attempts=0
             )
-
-        # 记录查询请求
-        query_context.log_query_request(
-            query_id=query_id,
-            question=request.question,
-            context=request.context.dict() if request.context else None,
-            options=request.options.dict() if request.options else None,
-            query_hash=query_hash
-        )
-
-        # 处理查询
-        response_data = await query_service.process_query(
-            query_id=query_id,
-            question=request.question,
-            context=request.context.dict() if request.context else None,
-            options=request.options.dict() if request.options else None
-        )
-
-        # 构建响应
-        return QueryResponseV3(
-            query_id=query_id,
-            answer=response_data["answer"],
-            citations=response_data["citations"],
-            data_sources=response_data["data_sources"],
-            explainability_log=response_data["explainability_log"],
-            response_time_ms=response_data["response_time_ms"],
-            tokens_used=response_data["tokens_used"],
-            cache_hit=False,
-            query_type=QueryType(response_data["query_type"]),
-            created_at=datetime.utcnow()
-        )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Query processing failed: {e}")
+        logger.error(f"Query processing failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"查询处理失败: {str(e)}")
 
 
@@ -622,29 +663,30 @@ async def get_query_history(
         raise HTTPException(status_code=500, detail=f"获取查询历史失败: {str(e)}")
 
 
-# 错误处理器
-@router.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
-    """HTTP异常处理"""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=ErrorResponse(
-            error_code=f"HTTP_{exc.status_code}",
-            message=exc.detail,
-            timestamp=datetime.utcnow()
-        ).dict()
-    )
+# 错误处理器 - 已移除，因为 APIRouter 不支持 exception_handler
+# 异常处理应该在 main.py 中处理
+# @router.exception_handler(HTTPException)
+# async def http_exception_handler(request, exc):
+#     """HTTP异常处理"""
+#     return JSONResponse(
+#         status_code=exc.status_code,
+#         content=ErrorResponse(
+#             error_code=f"HTTP_{exc.status_code}",
+#             message=exc.detail,
+#             timestamp=datetime.utcnow()
+#         ).dict()
+#     )
 
 
-@router.exception_handler(Exception)
-async def general_exception_handler(request, exc):
-    """通用异常处理"""
-    logger.error(f"Unhandled exception in query endpoint: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content=ErrorResponse(
-            error_code="INTERNAL_SERVER_ERROR",
-            message="服务器内部错误",
-            timestamp=datetime.utcnow()
-        ).dict()
-    )
+# @router.exception_handler(Exception)
+# async def general_exception_handler(request, exc):
+#     """通用异常处理"""
+#     logger.error(f"Unhandled exception in query endpoint: {exc}")
+#     return JSONResponse(
+#         status_code=500,
+#         content=ErrorResponse(
+#             error_code="INTERNAL_SERVER_ERROR",
+#             message="服务器内部错误",
+#             timestamp=datetime.utcnow()
+#         ).dict()
+#     )

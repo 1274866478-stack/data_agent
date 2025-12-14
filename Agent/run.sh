@@ -41,5 +41,8 @@ fi
 echo
 echo "Starting SQL Agent..."
 echo
-python3 sql_agent.py
+echo "Note: Agent can use backend configuration if available,"
+echo "      or fall back to .env file in Agent directory"
+echo
+python3 run.py "$@"
 

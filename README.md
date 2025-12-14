@@ -112,6 +112,12 @@ data-agent-v4/
 │   │   └── main.py    # FastAPI application entry point
 │   ├── tests/         # Test files
 │   └── requirements.txt # Python dependencies
+├── Agent/             # LangGraph SQL Agent (集成)
+│   ├── sql_agent.py   # Agent 主程序
+│   ├── config.py      # 配置管理（支持后端配置集成）
+│   ├── models.py      # 数据模型
+│   ├── chart_service.py # 图表生成服务
+│   └── README.md      # Agent 使用文档
 ├── docs/              # Project documentation
 │   ├── prd-v4.md      # Product Requirements Document
 │   ├── architecture-v4.md # Technical Architecture
@@ -147,13 +153,28 @@ Data Agent V4 follows a modern multi-tenant SaaS architecture:
 - **Backend**: FastAPI with async/await, SQLAlchemy ORM, Pydantic validation
 - **Database**: PostgreSQL with multi-tenant isolation
 - **Authentication**: JWT-based authentication with tenant isolation
+- **AI Agent**: LangGraph SQL Agent with DeepSeek LLM for natural language queries
+- **MCP Protocol**: Model Context Protocol for database and chart generation
 - **Deployment**: Docker containers with Docker Compose orchestration
+
+### 🤖 SQL Agent Integration
+
+Data Agent V4 includes an integrated LangGraph SQL Agent that enables natural language database queries:
+
+- **LLM Provider**: DeepSeek (default) with fallback to Zhipu AI
+- **Agent Framework**: LangGraph for multi-step reasoning
+- **Database Access**: MCP (Model Context Protocol) for PostgreSQL
+- **Chart Generation**: ECharts MCP server for data visualization
+- **API Endpoint**: `/api/v1/query` for natural language queries
+
+See [Agent/README.md](Agent/README.md) for detailed Agent documentation.
 
 ## 📚 Documentation
 
 - [Product Requirements Document](docs/prd-v4.md)
 - [Technical Architecture](docs/architecture-v4.md)
 - [Development Stories](docs/stories/)
+- [SQL Agent Documentation](Agent/README.md)
 - [API Documentation](http://localhost:8000/docs) (when running)
 
 ## 🔧 Environment Configuration
@@ -218,7 +239,12 @@ DATABASE_URL=postgresql://postgres:your_secure_password@localhost:5432/dataagent
 MINIO_ACCESS_KEY=your_strong_minio_access_key
 MINIO_SECRET_KEY=your_strong_minio_secret_key_at_least_16_chars
 
-# 智谱 AI API 密钥 (必需)
+# DeepSeek API 配置 (推荐，默认 LLM 提供商，用于 SQL Agent)
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_DEFAULT_MODEL=deepseek-chat
+
+# 智谱 AI API 密钥 (可选，备用 LLM 提供商)
 ZHIPUAI_API_KEY=your_zhipu_api_key_here
 
 # 应用配置
@@ -238,7 +264,29 @@ NEXT_PUBLIC_ENVIRONMENT=development
 
 ### 关键配置说明
 
-#### 1. 智谱 AI API 配置
+#### 1. DeepSeek API 配置（默认 LLM 提供商）
+
+DeepSeek 是项目的默认 LLM 提供商，用于 SQL Agent 和智能查询功能。
+
+获取 DeepSeek API 密钥：
+1. 访问 [DeepSeek 开放平台](https://platform.deepseek.com/)
+2. 注册账号并登录
+3. 创建 API 密钥
+4. 配置到环境变量中
+
+```bash
+# DeepSeek API 配置（推荐，默认 LLM 提供商）
+DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxx
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_DEFAULT_MODEL=deepseek-chat
+```
+
+**注意**：
+- `DEEPSEEK_API_KEY` 是必需的，用于 SQL Agent 功能
+- 如果未设置 DeepSeek API 密钥，系统将自动回退到智谱 AI 或 OpenRouter
+- API 密钥长度至少 20 个字符
+
+#### 2. 智谱 AI API 配置（可选，备用 LLM 提供商）
 
 获取智谱 API 密钥：
 1. 访问 [智谱AI开放平台](https://open.bigmodel.cn/)
@@ -250,7 +298,7 @@ NEXT_PUBLIC_ENVIRONMENT=development
 ZHIPUAI_API_KEY=sk-xxxxxxxxxxxxxxxxxx
 ```
 
-#### 2. 安全配置
+#### 3. 安全配置
 
 **生成强密码**：
 ```python
@@ -265,7 +313,7 @@ print("MINIO_SECRET_KEY:", secrets.token_urlsafe(24))
 - `MINIO_SECRET_KEY`: 最少 16 个字符，不能使用默认值
 - `SECRET_KEY`: 使用随机生成的强密码
 
-#### 3. 数据库配置
+#### 4. 数据库配置
 
 ```bash
 # 开发环境

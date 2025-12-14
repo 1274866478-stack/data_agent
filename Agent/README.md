@@ -19,35 +19,67 @@
 
 ## 快速开始
 
-### 1. 安装依赖
+### 运行方式
+
+Agent 支持两种运行方式：
+
+#### 方式 1: 集成到后端（推荐）
+
+如果 Agent 已集成到 Data Agent V4 后端项目中：
+
+1. **使用后端环境**：Agent 会自动使用后端的配置和依赖
+2. **配置**：在 `backend/.env` 中配置 DeepSeek API 密钥和数据库连接
+3. **运行**：通过后端 API 端点 `/api/v1/query` 调用 Agent
+
+#### 方式 2: 独立运行
+
+如果需要独立运行 Agent（例如测试或开发）：
+
+1. **安装依赖**
 
 ```bash
-# 安装 Python 依赖
+# 方式 A: 使用后端环境（推荐）
+cd backend
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# 确保已安装 Node.js (用于运行 MCP Server)
-node --version
+# 方式 B: 使用 Agent 独立环境
+cd Agent
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-### 2. 配置环境变量
+2. **配置环境变量**
 
-复制 `.env.example` 到 `.env` 并填写配置：
-
-```bash
-cp .env.example .env
-```
-
-编辑 `.env` 文件：
+如果使用后端环境，配置在 `backend/.env`：
 ```env
 DEEPSEEK_API_KEY=your_api_key_here
 DATABASE_URL=postgresql://user:password@localhost:5432/your_database
 ```
 
-### 3. 运行 Agent
+如果独立运行，在 `Agent/` 目录下创建 `.env` 文件：
+```env
+DEEPSEEK_API_KEY=your_api_key_here
+DATABASE_URL=postgresql://user:password@localhost:5432/your_database
+```
+
+3. **运行 Agent**
 
 ```bash
+# 使用运行脚本（推荐）
+python run.py                    # 交互模式
+python run.py "你的问题"         # 单次查询
+
+# 或直接运行
 python sql_agent.py
 ```
+
+**注意**：
+- 如果检测到后端配置，Agent 会优先使用后端配置
+- 如果后端配置不可用，Agent 会回退到 Agent 目录下的 `.env` 文件
+- 确保已安装 Node.js (用于运行 MCP Server): `node --version`
 
 ## 使用示例
 
@@ -79,12 +111,20 @@ python sql_agent.py
 ```
 Agent/
 ├── sql_agent.py      # 主程序入口
-├── config.py         # 配置管理
-├── requirements.txt  # Python 依赖
-├── .env              # 环境变量 (需自行创建)
+├── run.py            # 运行脚本（推荐使用）
+├── run.bat           # Windows 运行脚本
+├── run.sh            # Linux/Mac 运行脚本
+├── config.py         # 配置管理（支持后端配置集成）
+├── requirements.txt  # Python 依赖（已合并到 backend/requirements.txt）
+├── .env              # 环境变量 (需自行创建，独立运行时使用)
 ├── .env.example      # 环境变量模板
+├── venv/             # 独立虚拟环境（可选，推荐使用后端环境）
 └── README.md         # 本文件
 ```
+
+**注意**：
+- `venv/` 目录用于独立运行，如果使用后端环境则不需要
+- `venv/` 已在 `.gitignore` 中，不会被提交到版本控制
 
 ## 注意事项
 

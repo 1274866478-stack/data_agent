@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     openrouter_referer: Optional[str] = None  # 可选，用于OpenRouter排名
     openrouter_app_name: str = "Data Agent"  # 可选，用于OpenRouter排名
 
+    # DeepSeek 配置（默认 LLM 提供商）
+    deepseek_api_key: Optional[str] = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_default_model: str = "deepseek-chat"
+
     # Clerk 认证配置
     clerk_jwt_public_key: Optional[str] = None  # Clerk JWT公钥（开发环境可选）
     clerk_domain: str = "clerk.accounts.dev"  # Clerk域名（开发环境）
@@ -261,6 +266,42 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"OPENROUTER_API_KEY contains weak pattern. "
                 "Please use a valid API key from https://openrouter.ai/"
+            )
+
+        return v
+
+    @validator("deepseek_api_key")
+    def validate_deepseek_api_key(cls, v, values):
+        """验证DeepSeek API密钥"""
+        if not v:  # DeepSeek是可选的（如果未设置，将使用其他提供商）
+            return v
+
+        environment = values.get('environment', 'development')
+
+        # 测试环境允许测试密钥
+        if environment in ('testing',) and v.startswith('test_'):
+            return v
+
+        # 开发环境允许占位符，但记录警告
+        if environment == 'development' and v in ('dev_placeholder', 'test_key'):
+            return v
+
+        # 检查DeepSeek API密钥格式
+        if len(v) < 20:
+            raise ValueError(
+                "DEEPSEEK_API_KEY must be at least 20 characters long. "
+                "Please get a valid API key from https://platform.deepseek.com/"
+            )
+
+        # 检查弱密钥模式
+        weak_patterns = [
+            "example", "demo", "test", "placeholder", "fake", "123456",
+            "password", "secret", "key", "token", "sample", "default"
+        ]
+        if any(pattern in v.lower() for pattern in weak_patterns):
+            raise ValueError(
+                f"DEEPSEEK_API_KEY contains weak pattern. "
+                "Please use a valid API key from https://platform.deepseek.com/"
             )
 
         return v

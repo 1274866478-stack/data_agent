@@ -7,8 +7,8 @@ from .endpoints import health, tenants, documents, data_sources, config, test, l
 from .endpoints import performance_monitoring
 # 暂时禁用security端点，因为编码问题
 # from .endpoints import security
-# 暂时禁用query端点，因为QueryService未定义
-# from .endpoints import query
+# 启用query端点，Agent集成已完成
+from .endpoints import query
 # 暂时禁用rag端点，因为导入错误
 # from .endpoints import rag
 
@@ -43,8 +43,8 @@ api_router.include_router(file_upload.router, prefix="/file-upload", tags=["File
 # 新增推理服务端点 - Story 3.4
 api_router.include_router(reasoning.router, tags=["Reasoning"])
 
-# 新增查询端点 - Story 3.1 - 暂时禁用
-# api_router.include_router(query.router, tags=["Query"])
+# 新增查询端点 - Story 3.1 - Agent集成已完成，已启用
+api_router.include_router(query.router, tags=["Query"])
 
 # 新增性能监控端点 - Story 3.2 Enhancement
 api_router.include_router(performance_monitoring.router, prefix="/performance", tags=["Performance Monitoring"])

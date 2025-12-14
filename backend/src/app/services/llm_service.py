@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 class LLMProvider(Enum):
     """LLM提供商枚举"""
+    DEEPSEEK = "deepseek"
     ZHIPU = "zhipu"
     OPENROUTER = "openrouter"
 
@@ -295,6 +296,137 @@ class ZhipuProvider(BaseLLMProvider):
             return False
 
 
+class DeepSeekProvider(BaseLLMProvider):
+    """DeepSeek提供商（默认）"""
+
+    def __init__(self, api_key: str, tenant_id: str, base_url: str = None, default_model: str = None):
+        super().__init__(api_key, tenant_id)
+        base_url = base_url or getattr(settings, 'deepseek_base_url', 'https://api.deepseek.com')
+        self.client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key
+        )
+        self.default_model = default_model or getattr(settings, 'deepseek_default_model', 'deepseek-chat')
+
+    async def chat_completion(
+        self,
+        messages: List[LLMMessage],
+        model: Optional[str] = None,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        stream: bool = False,
+        **kwargs
+    ) -> Union[LLMResponse, AsyncGenerator[LLMStreamChunk, None]]:
+        """DeepSeek聊天完成"""
+        try:
+            model = model or self.default_model
+            max_tokens = max_tokens or 4000
+            temperature = temperature if temperature is not None else 0.7
+
+            # 转换消息格式
+            api_messages = []
+            for msg in messages:
+                if isinstance(msg.content, str):
+                    api_messages.append({"role": msg.role, "content": msg.content})
+                elif isinstance(msg.content, list):
+                    # 多模态内容处理
+                    content = []
+                    for item in msg.content:
+                        if item.get("type") == "text":
+                            content.append({"type": "text", "text": item.get("text", "")})
+                        elif item.get("type") == "image_url":
+                            content.append({
+                                "type": "image_url",
+                                "image_url": item.get("image_url", {})
+                            })
+                    api_messages.append({"role": msg.role, "content": content})
+
+            if stream:
+                return self._stream_response(api_messages, model, max_tokens, temperature)
+            else:
+                response = await self.client.chat.completions.create(
+                    model=model,
+                    messages=api_messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature
+                )
+
+                return LLMResponse(
+                    content=response.choices[0].message.content or "",
+                    usage={
+                        "prompt_tokens": response.usage.prompt_tokens,
+                        "completion_tokens": response.usage.completion_tokens,
+                        "total_tokens": response.usage.total_tokens
+                    } if response.usage else None,
+                    model=response.model,
+                    provider=LLMProvider.DEEPSEEK.value,
+                    finish_reason=response.choices[0].finish_reason,
+                    created_at=datetime.fromtimestamp(response.created).isoformat()
+                )
+
+        except Exception as e:
+            logger.error(f"DeepSeek chat completion failed: {e}")
+            if stream:
+                async def error_stream():
+                    yield LLMStreamChunk(
+                        type="error",
+                        content=f"DeepSeek API error: {str(e)}",
+                        provider=LLMProvider.DEEPSEEK.value
+                    )
+                return error_stream()
+            else:
+                raise
+
+    async def _stream_response(
+        self,
+        messages: List[Dict[str, Any]],
+        model: str,
+        max_tokens: int,
+        temperature: float
+    ) -> AsyncGenerator[LLMStreamChunk, None]:
+        """处理流式响应"""
+        try:
+            stream = await self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=True
+            )
+
+            async for chunk in stream:
+                if chunk.choices and len(chunk.choices) > 0:
+                    delta = chunk.choices[0].delta
+
+                    if hasattr(delta, 'content') and delta.content:
+                        yield LLMStreamChunk(
+                            type="content",
+                            content=delta.content,
+                            provider=LLMProvider.DEEPSEEK.value
+                        )
+
+        except Exception as e:
+            logger.error(f"DeepSeek stream response failed: {e}")
+            yield LLMStreamChunk(
+                type="error",
+                content=f"DeepSeek stream error: {str(e)}",
+                provider=LLMProvider.DEEPSEEK.value
+            )
+
+    async def validate_connection(self) -> bool:
+        """验证DeepSeek连接"""
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.default_model,
+                messages=[{"role": "user", "content": "Hello"}],
+                max_tokens=5
+            )
+            return bool(response and response.choices)
+        except Exception as e:
+            logger.error(f"DeepSeek connection validation failed: {e}")
+            return False
+
+
 class OpenRouterProvider(BaseLLMProvider):
     """OpenRouter提供商"""
 
@@ -477,7 +609,11 @@ class LLMService:
         if tenant_id not in self.tenant_configs:
             self.tenant_configs[tenant_id] = {}
 
-        if provider == LLMProvider.ZHIPU:
+        if provider == LLMProvider.DEEPSEEK:
+            base_url = getattr(settings, 'deepseek_base_url', 'https://api.deepseek.com')
+            default_model = getattr(settings, 'deepseek_default_model', 'deepseek-chat')
+            provider_instance = DeepSeekProvider(api_key, tenant_id, base_url, default_model)
+        elif provider == LLMProvider.ZHIPU:
             provider_instance = ZhipuProvider(api_key, tenant_id)
         elif provider == LLMProvider.OPENROUTER:
             provider_instance = OpenRouterProvider(api_key, tenant_id)
@@ -497,8 +633,8 @@ class LLMService:
     ) -> Optional[BaseLLMProvider]:
         """获取提供商"""
         if not provider:
-            # 默认优先使用Zhipu，回退到OpenRouter
-            for p in [LLMProvider.ZHIPU, LLMProvider.OPENROUTER]:
+            # 默认优先使用DeepSeek，回退到Zhipu，最后OpenRouter
+            for p in [LLMProvider.DEEPSEEK, LLMProvider.ZHIPU, LLMProvider.OPENROUTER]:
                 key = f"{tenant_id}_{p.value}"
                 if key in self.providers:
                     return self.providers[key]
@@ -523,9 +659,13 @@ class LLMService:
         provider_instance = self.get_provider(tenant_id, provider)
 
         if not provider_instance:
-            # 尝试自动注册默认提供商
+            # 尝试自动注册默认提供商（优先DeepSeek）
             try:
-                if hasattr(settings, 'zhipuai_api_key') and settings.zhipuai_api_key:
+                if hasattr(settings, 'deepseek_api_key') and settings.deepseek_api_key:
+                    provider_instance = self.register_provider(
+                        tenant_id, LLMProvider.DEEPSEEK, settings.deepseek_api_key
+                    )
+                elif hasattr(settings, 'zhipuai_api_key') and settings.zhipuai_api_key:
                     provider_instance = self.register_provider(
                         tenant_id, LLMProvider.ZHIPU, settings.zhipuai_api_key
                     )
@@ -554,7 +694,7 @@ class LLMService:
         """验证所有提供商连接"""
         results = {}
 
-        for provider in [LLMProvider.ZHIPU, LLMProvider.OPENROUTER]:
+        for provider in [LLMProvider.DEEPSEEK, LLMProvider.ZHIPU, LLMProvider.OPENROUTER]:
             provider_instance = self.get_provider(tenant_id, provider)
             if provider_instance:
                 results[provider.value] = await provider_instance.validate_connection()
@@ -566,6 +706,7 @@ class LLMService:
     async def get_available_models(self, tenant_id: str) -> Dict[str, List[str]]:
         """获取可用模型列表"""
         models = {
+            "deepseek": ["deepseek-chat", "deepseek-coder"],
             "zhipu": ["glm-4-flash", "glm-4", "glm-4.6", "glm-4v", "glm-4-9b"],
             "openrouter": [
                 "google/gemini-2.0-flash-exp",

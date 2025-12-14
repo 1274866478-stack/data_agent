@@ -45,7 +45,10 @@ if not exist "venv" (
 echo.
 echo Starting SQL Agent...
 echo.
-python sql_agent.py
+echo Note: Agent can use backend configuration if available,
+echo       or fall back to .env file in Agent directory
+echo.
+python run.py %*
 
 pause
 
