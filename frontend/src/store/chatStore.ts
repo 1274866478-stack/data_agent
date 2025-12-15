@@ -57,7 +57,7 @@ interface ChatState {
   startNewConversation: () => Promise<string>
 
   // 消息操作
-  sendMessage: (content: string, dataSourceId?: string) => Promise<void>
+  sendMessage: (content: string, dataSourceIds?: string | string[]) => Promise<void>
   addMessage: (message: Omit<ChatMessage, 'id'>) => void
   updateMessage: (messageId: string, updates: Partial<ChatMessage>) => void
   deleteMessage: (messageId: string) => void
@@ -80,7 +80,7 @@ interface ChatState {
   saveToStorage: () => void
 
   // 内部方法
-  _sendOnlineMessage: (content: string, sessionId: string, dataSourceId?: string) => Promise<void>
+  _sendOnlineMessage: (content: string, sessionId: string, dataSourceIds?: string | string[]) => Promise<void>
 }
 
 // 生成唯一ID
@@ -265,9 +265,9 @@ export const useChatStore = create<ChatState>()(
       },
 
       // 发送消息
-      sendMessage: async (content: string, dataSourceId?: string) => {
+      sendMessage: async (content: string, dataSourceIds?: string | string[]) => {
         const state = get()
-        console.log('[ChatStore] sendMessage 调用, currentSession:', state.currentSession?.id, 'isLoading:', state.isLoading, 'isOnline:', state.isOnline, 'dataSourceId:', dataSourceId)
+        console.log('[ChatStore] sendMessage 调用, currentSession:', state.currentSession?.id, 'isLoading:', state.isLoading, 'isOnline:', state.isOnline, 'dataSourceIds:', dataSourceIds)
 
         if (!state.currentSession || state.isLoading) {
           console.warn('[ChatStore] 无法发送消息: currentSession 或 isLoading 状态不正确')
@@ -337,13 +337,19 @@ export const useChatStore = create<ChatState>()(
 
         // 在线时直接发送消息
         console.log('[ChatStore] 在线模式，调用 _sendOnlineMessage')
-        await state._sendOnlineMessage(content, state.currentSession.id, dataSourceId)
+        await state._sendOnlineMessage(content, state.currentSession.id, dataSourceIds)
       },
 
       // 内部方法：在线发送消息
-      _sendOnlineMessage: async (content: string, sessionId: string, dataSourceId?: string) => {
+      _sendOnlineMessage: async (content: string, sessionId: string, dataSourceIds?: string | string[]) => {
         const state = get()
         console.log('[ChatStore] _sendOnlineMessage 开始, sessionId:', sessionId)
+
+        const normalizedDataSourceIds = dataSourceIds
+          ? Array.isArray(dataSourceIds)
+            ? dataSourceIds.filter(Boolean)
+            : [dataSourceIds]
+          : undefined
 
         // 设置加载状态
         state.setLoading(true)
@@ -360,15 +366,20 @@ export const useChatStore = create<ChatState>()(
               content: m.content
             })) || []
 
-          console.log('[ChatStore] 历史消息数量:', historyMessages.length, '数据源ID:', dataSourceId)
+          console.log('[ChatStore] 历史消息数量:', historyMessages.length, '数据源ID:', normalizedDataSourceIds)
 
           // 调用API发送消息，包含历史上下文和数据源选择
           const queryRequest: ChatQueryRequest = {
             query: content,
             session_id: sessionId,
             history: historyMessages,  // 添加历史消息
-            context: dataSourceId ? { data_sources: [dataSourceId] } : undefined,  // 添加数据源选择
-            connection_id: dataSourceId,  // 传递数据源ID以启用 Agent
+            context: normalizedDataSourceIds && normalizedDataSourceIds.length > 0
+              ? { data_sources: normalizedDataSourceIds }
+              : undefined,  // 添加数据源选择
+            // 仅在单选时启用 Agent，避免多选触发单连接限制
+            connection_id: normalizedDataSourceIds && normalizedDataSourceIds.length === 1
+              ? normalizedDataSourceIds[0]
+              : undefined,
           }
 
           console.log('[ChatStore] 准备调用 API, request:', queryRequest)

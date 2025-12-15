@@ -7,9 +7,17 @@ import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
-import { Send, Bot, User, Sparkles, Paperclip, X, FileText, CheckCircle, AlertCircle, Loader2, Plus, History, Search, MessageSquare, Trash2, ChevronLeft, ChevronRight, CheckSquare, Square, Database } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
+import { Send, Bot, User, Sparkles, Paperclip, X, FileText, CheckCircle, AlertCircle, Loader2, Plus, History, Search, MessageSquare, Trash2, ChevronLeft, CheckSquare, Database, ChevronDown } from 'lucide-react'
 import { Markdown } from '@/components/ui/markdown'
 import { useChatStore } from '@/store/chatStore'
 import { useDataSourceStore, DataSourceConnection } from '@/store/dataSourceStore'
@@ -31,7 +39,9 @@ export default function AIAssistantPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [batchSelectMode, setBatchSelectMode] = useState(false)
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
-  const [selectedDataSourceId, setSelectedDataSourceId] = useState<string>('__all__')
+  const [selectedDataSourceIds, setSelectedDataSourceIds] = useState<string[]>([])
+  const [pendingDataSourceIds, setPendingDataSourceIds] = useState<string[]>([])
+  const [dataSourceMenuOpen, setDataSourceMenuOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const {
     sendMessage,
@@ -65,11 +75,19 @@ export default function AIAssistantPage() {
     return dataSources.filter(ds => ds.status === 'active')
   }, [dataSources])
 
-  // 获取选中的数据源对象（__all__ 表示使用所有数据源）
-  const selectedDataSource = useMemo(() => {
-    if (selectedDataSourceId === '__all__') return null
-    return activeDataSources.find(ds => ds.id === selectedDataSourceId)
-  }, [activeDataSources, selectedDataSourceId])
+  // 获取选中的数据源对象（空表示使用所有数据源）
+  const selectedDataSources = useMemo(() => {
+    if (selectedDataSourceIds.length === 0) return []
+    const selectedSet = new Set(selectedDataSourceIds)
+    return activeDataSources.filter(ds => selectedSet.has(ds.id))
+  }, [activeDataSources, selectedDataSourceIds])
+
+  const selectedDataSourceLabel = useMemo(() => {
+    if (selectedDataSources.length === 0) return '所有数据源（自动）'
+    if (selectedDataSources.length === 1) return selectedDataSources[0].name
+    if (selectedDataSources.length === 2) return `${selectedDataSources[0].name}、${selectedDataSources[1].name}`
+    return `${selectedDataSources[0].name} 等 ${selectedDataSources.length} 个`
+  }, [selectedDataSources])
 
   // 获取当前会话的消息，如果没有会话则为空数组
   const messages = currentSession?.messages || []
@@ -147,9 +165,8 @@ export default function AIAssistantPage() {
     if (!input.trim() || isLoading) return
     const content = input.trim()
     setInput('')
-    // 传递选中的数据源ID（__all__ 表示使用所有数据源，不传递ID）
-    const dataSourceId = selectedDataSourceId === '__all__' ? undefined : selectedDataSourceId
-    await sendMessage(content, dataSourceId)
+    const dataSourceIds = selectedDataSourceIds.length > 0 ? selectedDataSourceIds : undefined
+    await sendMessage(content, dataSourceIds)
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -491,53 +508,132 @@ export default function AIAssistantPage() {
                 {/* 数据源选择器 */}
                 <div className="flex items-center gap-2">
                   <Database className="w-4 h-4 text-muted-foreground" />
-                  <Select
-                    value={selectedDataSourceId}
-                    onValueChange={setSelectedDataSourceId}
-                  >
-                    <SelectTrigger className="w-[220px] h-8">
-                      <SelectValue placeholder="选择数据源进行分析...">
-                        {selectedDataSource ? (
-                          <div className="flex items-center gap-2">
-                            <span className="truncate">{selectedDataSource.name}</span>
-                            <Badge variant="outline" className="text-[10px] px-1 py-0">
-                              {selectedDataSource.db_type.toUpperCase()}
-                            </Badge>
-                          </div>
-                        ) : (
-                          "选择数据源进行分析..."
-                        )}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all__">
-                        <span className="text-muted-foreground">所有数据源（自动）</span>
-                      </SelectItem>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 min-w-[240px] justify-between"
+                      >
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          <span className="truncate">{selectedDataSourceLabel}</span>
+                          {selectedDataSources.length > 0 && (
+                            <div className="flex items-center gap-1">
+                              {selectedDataSources.slice(0, 2).map(ds => (
+                                <Badge key={ds.id} variant="outline" className="text-[10px] px-1 py-0">
+                                  {ds.db_type.toUpperCase()}
+                                </Badge>
+                              ))}
+                              {selectedDataSources.length > 2 && (
+                                <Badge variant="outline" className="text-[10px] px-1 py-0">
+                                  +{selectedDataSources.length - 2}
+                                </Badge>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <ChevronDown className="w-4 h-4 shrink-0" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      className="w-72"
+                      sideOffset={6}
+                      align="end"
+                      open={dataSourceMenuOpen}
+                      onOpenChange={(open) => {
+                        setDataSourceMenuOpen(open)
+                        if (open) {
+                          setPendingDataSourceIds(selectedDataSourceIds)
+                        } else {
+                          setPendingDataSourceIds(selectedDataSourceIds)
+                        }
+                      }}
+                    >
+                      <DropdownMenuLabel>选择数据源</DropdownMenuLabel>
+                      <DropdownMenuCheckboxItem
+                        checked={pendingDataSourceIds.length === 0}
+                        onCheckedChange={() => setPendingDataSourceIds([])}
+                        className="pl-2"
+                        onSelect={(e) => e.preventDefault()}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            checked={pendingDataSourceIds.length === 0}
+                            className="pointer-events-none h-3.5 w-3.5"
+                          />
+                          <span>所有数据源（自动）</span>
+                        </div>
+                      </DropdownMenuCheckboxItem>
+                      <DropdownMenuSeparator />
                       {isLoadingDataSources ? (
-                        <SelectItem value="__loading__" disabled>
-                          <div className="flex items-center gap-2">
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                            加载中...
-                          </div>
-                        </SelectItem>
+                        <DropdownMenuItem disabled className="flex items-center gap-2">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          加载中...
+                        </DropdownMenuItem>
                       ) : activeDataSources.length === 0 ? (
-                        <SelectItem value="__empty__" disabled>
-                          <span className="text-muted-foreground">暂无可用数据源</span>
-                        </SelectItem>
+                        <DropdownMenuItem disabled className="text-muted-foreground">
+                          暂无可用数据源
+                        </DropdownMenuItem>
                       ) : (
                         activeDataSources.map((ds) => (
-                          <SelectItem key={ds.id} value={ds.id}>
-                            <div className="flex items-center gap-2">
-                              <span>{ds.name}</span>
+                          <DropdownMenuCheckboxItem
+                            key={ds.id}
+                            checked={pendingDataSourceIds.includes(ds.id)}
+                            onCheckedChange={(checked) => {
+                              const isChecked = Boolean(checked)
+                              setPendingDataSourceIds((prev) => {
+                                const next = new Set(prev)
+                                if (isChecked) {
+                                  next.add(ds.id)
+                                } else {
+                                  next.delete(ds.id)
+                                }
+                                return Array.from(next)
+                              })
+                            }}
+                            onSelect={(e) => e.preventDefault()}
+                          >
+                            <div className="flex items-center justify-between gap-2 w-full">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <Checkbox
+                                  checked={pendingDataSourceIds.includes(ds.id)}
+                                  className="pointer-events-none h-3.5 w-3.5"
+                                />
+                                <span className="truncate">{ds.name}</span>
+                              </div>
                               <Badge variant="outline" className="text-[10px] px-1 py-0">
                                 {ds.db_type.toUpperCase()}
                               </Badge>
                             </div>
-                          </SelectItem>
+                          </DropdownMenuCheckboxItem>
                         ))
                       )}
-                    </SelectContent>
-                  </Select>
+                      <DropdownMenuSeparator />
+                      <div className="flex items-center justify-end gap-2 px-2 pb-2 pt-1">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="h-8"
+                          onClick={() => {
+                            setPendingDataSourceIds(selectedDataSourceIds)
+                            setDataSourceMenuOpen(false)
+                          }}
+                        >
+                          取消
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-8"
+                          onClick={() => {
+                            setSelectedDataSourceIds(pendingDataSourceIds)
+                            setDataSourceMenuOpen(false)
+                          }}
+                        >
+                          确认
+                        </Button>
+                      </div>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </div>
             </CardHeader>
