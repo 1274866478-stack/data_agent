@@ -486,7 +486,7 @@ export default function AIAssistantPage() {
               </div>
               <div className="flex items-center justify-between mt-3">
                 <p className="text-sm text-muted-foreground">
-                  基于智谱 GLM-4.6 的智能数据分析助手，支持多轮对话和上下文理解
+                  基于 DeepSeek 的智能数据分析助手，支持多轮对话和上下文理解
                 </p>
                 {/* 数据源选择器 */}
                 <div className="flex items-center gap-2">

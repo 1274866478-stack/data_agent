@@ -294,6 +294,13 @@ class DataSourceConnection(Base):
         """
         return DatabaseAdapterFactory.get_supported_types()
 
+    @property
+    def connection_type(self) -> str:
+        """
+        向后兼容字段，等价于 db_type。
+        """
+        return self.db_type
+
 
 class KnowledgeDocument(Base):
     """

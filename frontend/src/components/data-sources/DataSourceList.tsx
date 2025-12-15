@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -8,9 +8,21 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import { ErrorMessage } from '@/components/ui/error-message'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { DataSourceForm } from './DataSourceForm'
 import { ConnectionTest } from './ConnectionTest'
-import { useDataSourceStore, DataSourceConnection } from '@/store/dataSourceStore'
+import { useDataSourceStore, DataSourceConnection, BulkOperationResult } from '@/store/dataSourceStore'
+import { useAuthStore } from '@/store/authStore'
 
 interface DataSourceListProps {
   tenantId: string
@@ -26,6 +38,7 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
     deleteDataSource,
     testDataSourceConnection,
     clearError,
+    bulkDeleteDataSources,
   } = useDataSourceStore()
 
   const [searchQuery, setSearchQuery] = useState('')
@@ -33,6 +46,13 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingDataSource, setEditingDataSource] = useState<DataSourceConnection | null>(null)
   const [testingDataSource, setTestingDataSource] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false)
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null)
+  const [bulkResult, setBulkResult] = useState<BulkOperationResult | null>(null)
+
+  const authUser = useAuthStore.getState().user
+  const userId = authUser?.id
 
   useEffect(() => {
     fetchDataSources(tenantId, {
@@ -52,6 +72,13 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
 
     return matchesSearch && matchesStatus
   })
+
+  const isAllSelected = useMemo(() => filteredDataSources.length > 0 && selectedIds.length === filteredDataSources.length, [filteredDataSources.length, selectedIds.length])
+  const isPartiallySelected = useMemo(
+    () => selectedIds.length > 0 && selectedIds.length < filteredDataSources.length,
+    [selectedIds.length, filteredDataSources.length]
+  )
+  const overLimit = selectedIds.length > 50
 
   // 获取状态颜色
   const getStatusColor = (status: string) => {
@@ -112,9 +139,47 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
     if (window.confirm(`确定要删除数据源 "${dataSource.name}" 吗？此操作不可恢复。`)) {
       try {
         await deleteDataSource(dataSource.id, tenantId)
+        setSelectedIds(ids => ids.filter(id => id !== dataSource.id))
       } catch (error) {
         // 错误已由store处理
       }
+    }
+  }
+
+  // 处理多选
+  const handleToggleSelect = (id: string) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+
+  const handleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedIds([])
+    } else {
+      setSelectedIds(filteredDataSources.map(ds => ds.id))
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return
+    if (overLimit) {
+      setBulkMessage('一次最多删除 50 个数据源，请减少选择数量。')
+      setShowBulkConfirm(false)
+      return
+    }
+
+    try {
+      const result = await bulkDeleteDataSources(selectedIds, tenantId, userId)
+      setBulkResult(result)
+      const successMsg = `删除成功 ${result.success_count} 个`
+      const errorMsg = result.error_count > 0 ? `，失败 ${result.error_count} 个` : ''
+      setBulkMessage(successMsg + errorMsg)
+      setSelectedIds([])
+      // 刷新列表
+      fetchDataSources(tenantId, { active_only: filterStatus !== 'all' })
+    } catch (error) {
+      // error 已在 store 处理
+    } finally {
+      setShowBulkConfirm(false)
     }
   }
 
@@ -197,6 +262,81 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
         </Button>
       </div>
 
+      {/* 批量操作栏 */}
+      {selectedIds.length > 0 && (
+        <div className="flex flex-col gap-3 p-4 border rounded-lg bg-blue-50 border-blue-200">
+          <div className="flex flex-wrap items-center gap-3">
+            <Checkbox
+              checked={isAllSelected}
+              onCheckedChange={handleSelectAll}
+              className={isPartiallySelected ? 'data-[state=checked]:bg-blue-600' : ''}
+            />
+            <span className="text-sm font-medium text-blue-900">
+              已选择 {selectedIds.length} 项
+            </span>
+            <Badge variant="secondary">数据库</Badge>
+            {overLimit && (
+              <Badge variant="destructive">最多选择 50 项</Badge>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSelectedIds([])}
+            >
+              清除选择
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => setShowBulkConfirm(true)}
+              disabled={overLimit || isLoading || !userId}
+            >
+              {userId ? '批量删除' : '缺少用户信息'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fetchDataSources(tenantId, { active_only: filterStatus !== 'all' })}
+              disabled={isLoading}
+            >
+              刷新
+            </Button>
+          </div>
+          {bulkMessage && (
+            <div className="text-sm text-blue-800">
+              {bulkMessage}
+              {bulkResult && bulkResult.error_count > 0 && (
+                <>（失败 {bulkResult.error_count}，详见后端返回）</>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 批量删除确认 */}
+      <AlertDialog open={showBulkConfirm} onOpenChange={setShowBulkConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认批量删除</AlertDialogTitle>
+            <AlertDialogDescription>
+              即将删除 {selectedIds.length} 个数据源，此操作不可恢复。确定继续吗？
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isLoading}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleBulkDelete}
+              disabled={isLoading || overLimit}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* 搜索和筛选 */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="flex-1">
@@ -236,10 +376,16 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
           {filteredDataSources.map((dataSource) => (
             <Card key={dataSource.id} className="relative">
               <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg truncate" title={dataSource.name}>
-                    {dataSource.name}
-                  </CardTitle>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={selectedIds.includes(dataSource.id)}
+                      onCheckedChange={() => handleToggleSelect(dataSource.id)}
+                    />
+                    <CardTitle className="text-lg truncate" title={dataSource.name}>
+                      {dataSource.name}
+                    </CardTitle>
+                  </div>
                   <div className={`w-3 h-3 rounded-full ${
                     dataSource.status === 'active' ? 'bg-green-500' :
                     dataSource.status === 'error' ? 'bg-red-500' :

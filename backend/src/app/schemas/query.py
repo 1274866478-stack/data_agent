@@ -10,7 +10,7 @@ from datetime import datetime
 class QueryRequest(BaseModel):
     """查询请求模型"""
     query: str = Field(..., description="自然语言查询")
-    connection_id: Optional[int] = Field(None, description="数据源连接ID")
+    connection_id: Optional[str] = Field(None, description="数据源连接ID")
     enable_cache: bool = Field(True, description="是否启用缓存")
     force_refresh: bool = Field(False, description="是否强制刷新")
 

@@ -147,6 +147,76 @@ describe('API集成测试', () => {
       expect(result.current.currentSession?.messages[1].content).toContain('发送消息失败')
       expect(result.current.error).toBe('发送消息失败')
     })
+
+    it('应该兼容旧版 QueryV3 /agent/query 返回格式', async () => {
+      const { result } = renderHook(() => useChatStore())
+
+      await act(async () => {
+        await result.current.createSession('Agent 测试会话')
+      })
+
+      const mockQueryV3Response = {
+        status: 'success' as const,
+        data: {
+          explanation: '这是旧版 QueryV3 的解释文本',
+          generated_sql: 'SELECT * FROM sales',
+          results: [{ id: 1 }],
+          row_count: 1,
+          confidence_score: 0.95,
+          processing_time_ms: 1234,
+        },
+      }
+
+      mockApi.chat.sendQuery.mockResolvedValue(mockQueryV3Response as any)
+
+      await act(async () => {
+        await result.current.sendMessage('测试 Agent 查询', '1')
+      })
+
+      const messages = result.current.currentSession?.messages || []
+      const lastMessage = messages[messages.length - 1]
+
+      expect(lastMessage.role).toBe('assistant')
+      expect(lastMessage.content).toContain('这是旧版 QueryV3 的解释文本')
+      expect(lastMessage.content).toContain('查询结果（1 行）')
+    })
+
+    it('应该兼容新版 Agent /agent/query 返回格式 (data.answer)', async () => {
+      const { result } = renderHook(() => useChatStore())
+
+      await act(async () => {
+        await result.current.createSession('Agent 新格式测试')
+      })
+
+      const mockAgentResponse = {
+        status: 'success' as const,
+        data: {
+          success: true,
+          data: {
+            answer: '这是新版 Agent 的 answer 文本',
+            data: {
+              columns: ['id'],
+              rows: [{ id: 1 }],
+              row_count: 1,
+            },
+            execution_time: 2.5,
+          },
+        },
+      }
+
+      mockApi.chat.sendQuery.mockResolvedValue(mockAgentResponse as any)
+
+      await act(async () => {
+        await result.current.sendMessage('测试 Agent 新格式', '1')
+      })
+
+      const messages = result.current.currentSession?.messages || []
+      const lastMessage = messages[messages.length - 1]
+
+      expect(lastMessage.role).toBe('assistant')
+      expect(lastMessage.content).toContain('这是新版 Agent 的 answer 文本')
+      expect(lastMessage.content).toContain('查询结果（1 行）')
+    })
   })
 
   describe('会话管理集成', () => {

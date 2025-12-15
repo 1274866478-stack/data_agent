@@ -334,9 +334,18 @@ def get_mcp_config(database_url: str, enable_echarts: bool = False) -> Dict[str,
     }
 
     if enable_echarts:
+        # 支持环境变量配置，Docker 环境中使用服务名称
+        echarts_url = os.getenv(
+            "MCP_ECHARTS_URL", 
+            "http://mcp_echarts:3033/sse"  # Docker 环境默认使用服务名称
+        )
+        # 如果 URL 包含 localhost，可能是本地开发环境，保持原样
+        if "localhost" in echarts_url or "127.0.0.1" in echarts_url:
+            echarts_url = "http://localhost:3033/sse"
+        
         config["echarts"] = {
             "transport": "sse",
-            "url": "http://localhost:3033/sse",
+            "url": echarts_url,
             "timeout": 30.0,
             "sse_read_timeout": 120.0,
         }

@@ -6,7 +6,7 @@ Story 3.1: 租户隔离的查询 API V3格式
 import asyncio
 import uuid
 import time
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query as QueryParam
 from fastapi.responses import JSONResponse
@@ -254,7 +254,8 @@ class QueryService:
         query_id: str,
         question: str,
         context: Optional[Dict[str, Any]] = None,
-        options: Optional[Dict[str, Any]] = None
+        options: Optional[Dict[str, Any]] = None,
+        selected_data_sources: Optional[List[Any]] = None
     ) -> Dict[str, Any]:
         """
         处理查询请求
@@ -281,9 +282,20 @@ class QueryService:
             # 分析查询类型
             query_type = await self.analyze_query_type(question, context)
 
-            # 获取租户数据源和文档
-            data_sources = self.query_context.get_tenant_data_sources()
+            # 数据源与文档
+            if selected_data_sources is not None:
+                data_sources = selected_data_sources
+            else:
+                data_sources = self.query_context.get_tenant_data_sources()
             documents = self.query_context.get_tenant_documents()
+
+            # 构造数据源描述，帮助模型识别当前可用的数据源
+            ds_lines = []
+            for ds in data_sources:
+                ds_lines.append(
+                    f"- 名称: {ds.name} | 类型: {ds.db_type} | 数据库: {ds.database_name or '未指定'}"
+                )
+            data_sources_summary = "\n".join(ds_lines) if ds_lines else "无可用数据源"
 
             # 构建LLM请求
             messages = [
@@ -294,6 +306,8 @@ class QueryService:
 查询类型: {query_type.value}
 
 可用数据源数量: {len(data_sources)}
+可用数据源详情:
+{data_sources_summary}
 可用文档数量: {len(documents)}
 
 请按照以下格式回答：
@@ -316,8 +330,9 @@ class QueryService:
                     max_tokens=1000
                 )
 
-                if not llm_response.success:
-                    raise Exception(f"LLM service failed: {llm_response.error}")
+                # 旧逻辑依赖 success 字段，这里兼容无 success 的返回，认为调用成功
+                if hasattr(llm_response, "success") and not getattr(llm_response, "success"):
+                    raise Exception(f"LLM service failed: {getattr(llm_response, 'error', 'unknown error')}")
 
             except Exception as e:
                 # 记录AI服务失败并更新查询状态
@@ -470,15 +485,44 @@ async def create_query(
         if not can_proceed:
             raise HTTPException(status_code=429, detail=error_msg)
 
-        # 尝试使用 Agent 处理查询（如果可用且指定了数据源）
-        use_agent = is_agent_available() and request.connection_id is not None
+        # 数据源服务实例
+        data_source_service = DataSourceService()
+
+        # 选择数据源：优先用户指定，否则自动取第一个活跃数据源；后续仅使用这一条
+        data_source_id = request.connection_id
+        selected_source = None
+        if not data_source_id:
+            active_sources = await data_source_service.get_data_sources(
+                tenant_id=tenant.id,
+                db=db,
+                active_only=True,
+                limit=1
+            )
+            if active_sources:
+                selected_source = active_sources[0]
+                data_source_id = selected_source.id
+                logger.info(f"未指定数据源，自动使用第一个活跃数据源: {data_source_id}")
+        if data_source_id and not selected_source:
+            selected_source = await data_source_service.get_data_source_by_id(
+                data_source_id=data_source_id,
+                tenant_id=tenant.id,
+                db=db
+            )
+        if not selected_source:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="未找到可用的数据源，请先选择或创建数据源"
+            )
+
+        # 尝试使用 Agent 处理查询（如果可用且有数据源）
+        use_agent = is_agent_available() and data_source_id is not None
         
         if use_agent:
             try:
                 # 获取数据源连接字符串
                 data_source_service = DataSourceService()
                 database_url = await data_source_service.get_decrypted_connection_string(
-                    data_source_id=request.connection_id,
+                    data_source_id=data_source_id,
                     tenant_id=tenant.id,
                     db=db
                 )
@@ -526,7 +570,8 @@ async def create_query(
                 query_id=query_id,
                 question=request.query,  # 使用 query 字段
                 context=None,
-                options=None
+                options=None,
+                selected_data_sources=[selected_source]
             )
             
             # 构建响应（转换为 QueryResponseV3 格式）

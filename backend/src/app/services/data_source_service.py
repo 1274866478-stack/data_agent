@@ -155,7 +155,7 @@ class DataSourceService:
 
     async def get_data_source_by_id(
         self,
-        data_source_id: int,
+        data_source_id: str,
         tenant_id: str,
         db: Session
     ) -> Optional[DataSourceConnection]:
@@ -188,7 +188,7 @@ class DataSourceService:
 
     async def update_data_source(
         self,
-        data_source_id: int,
+        data_source_id: str,
         tenant_id: str,
         update_data: Dict[str, Any],
         db: Session
@@ -264,7 +264,7 @@ class DataSourceService:
 
     async def delete_data_source(
         self,
-        data_source_id: int,
+        data_source_id: str,
         tenant_id: str,
         db: Session
     ) -> bool:
@@ -297,7 +297,7 @@ class DataSourceService:
 
     async def get_decrypted_connection_string(
         self,
-        data_source_id: int,
+        data_source_id: str,
         tenant_id: str,
         db: Session
     ) -> str:

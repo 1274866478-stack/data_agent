@@ -11,7 +11,14 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
-from src.app.data.models import Tenant, DataSourceConnection, KnowledgeDocument, QueryLog, QueryStatus
+from src.app.data.models import (
+    Tenant,
+    DataSourceConnection,
+    DataSourceConnectionStatus,
+    KnowledgeDocument,
+    QueryLog,
+    QueryStatus,
+)
 from src.app.middleware.tenant_context import get_current_tenant_id, get_current_tenant
 from src.app.core.config import get_settings
 import structlog
@@ -198,10 +205,12 @@ class QueryContext:
             List[DataSourceConnection]: 租户的数据源列表
         """
         try:
+            # 仅返回当前租户的活跃数据源。此前代码使用了 is_active 属性，
+            # 该属性是普通 @property，无法在 SQLAlchemy 查询中过滤，导致捕获异常后返回空列表。
             data_sources = self.db.query(DataSourceConnection).filter(
                 and_(
                     DataSourceConnection.tenant_id == self.tenant_id,
-                    DataSourceConnection.is_active == True
+                    DataSourceConnection.status == DataSourceConnectionStatus.ACTIVE
                 )
             ).all()
 

@@ -137,6 +137,24 @@ services:
     networks:
       - dataagent-network
 
+  # MCP ECharts Server
+  mcp_echarts:
+    build:
+      context: ./Agent
+      dockerfile: Dockerfile.mcp
+    container_name: dataagent-mcp-echarts
+    restart: unless-stopped
+    ports:
+      - "3033:3033"
+    networks:
+      - dataagent-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3033/sse || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
 volumes:
   postgres_data:
     driver: local

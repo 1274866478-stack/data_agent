@@ -157,8 +157,7 @@ class PostgreSQLAdapter(DatabaseInterface):
             self._connection = await asyncpg.create_pool(
                 self.connection_string,
                 min_size=1,
-                max_size=self.pool_size,
-                max_overflow=self.max_overflow
+                max_size=self.pool_size
             )
 
             logger.info("PostgreSQL连接建立成功")

@@ -368,6 +368,7 @@ export const useChatStore = create<ChatState>()(
             session_id: sessionId,
             history: historyMessages,  // 添加历史消息
             context: dataSourceId ? { data_sources: [dataSourceId] } : undefined,  // 添加数据源选择
+            connection_id: dataSourceId,  // 传递数据源ID以启用 Agent
           }
 
           console.log('[ChatStore] 准备调用 API, request:', queryRequest)

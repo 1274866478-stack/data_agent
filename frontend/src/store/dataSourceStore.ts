@@ -62,6 +62,15 @@ export interface ApiResponse<T> {
   message?: string
 }
 
+export interface BulkOperationResult {
+  success_count: number
+  error_count: number
+  errors: Array<{
+    item_id: string
+    error: string
+  }>
+}
+
 // Store状态接口
 interface DataSourceState {
   // 状态
@@ -86,6 +95,8 @@ interface DataSourceState {
   updateDataSource: (id: string, tenantId: string, data: UpdateDataSourceRequest) => Promise<DataSourceConnection>
 
   deleteDataSource: (id: string, tenantId: string) => Promise<void>
+
+  bulkDeleteDataSources: (ids: string[], tenantId: string, userId?: string) => Promise<BulkOperationResult>
 
   testConnection: (connectionString: string, dbType?: string) => Promise<TestResult>
 
@@ -232,6 +243,27 @@ class ApiClient {
     })
   }
 
+  async bulkDeleteDataSources(tenantId: string, userId: string | undefined, ids: string[]): Promise<BulkOperationResult> {
+    const params = new URLSearchParams()
+    params.append('tenant_id', tenantId)
+    if (userId) {
+      params.append('user_id', userId)
+    }
+
+    const token = this.getAuthToken()
+    return this.request<BulkOperationResult>(`/data-sources/bulk-delete?${params}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+      body: JSON.stringify({
+        item_ids: ids,
+        item_type: 'database',
+      }),
+    })
+  }
+
   async testConnection(data: ConnectionTestRequest): Promise<TestResult> {
     return this.request<TestResult>('/data-sources/test', {
       method: 'POST',
@@ -362,6 +394,34 @@ export const useDataSourceStore = create<DataSourceState>()(
         } catch (error) {
           set({
             error: error instanceof Error ? error.message : 'Failed to delete data source',
+            isLoading: false
+          })
+          throw error
+        }
+      },
+
+      bulkDeleteDataSources: async (ids, tenantId, userId) => {
+        if (ids.length === 0) {
+          return { success_count: 0, error_count: 0, errors: [] }
+        }
+
+        set({ isLoading: true, error: null })
+
+        try {
+          const result = await apiClient.bulkDeleteDataSources(tenantId, userId, ids)
+
+          set(state => ({
+            dataSources: state.dataSources.filter(ds => !ids.includes(ds.id)),
+            currentDataSource: state.currentDataSource && ids.includes(state.currentDataSource.id)
+              ? null
+              : state.currentDataSource,
+            isLoading: false
+          }))
+
+          return result
+        } catch (error) {
+          set({
+            error: error instanceof Error ? error.message : 'Failed to bulk delete data sources',
             isLoading: false
           })
           throw error

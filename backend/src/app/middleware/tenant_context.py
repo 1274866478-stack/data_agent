@@ -18,7 +18,8 @@ from src.app.data.models import Tenant, TenantStatus
 from src.app.core.config import get_settings
 
 logger = structlog.get_logger(__name__)
-security = HTTPBearer()
+# 允许无认证进入逻辑，由内部按开发模式/生产模式判定
+security = HTTPBearer(auto_error=False)
 settings = get_settings()
 
 # 使用contextvars实现线程安全的上下文管理
@@ -223,6 +224,21 @@ async def get_current_tenant_from_request(
     request_id = str(uuid.uuid4())
 
     try:
+        # 开发环境：无条件使用默认租户，避免认证拦截
+        if settings.environment == "development":
+            tenant_id = "default_tenant"
+            tenant = db.query(Tenant).filter(
+                Tenant.id == tenant_id,
+                Tenant.status != TenantStatus.DELETED
+            ).first()
+            if not tenant:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Tenant not found"
+                )
+            tenant_context.set_tenant(tenant_id, tenant, request_id)
+            return tenant
+
         # 提取tenant_id
         tenant_id = extract_tenant_from_jwt(credentials.credentials)
         if not tenant_id:

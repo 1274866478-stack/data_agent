@@ -326,12 +326,20 @@ class DeepSeekProvider(BaseLLMProvider):
             # 转换消息格式
             api_messages = []
             for msg in messages:
-                if isinstance(msg.content, str):
-                    api_messages.append({"role": msg.role, "content": msg.content})
-                elif isinstance(msg.content, list):
+                # 兼容直接传入 dict 而不是 LLMMessage 的情况
+                if isinstance(msg, dict):
+                    role = msg.get("role")
+                    content_raw = msg.get("content", "")
+                else:
+                    role = getattr(msg, "role", None)
+                    content_raw = getattr(msg, "content", "")
+
+                if isinstance(content_raw, str):
+                    api_messages.append({"role": role, "content": content_raw})
+                elif isinstance(content_raw, list):
                     # 多模态内容处理
                     content = []
-                    for item in msg.content:
+                    for item in content_raw:
                         if item.get("type") == "text":
                             content.append({"type": "text", "text": item.get("text", "")})
                         elif item.get("type") == "image_url":
@@ -339,7 +347,10 @@ class DeepSeekProvider(BaseLLMProvider):
                                 "type": "image_url",
                                 "image_url": item.get("image_url", {})
                             })
-                    api_messages.append({"role": msg.role, "content": content})
+                    api_messages.append({"role": role, "content": content})
+                else:
+                    # 兜底：转成字符串
+                    api_messages.append({"role": role, "content": str(content_raw)})
 
             if stream:
                 return self._stream_response(api_messages, model, max_tokens, temperature)
