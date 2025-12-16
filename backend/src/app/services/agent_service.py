@@ -142,16 +142,21 @@ def convert_agent_response_to_query_response(
                     row_dict[col] = row[i]
             results.append(row_dict)
     
-    # 处理图表数据
+    # 处理图表数据 - 优先使用 chart.chart_image 字段
     chart_data = None
-    chart_path = extract_chart_path_from_answer(agent_response.answer or "")
-    if chart_path:
-        # 如果是本地文件，转换为Base64
-        if not (chart_path.startswith('http://') or chart_path.startswith('https://')):
-            chart_data = load_chart_as_base64(chart_path)
-        else:
-            # 如果是URL，直接使用
-            chart_data = chart_path
+    if agent_response.chart and agent_response.chart.chart_image:
+        # 直接使用 chart_image 字段（已经是 Base64 data URI 或 HTTP URL）
+        chart_data = agent_response.chart.chart_image
+    else:
+        # 降级：尝试从 answer 中提取（向后兼容）
+        chart_path = extract_chart_path_from_answer(agent_response.answer or "")
+        if chart_path:
+            # 如果是本地文件，转换为Base64
+            if not (chart_path.startswith('http://') or chart_path.startswith('https://')):
+                chart_data = load_chart_as_base64(chart_path)
+            else:
+                # 如果是URL，直接使用
+                chart_data = chart_path
     
     # 构建响应数据
     execution_result = None
@@ -232,7 +237,11 @@ def convert_agent_response_to_chat_response(
             "title": agent_response.chart.title if agent_response.chart else None,
             "x_field": agent_response.chart.x_field if agent_response.chart else None,
             "y_field": agent_response.chart.y_field if agent_response.chart else None,
-            "chart_data": load_chart_as_base64(extract_chart_path_from_answer(agent_response.answer or "") or "") if extract_chart_path_from_answer(agent_response.answer or "") else None
+            "chart_image": agent_response.chart.chart_image if agent_response.chart else None,  # 使用 chart_image 字段
+            # 向后兼容：如果 chart_image 不存在，尝试从 answer 中提取
+            "chart_data": agent_response.chart.chart_image if (agent_response.chart and agent_response.chart.chart_image) else (
+                load_chart_as_base64(extract_chart_path_from_answer(agent_response.answer or "") or "") if extract_chart_path_from_answer(agent_response.answer or "") else None
+            )
         } if agent_response.chart and agent_response.chart.chart_type.value != "table" else None
     }
     
@@ -257,28 +266,60 @@ async def run_agent_query(
     Returns:
         VisualizationResponse: Agent响应，如果失败则返回None
     """
+    logger.info(
+        "run_agent_query called",
+        extra={
+            "question_preview": question[:100],
+            "thread_id": thread_id,
+            "has_database_url": bool(database_url),
+            "agent_available": _agent_available,
+        },
+    )
     if not _agent_available:
-        logger.error("Agent模块不可用")
+        logger.error("Agent模块不可用，直接返回 None")
         return None
     
     try:
         # 如果提供了数据库URL，临时更新Agent配置
+        original_url = None
         if database_url:
             from config import config
-            original_url = config.database_url
+            original_url = getattr(config, "database_url", None)
+            logger.info(
+                "Temporarily overriding Agent database_url",
+                extra={
+                    "old_url_preview": str(original_url)[:80] if original_url else None,
+                    "new_url_preview": str(database_url)[:80],
+                },
+            )
             config.database_url = database_url
         
         # 运行Agent
+        logger.info(
+            "Starting underlying LangGraph Agent run",
+            extra={"thread_id": thread_id},
+        )
         response = await run_agent(question, thread_id, verbose=verbose)
+        logger.info(
+            "Underlying LangGraph Agent finished",
+            extra={
+                "success": getattr(response, "success", None) if response else None,
+                "sql_preview": (response.sql or "")[:120] if getattr(response, "sql", None) else None,
+                "row_count": getattr(getattr(response, "data", None), "row_count", None) if response else None,
+                "error": getattr(response, "error", None) if response else None,
+            },
+        )
         
         # 恢复原始配置
-        if database_url:
+        if database_url and original_url is not None:
+            from config import config
+            logger.info("Restoring original Agent database_url")
             config.database_url = original_url
         
         return response
     
     except Exception as e:
-        logger.error(f"Agent查询失败: {e}", exc_info=True)
+        logger.error("Agent查询失败", extra={"error": str(e)}, exc_info=True)
         return None
 
 

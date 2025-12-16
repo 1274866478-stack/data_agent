@@ -516,7 +516,19 @@ async def create_query(
 
         # 尝试使用 Agent 处理查询（如果可用且有数据源）
         use_agent = is_agent_available() and data_source_id is not None
+        logger.info(
+            "Query /query agent decision",
+            tenant_id=tenant.id,
+            user_id=user_id,
+            connection_id=request.connection_id,
+            data_source_id=str(data_source_id) if data_source_id else None,
+            agent_available=is_agent_available(),
+            use_agent=use_agent,
+        )
+        # 添加额外的调试日志
+        print(f"[DEBUG] Query /query - connection_id: {request.connection_id}, data_source_id: {data_source_id}, use_agent: {use_agent}")
         
+        agent_success = False
         if use_agent:
             try:
                 # 获取数据源连接字符串
@@ -531,14 +543,37 @@ async def create_query(
                 thread_id = f"{tenant.id}_{user_id}_{query_id}"
                 
                 # 运行 Agent 查询
-                logger.info(f"使用 Agent 处理查询: {request.query[:100]}")
+                logger.info(
+                    "Using Agent to handle query",
+                    tenant_id=tenant.id,
+                    user_id=user_id,
+                    query_preview=request.query[:100],
+                    data_source_id=data_source_id,
+                    database_url_preview=str(database_url)[:80] if database_url else None,
+                )
                 agent_response = await run_agent_query(
                     question=request.query,
                     thread_id=thread_id,
                     database_url=database_url,
                     verbose=False
                 )
-                
+                if agent_response:
+                    logger.info(
+                        "Agent query completed",
+                        tenant_id=tenant.id,
+                        user_id=user_id,
+                        success=getattr(agent_response, "success", None),
+                        sql_preview=(agent_response.sql or "")[:120] if hasattr(agent_response, "sql") else None,
+                        row_count=getattr(getattr(agent_response, "data", None), "row_count", None),
+                        error=getattr(agent_response, "error", None),
+                    )
+                else:
+                    logger.warning(
+                        "Agent query returned None, will fallback",
+                        tenant_id=tenant.id,
+                        user_id=user_id,
+                    )
+
                 if agent_response and agent_response.success:
                     # 转换 Agent 响应为 QueryResponseV3 格式
                     processing_time_ms = int((time.time() - start_time) * 1000)
@@ -549,19 +584,32 @@ async def create_query(
                         original_query=request.query,
                         processing_time_ms=processing_time_ms
                     )
-                    
+                    agent_success = True
                     return QueryResponseV3(**response_data)
                 else:
-                    logger.warning(f"Agent 查询失败，回退到标准查询处理: {agent_response.error if agent_response else 'Agent unavailable'}")
+                    logger.warning(
+                        "Agent 查询失败，回退到标准查询处理",
+                        tenant_id=tenant.id,
+                        user_id=user_id,
+                        error=getattr(agent_response, "error", "Agent unavailable") if agent_response else "Agent unavailable",
+                    )
                     # 回退到标准处理流程
+                    agent_success = False
                     use_agent = False
             
             except Exception as e:
-                logger.error(f"Agent 查询出错，回退到标准查询处理: {e}", exc_info=True)
+                logger.error(
+                    "Agent 查询出错，回退到标准查询处理",
+                    tenant_id=tenant.id,
+                    user_id=user_id,
+                    error=str(e),
+                    exc_info=True,
+                )
+                agent_success = False
                 use_agent = False
         
-        # 标准查询处理流程（原有逻辑）
-        if not use_agent:
+        # 标准查询处理流程（原有逻辑）- 如果 Agent 未使用或失败，使用标准流程
+        if not agent_success:
             # 检查缓存（简化版，使用 query 作为 hash）
             query_hash = hash(request.query)
             

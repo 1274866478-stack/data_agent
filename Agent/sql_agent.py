@@ -429,9 +429,10 @@ def _get_mcp_config():
     }
 
     if ENABLE_ECHARTS_MCP:
+        # 使用容器内可访问的服务名而不是 localhost
         mcp_config["echarts"] = {
             "transport": "sse",
-            "url": "http://localhost:3033/sse",
+            "url": "http://mcp_echarts:3033/sse",
             "timeout": 30.0,
             "sse_read_timeout": 120.0,
         }

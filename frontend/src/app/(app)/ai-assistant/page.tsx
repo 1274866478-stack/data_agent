@@ -23,6 +23,9 @@ import { useChatStore } from '@/store/chatStore'
 import { useDataSourceStore, DataSourceConnection } from '@/store/dataSourceStore'
 import { uploadFile, UploadProgress, fileUploadService } from '@/services/fileUploadService'
 import { cn } from '@/lib/utils'
+import { ChatQueryResultView } from '@/components/chat/ChatQueryResultView'
+import { EChartsRenderer } from '@/components/chat/EChartsRenderer'
+import { extractEChartsOption } from '@/utils/chartParser'
 
 interface UploadedFile {
   file: File
@@ -165,8 +168,12 @@ export default function AIAssistantPage() {
     if (!input.trim() || isLoading) return
     const content = input.trim()
     setInput('')
-    const dataSourceIds = selectedDataSourceIds.length > 0 ? selectedDataSourceIds : undefined
-    await sendMessage(content, dataSourceIds)
+    // 如果没有选择数据源，自动使用第一个活跃数据源（确保使用 Agent）
+    let dataSourceIds = selectedDataSourceIds
+    if (dataSourceIds.length === 0 && activeDataSources.length > 0) {
+      dataSourceIds = [activeDataSources[0].id]
+    }
+    await sendMessage(content, dataSourceIds.length > 0 ? dataSourceIds : undefined)
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -706,6 +713,35 @@ export default function AIAssistantPage() {
                           ) : (
                             <div className="text-gray-800">
                               <Markdown content={message.content} className="prose-base" />
+                              {/* 如果有结构化结果或图表，追加展示 */}
+                              {message.metadata && (message.metadata.table || message.metadata.chart) && (
+                                <ChatQueryResultView
+                                  table={message.metadata.table}
+                                  chart={message.metadata.chart}
+                                />
+                              )}
+                              {/* 从消息文本中提取并渲染 ECharts 配置 */}
+                              {(() => {
+                                const echartsOption = extractEChartsOption(message.content)
+                                if (echartsOption) {
+                                  return (
+                                    <EChartsRenderer
+                                      echartsOption={echartsOption}
+                                      title={echartsOption.title?.text || '数据可视化'}
+                                    />
+                                  )
+                                }
+                                // 如果 metadata 中有 echarts_option，也尝试渲染
+                                if (message.metadata && (message.metadata as any).echarts_option) {
+                                  return (
+                                    <EChartsRenderer
+                                      echartsOption={(message.metadata as any).echarts_option}
+                                      title={(message.metadata as any).echarts_option?.title?.text || '数据可视化'}
+                                    />
+                                  )
+                                }
+                                return null
+                              })()}
                             </div>
                           )}
                         </div>

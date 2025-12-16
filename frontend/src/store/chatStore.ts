@@ -14,6 +14,8 @@ export interface ChatMessage {
     sources?: string[]
     reasoning?: string
     confidence?: number
+    table?: import('@/lib/api-client').ChatQueryResultTable
+    chart?: import('@/lib/api-client').ChatQueryChart
   }
 }
 
@@ -369,6 +371,28 @@ export const useChatStore = create<ChatState>()(
           console.log('[ChatStore] 历史消息数量:', historyMessages.length, '数据源ID:', normalizedDataSourceIds)
 
           // 调用API发送消息，包含历史上下文和数据源选择
+          // 如果没有选择数据源，尝试从 API 获取第一个活跃数据源
+          let finalConnectionId: string | undefined = undefined
+          if (normalizedDataSourceIds && normalizedDataSourceIds.length === 1) {
+            // 单选时使用选中的数据源
+            finalConnectionId = normalizedDataSourceIds[0]
+          } else if (!normalizedDataSourceIds || normalizedDataSourceIds.length === 0) {
+            // 没有选择数据源时，尝试获取第一个活跃数据源
+            try {
+              const { useDataSourceStore } = await import('@/store/dataSourceStore')
+              const dataSourceStore = useDataSourceStore.getState()
+              const tenantId = 'default_tenant' // TODO: 从认证上下文获取
+              const activeSources = await dataSourceStore.fetchDataSources(tenantId, { active_only: true })
+              if (activeSources && activeSources.length > 0) {
+                finalConnectionId = activeSources[0].id
+                console.log('[ChatStore] 自动使用第一个活跃数据源:', finalConnectionId)
+              }
+            } catch (error) {
+              console.warn('[ChatStore] 无法获取活跃数据源，将使用后端默认选择:', error)
+            }
+          }
+          // 多选时不设置 connection_id，避免单连接限制
+
           const queryRequest: ChatQueryRequest = {
             query: content,
             session_id: sessionId,
@@ -376,10 +400,8 @@ export const useChatStore = create<ChatState>()(
             context: normalizedDataSourceIds && normalizedDataSourceIds.length > 0
               ? { data_sources: normalizedDataSourceIds }
               : undefined,  // 添加数据源选择
-            // 仅在单选时启用 Agent，避免多选触发单连接限制
-            connection_id: normalizedDataSourceIds && normalizedDataSourceIds.length === 1
-              ? normalizedDataSourceIds[0]
-              : undefined,
+            // 设置 connection_id 以启用 Agent
+            connection_id: finalConnectionId,
           }
 
           console.log('[ChatStore] 准备调用 API, request:', queryRequest)
@@ -404,6 +426,8 @@ export const useChatStore = create<ChatState>()(
               sources: result.sources,
               reasoning: result.reasoning,
               confidence: result.confidence,
+              table: result.table,
+              chart: result.chart,
             }
           }
 

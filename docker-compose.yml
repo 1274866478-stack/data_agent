@@ -61,6 +61,8 @@ services:
       - LOG_LEVEL=INFO
     volumes:
       - ./backend:/app
+      # 挂载 Agent 目录到容器根目录，供 agent_service.py 导入 sql_agent 等模块
+      - ./Agent:/Agent
       - backend_uploads:/app/uploads
     ports:
       - "8004:8000"
@@ -149,9 +151,10 @@ services:
     networks:
       - dataagent-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3033/sse || exit 1"]
+      # 使用 nc 检查端口是否监听（SSE 端点会保持连接，不适合 HTTP 健康检查）
+      test: ["CMD-SHELL", "nc -z localhost 3033 || exit 1"]
       interval: 30s
-      timeout: 10s
+      timeout: 3s
       retries: 3
       start_period: 10s
 

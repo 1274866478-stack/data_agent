@@ -655,6 +655,7 @@ async def run_agent(
         final_content = ""
         executed_sql = None
         query_results = None
+        chart_image = None  # Store chart image from MCP ECharts tool call
 
         # Stream execution
         try:
@@ -680,6 +681,15 @@ async def run_agent(
                                 # Extract SQL from tool calls
                                 if msg.tool_calls:
                                     for tc in msg.tool_calls:
+                                        tool_name = tc.get("name", "unknown")
+                                        if verbose:
+                                            logger.debug(f"AI tool call: {tool_name}")
+                                        
+                                        # Check if this is a chart tool call
+                                        if "chart" in tool_name.lower() or "echarts" in tool_name.lower():
+                                            if verbose:
+                                                logger.info(f"Detected chart tool call: {tool_name}")
+                                        
                                         if tc.get("name") in ("query", "execute_sql_safe"):
                                             executed_sql = tc.get("args", {}).get("query") or tc.get("args", {}).get("sql")
 
@@ -687,11 +697,105 @@ async def run_agent(
                             elif isinstance(msg, ToolMessage):
                                 try:
                                     content = msg.content
+                                    tool_name = getattr(msg, 'name', None) or 'unknown'
+                                    
+                                    # Log tool message for debugging
+                                    if verbose:
+                                        logger.debug(f"Received ToolMessage from tool: {tool_name}, content type: {type(content)}")
+                                    
+                                    # Check if this is a chart tool result (MCP ECharts)
+                                    # MCP ECharts tools typically return content with image data
                                     if isinstance(content, str):
-                                        query_results = json.loads(content)
+                                        if verbose:
+                                            logger.debug(f"ToolMessage content (first 200 chars): {content[:200]}")
+                                        # Try to parse as JSON first
+                                        try:
+                                            parsed_content = json.loads(content)
+                                            
+                                            # Check if it's a list of content items (MCP format)
+                                            if isinstance(parsed_content, list):
+                                                for item in parsed_content:
+                                                    if isinstance(item, dict):
+                                                        # Check for image type content
+                                                        if item.get("type") == "image" and item.get("data"):
+                                                            # Extract Base64 image data
+                                                            image_data = item.get("data")
+                                                            # Ensure it's a data URI
+                                                            if isinstance(image_data, str):
+                                                                if image_data.startswith("data:"):
+                                                                    chart_image = image_data
+                                                                elif image_data.startswith("http"):
+                                                                    chart_image = image_data
+                                                                else:
+                                                                    # Assume it's base64 without prefix
+                                                                    chart_image = f"data:image/png;base64,{image_data}"
+                                                            logger.info(f"Extracted chart image from MCP tool result (length: {len(chart_image) if chart_image else 0})")
+                                                        # Also check for text content that might be a URL
+                                                        elif item.get("type") == "text" and isinstance(item.get("text"), str):
+                                                            text = item.get("text")
+                                                            if text.startswith("http") and not chart_image:
+                                                                chart_image = text
+                                                                logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
+                                            # If it's a dict, check for image fields
+                                            elif isinstance(parsed_content, dict):
+                                                if parsed_content.get("type") == "image" and parsed_content.get("data"):
+                                                    image_data = parsed_content.get("data")
+                                                    if isinstance(image_data, str):
+                                                        if image_data.startswith("data:"):
+                                                            chart_image = image_data
+                                                        elif image_data.startswith("http"):
+                                                            chart_image = image_data
+                                                        else:
+                                                            chart_image = f"data:image/png;base64,{image_data}"
+                                                    logger.info(f"Extracted chart image from MCP tool result (dict format)")
+                                                elif parsed_content.get("url") and not chart_image:
+                                                    chart_image = parsed_content.get("url")
+                                                    logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
+                                            else:
+                                                # Fallback: treat as query results
+                                                query_results = parsed_content
+                                        except json.JSONDecodeError:
+                                            # Not JSON, might be plain text or other format
+                                            # Check if it looks like a URL
+                                            if content.startswith("http") and not chart_image:
+                                                chart_image = content
+                                                logger.info(f"Extracted chart URL from tool result: {chart_image}")
+                                            else:
+                                                query_results = content
                                     else:
-                                        query_results = content
-                                except (json.JSONDecodeError, TypeError):
+                                        # Content is not a string, check if it's a dict/list with image data
+                                        if isinstance(content, list):
+                                            for item in content:
+                                                if isinstance(item, dict) and item.get("type") == "image" and item.get("data"):
+                                                    image_data = item.get("data")
+                                                    if isinstance(image_data, str):
+                                                        if image_data.startswith("data:"):
+                                                            chart_image = image_data
+                                                        elif image_data.startswith("http"):
+                                                            chart_image = image_data
+                                                        else:
+                                                            chart_image = f"data:image/png;base64,{image_data}"
+                                                    logger.info(f"Extracted chart image from MCP tool result (list format)")
+                                        elif isinstance(content, dict):
+                                            if content.get("type") == "image" and content.get("data"):
+                                                image_data = content.get("data")
+                                                if isinstance(image_data, str):
+                                                    if image_data.startswith("data:"):
+                                                        chart_image = image_data
+                                                    elif image_data.startswith("http"):
+                                                        chart_image = image_data
+                                                    else:
+                                                        chart_image = f"data:image/png;base64,{image_data}"
+                                                logger.info(f"Extracted chart image from MCP tool result (dict format)")
+                                            elif content.get("url") and not chart_image:
+                                                chart_image = content.get("url")
+                                                logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
+                                            else:
+                                                query_results = content
+                                        else:
+                                            query_results = content
+                                except (json.JSONDecodeError, TypeError) as e:
+                                    logger.warning(f"Failed to parse tool message content: {e}")
                                     query_results = msg.content
         except BaseException as stream_error:
             # Catch TaskGroup and other stream errors (including ExceptionGroup)
@@ -796,6 +900,35 @@ async def run_agent(
             
             raise Exception(error_msg) from stream_error
 
+        # Extract ECharts JSON configuration from LLM response
+        # Look for [CHART_START]...{...}[CHART_END] pattern in final_content
+        echarts_option_from_text = None
+        cleaned_content = final_content
+        
+        if final_content:
+            chart_pattern = r'\[CHART_START\]([\s\S]*?)\[CHART_END\]'
+            match = re.search(chart_pattern, final_content)
+            
+            if match:
+                json_str = match.group(1).strip()
+                try:
+                    echarts_option_from_text = json.loads(json_str)
+                    logger.info("✅ Successfully extracted ECharts JSON configuration from LLM response")
+                    
+                    # Remove the chart configuration from text content to avoid displaying raw JSON
+                    cleaned_content = re.sub(chart_pattern, '', final_content).strip()
+                    logger.debug(f"Removed chart configuration from text content. Original length: {len(final_content)}, Cleaned length: {len(cleaned_content)}")
+                except json.JSONDecodeError as e:
+                    logger.warning(
+                        f"⚠️ Failed to parse ECharts JSON configuration from LLM response: {e}. "
+                        f"JSON string: {json_str[:200]}..."
+                    )
+                    # Keep original content if parsing fails
+                    cleaned_content = final_content
+            else:
+                # No chart configuration found, keep original content
+                cleaned_content = final_content
+
         # Build VisualizationResponse
         query_result = QueryResult()
         chart_config = ChartConfig()
@@ -811,9 +944,48 @@ async def run_agent(
                     sql=executed_sql,
                     title="鏌ヨ缁撴灉"
                 )
+        
+        # Prefer ECharts option from LLM text response over auto-generated one
+        if echarts_option_from_text:
+            echarts_option = echarts_option_from_text
+            logger.info("Using ECharts configuration from LLM text response")
+        elif echarts_option:
+            logger.info("Using auto-generated ECharts configuration")
+
+        # Add chart image if extracted from MCP tool call
+        if chart_image:
+            chart_config.chart_image = chart_image
+            logger.info(
+                f"✅ Successfully extracted chart_image from MCP tool call. "
+                f"Type: {type(chart_image)}, "
+                f"Length: {len(chart_image) if isinstance(chart_image, str) else 'N/A'}, "
+                f"Preview: {chart_image[:50] if isinstance(chart_image, str) else 'N/A'}..."
+            )
+        elif enable_echarts and chart_config.chart_type.value != "table":
+            # Chart generation was enabled but no image was extracted
+            # This could mean:
+            # 1. MCP ECharts service is not available
+            # 2. Chart tool was not called by the agent
+            # 3. Chart tool call failed silently
+            logger.warning(
+                f"⚠️ Chart generation enabled but no chart_image extracted. "
+                f"Chart type: {chart_config.chart_type.value}, "
+                f"enable_echarts: {enable_echarts}. "
+                f"This may indicate MCP ECharts service is unavailable or chart tool call failed. "
+                f"All messages count: {len(all_messages)}"
+            )
+            # Log all tool messages for debugging
+            tool_messages = [m for m in all_messages if isinstance(m, ToolMessage)]
+            logger.debug(f"Tool messages found: {len(tool_messages)}")
+            for i, tm in enumerate(tool_messages):
+                tool_name = getattr(tm, 'name', None) or 'unknown'
+                content_preview = str(tm.content)[:100] if hasattr(tm, 'content') else 'N/A'
+                logger.debug(f"  ToolMessage {i+1}: name={tool_name}, content_preview={content_preview}")
+            # Don't set chart_image to None explicitly - let it remain None
+            # Frontend will handle missing chart_image gracefully
 
         response = VisualizationResponse(
-            answer=final_content or "",
+            answer=cleaned_content or "",  # Use cleaned content without JSON configuration
             sql=executed_sql or "",
             data=query_result,
             chart=chart_config,
@@ -824,7 +996,7 @@ async def run_agent(
 
         # Return both dict (backward compatible) and response object
         return {
-            "answer": final_content,
+            "answer": cleaned_content,  # Use cleaned content
             "sql": executed_sql,
             "data": query_results,
             "success": True,
