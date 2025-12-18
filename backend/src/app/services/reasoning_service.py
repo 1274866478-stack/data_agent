@@ -535,7 +535,17 @@ class AnswerGenerator:
             )
 
             if response and hasattr(response, 'content'):
-                return response.content
+                # 🔥🔥 DEBUG: 打印标准查询处理的 LLM 原始输出
+                import sys
+                final_content = response.content
+                print("=" * 80, flush=True)
+                print("🔥🔥 FINAL LLM OUTPUT (Standard Query - Raw String):", flush=True)
+                print("=" * 80, flush=True)
+                print(final_content, flush=True)
+                print("=" * 80, flush=True)
+                sys.stdout.flush()
+                logger.info(f"🔥🔥 FINAL LLM OUTPUT (Standard Query - length: {len(final_content)}): {final_content[:500]}...")
+                return final_content
             else:
                 # 回退到zhipu服务
                 zhipu_response = await zhipu_service.chat_completion(

@@ -22,7 +22,7 @@ async def detailed_health_check(db: Session = Depends(get_db)) -> Dict[str, Any]
     """
     详细的健康检查端点，检查所有服务的连接状态
     """
-    # 并行检查所有服务
+    # 🔥 第一步修复：并行检查所有服务，ChromaDB检查失败不阻塞
     tasks = [
         asyncio.create_task(asyncio.to_thread(check_database_connection)),
         asyncio.create_task(asyncio.to_thread(minio_service.check_connection)),
@@ -30,8 +30,28 @@ async def detailed_health_check(db: Session = Depends(get_db)) -> Dict[str, Any]
         asyncio.create_task(zhipu_service.check_connection())  # 这是async函数，直接调用
     ]
 
-    # 等待所有检查完成
-    db_status, minio_status, chromadb_status, zhipu_status = await asyncio.gather(*tasks)
+    # 等待所有检查完成，ChromaDB失败不影响整体健康状态
+    try:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        db_status, minio_status, chromadb_status, zhipu_status = results
+        
+        # 如果任何检查抛出异常，视为失败但不影响其他服务
+        if isinstance(db_status, Exception):
+            db_status = False
+        if isinstance(minio_status, Exception):
+            minio_status = False
+        if isinstance(chromadb_status, Exception):
+            chromadb_status = False
+        if isinstance(zhipu_status, Exception):
+            zhipu_status = False
+    except Exception as e:
+        # 如果gather本身失败，至少保证ChromaDB不影响其他服务
+        logger.warning(f"健康检查部分失败: {e}")
+        chromadb_status = False
+        # 其他服务状态设为未知
+        db_status = True  # 假设数据库正常（因为已经通过Depends获取了db）
+        minio_status = None
+        zhipu_status = None
 
     # 计算整体健康状态
     all_healthy = all([db_status, minio_status, chromadb_status, zhipu_status])

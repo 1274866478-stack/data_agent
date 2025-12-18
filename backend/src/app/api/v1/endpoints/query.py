@@ -6,6 +6,7 @@ Story 3.1: 租户隔离的查询 API V3格式
 import asyncio
 import uuid
 import time
+import traceback
 from typing import Dict, Any, Optional, Callable, List
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query as QueryParam
@@ -311,10 +312,17 @@ class QueryService:
 可用文档数量: {len(documents)}
 
 请按照以下格式回答：
-1. 提供准确的答案
-2. 引用相关的数据源和文档
-3. 提供详细的推理过程
-4. 使用Markdown格式化答案"""
+1. 提供准确的答案 (Accurate Answer)
+2. 引用相关的数据源和文档 (Data Sources)
+3. 提供详细的推理过程 (Reasoning)
+4. 使用Markdown格式化答案 (Markdown Formatting)
+   - ⚠️ 重要：在第 4 部分中，不要输出大型 ASCII 表格。应该依赖第 5 部分来可视化数据。
+   - ⚠️ 不要使用 Markdown 表格（如 | 列1 | 列2 |）来展示统计数据，这些数据应该通过第 5 部分的图表来可视化。
+5. 可视化 (Visualization - Required if data is available)
+   - 如果结果包含统计数据（时间序列、对比数据、趋势分析等），你必须在此处生成 ECharts JSON 配置。
+   - 使用格式：[CHART_START] { ... } [CHART_END]
+
+⚠️ 重要：图表配置是回复的重要组成部分，不要因为遵循上述格式而省略图表配置。当需要可视化时，图表配置必须包含在回复中。不要使用 Markdown 表格代替图表。"""
                 },
                 {
                     "role": "user",
@@ -555,7 +563,8 @@ async def create_query(
                     question=request.query,
                     thread_id=thread_id,
                     database_url=database_url,
-                    verbose=False
+                    verbose=False,
+                    enable_echarts=True  # 启用 ECharts 图表生成功能
                 )
                 if agent_response:
                     logger.info(
@@ -587,24 +596,74 @@ async def create_query(
                     agent_success = True
                     return QueryResponseV3(**response_data)
                 else:
+                    # Agent 失败，但尝试返回部分结果（如果有的话）
+                    error_msg = getattr(agent_response, "error", "Agent unavailable") if agent_response else "Agent unavailable"
                     logger.warning(
-                        "Agent 查询失败，回退到标准查询处理",
+                        "Agent 查询失败，尝试返回部分结果或回退到标准查询处理",
                         tenant_id=tenant.id,
                         user_id=user_id,
-                        error=getattr(agent_response, "error", "Agent unavailable") if agent_response else "Agent unavailable",
+                        error=error_msg,
                     )
+                    
+                    # 如果Agent返回了部分结果（即使success=False），尝试使用它
+                    if agent_response and hasattr(agent_response, "data") and agent_response.data and agent_response.data.row_count > 0:
+                        logger.info("Agent返回了部分结果，尝试使用这些结果")
+                        processing_time_ms = int((time.time() - start_time) * 1000)
+                        response_data = convert_agent_response_to_query_response(
+                            agent_response=agent_response,
+                            query_id=query_id,
+                            tenant_id=tenant.id,
+                            original_query=request.query,
+                            processing_time_ms=processing_time_ms
+                        )
+                        # 即使Agent失败，如果有数据也返回
+                        return QueryResponseV3(**response_data)
+                    
                     # 回退到标准处理流程
                     agent_success = False
                     use_agent = False
             
             except Exception as e:
+                # 获取完整的堆栈跟踪
+                tb_str = traceback.format_exc()
+                
+                # 打印完整的错误信息
                 logger.error(
-                    "Agent 查询出错，回退到标准查询处理",
-                    tenant_id=tenant.id,
-                    user_id=user_id,
-                    error=str(e),
-                    exc_info=True,
+                    "🚨 CRITICAL: Agent failed, falling back to standard query. Reason: %s",
+                    str(e),
+                    extra={
+                        "tenant_id": tenant.id,
+                        "user_id": user_id,
+                        "query_id": query_id,
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                    }
                 )
+                
+                # 打印完整的堆栈跟踪
+                logger.error(
+                    "Agent 查询出错 - 完整堆栈跟踪:\n%s",
+                    tb_str,
+                    extra={
+                        "tenant_id": tenant.id,
+                        "user_id": user_id,
+                        "query_id": query_id,
+                    }
+                )
+                
+                # 打印错误对象的详细信息
+                logger.error(
+                    "Agent 查询出错 - 错误详情: type=%s, message=%s, args=%s",
+                    type(e).__name__,
+                    str(e),
+                    repr(e.args) if hasattr(e, 'args') else 'N/A',
+                    extra={
+                        "tenant_id": tenant.id,
+                        "user_id": user_id,
+                        "query_id": query_id,
+                    }
+                )
+                
                 agent_success = False
                 use_agent = False
         

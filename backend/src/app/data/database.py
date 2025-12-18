@@ -134,15 +134,43 @@ def get_pool_status() -> dict:
             }
 
         pool = engine.pool
+        # 🔥 第二步修复：兼容性修复，SQLAlchemy 1.4+中QueuePool没有invalid属性
+        try:
+            # 尝试获取 pool 的状态，如果不支持 invalid 属性则跳过
+            pool_info = {
+                "size": pool.size(),
+                "checkedin": pool.checkedin(),
+                "checkedout": pool.checkedout(),
+                "overflow": pool.overflow()
+            }
+            
+            # 尝试获取invalid状态（如果方法存在）
+            invalid_count = 0
+            if hasattr(pool, 'invalid'):
+                try:
+                    invalid_count = pool.invalid() if callable(pool.invalid) else pool.invalid
+                except (AttributeError, TypeError):
+                    # 如果invalid不可用，设为0
+                    invalid_count = 0
+        except Exception as e:
+            logger.warning(f"无法获取详细 Pool 状态: {e}")
+            pool_info = {
+                "size": 0,
+                "checkedin": 0,
+                "checkedout": 0,
+                "overflow": 0
+            }
+            invalid_count = 0
+        
         pool_status = {
             "database_type": "postgresql",
-            "pool_size": pool.size(),
-            "checked_in": pool.checkedin(),
-            "checked_out": pool.checkedout(),
-            "overflow": pool.overflow(),
-            "invalid": pool.invalid(),
-            "total_connections": pool.checkedout() + pool.checkedin(),
-            "pool_size_limit": pool.size() + pool.max_overflow,
+            "pool_size": pool_info["size"],
+            "checked_in": pool_info["checkedin"],
+            "checked_out": pool_info["checkedout"],
+            "overflow": pool_info["overflow"],
+            "invalid": invalid_count,
+            "total_connections": pool_info["checkedout"] + pool_info["checkedin"],
+            "pool_size_limit": pool_info["size"] + pool.max_overflow,
             "status": "healthy",
         }
 

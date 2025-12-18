@@ -284,6 +284,8 @@ def create_llm(
             api_key=api_key or getattr(settings, "zhipuai_api_key", ""),
             base_url=base_url or getattr(settings, "zhipuai_base_url", "https://open.bigmodel.cn/api/paas/v4"),
             temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
+            timeout=getattr(settings, "zhipuai_timeout", 120),  # 🔥 第二步修复：增加超时时间到 120 秒
+            max_tokens=getattr(settings, "llm_max_output_tokens", 4096),  # 🔥 增加最大输出 Token 限制，确保图表 JSON 完整输出
         )
 
     if provider == "openrouter":
@@ -292,6 +294,8 @@ def create_llm(
             api_key=api_key or getattr(settings, "openrouter_api_key", ""),
             base_url=base_url or getattr(settings, "openrouter_base_url", "https://openrouter.ai/api/v1"),
             temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
+            timeout=getattr(settings, "openrouter_timeout", 120),  # 🔥 第二步修复：增加超时时间到 120 秒
+            max_tokens=getattr(settings, "llm_max_output_tokens", 4096),  # 🔥 增加最大输出 Token 限制，确保图表 JSON 完整输出
         )
 
     # default: deepseek
@@ -300,6 +304,8 @@ def create_llm(
         api_key=api_key or getattr(settings, 'DEEPSEEK_API_KEY', ''),
         base_url=base_url or getattr(settings, 'DEEPSEEK_BASE_URL', 'https://api.deepseek.com'),
         temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
+        timeout=getattr(settings, "deepseek_timeout", 120),  # 🔥 第二步修复：增加超时时间到 120 秒
+        max_tokens=getattr(settings, "llm_max_output_tokens", 4096),  # 🔥 增加最大输出 Token 限制，确保图表 JSON 完整输出
     )
 
 
@@ -334,21 +340,26 @@ def get_mcp_config(database_url: str, enable_echarts: bool = False) -> Dict[str,
     }
 
     if enable_echarts:
+        # 检查 MCP ECharts URL 环境变量
+        mcp_echarts_url_env = os.getenv("MCP_ECHARTS_URL")
+        logger.info(f"🔍 Checking MCP Config: MCP_ECHARTS_URL={mcp_echarts_url_env}")
+        
         # 支持环境变量配置，Docker 环境中使用服务名称
-        echarts_url = os.getenv(
-            "MCP_ECHARTS_URL", 
-            "http://mcp_echarts:3033/sse"  # Docker 环境默认使用服务名称
-        )
+        echarts_url = mcp_echarts_url_env or "http://mcp_echarts:3033/sse"  # Docker 环境默认使用服务名称
         # 如果 URL 包含 localhost，可能是本地开发环境，保持原样
         if "localhost" in echarts_url or "127.0.0.1" in echarts_url:
             echarts_url = "http://localhost:3033/sse"
         
+        logger.info(f"🔍 MCP ECharts configuration: enable_echarts={enable_echarts}, url={echarts_url}")
+        
         config["echarts"] = {
             "transport": "sse",
             "url": echarts_url,
-            "timeout": 30.0,
-            "sse_read_timeout": 120.0,
+            "timeout": 60.0,  # 🔥 第二步修复：增加 MCP ECharts 连接超时到 60 秒
+            "sse_read_timeout": 180.0,  # 🔥 第二步修复：增加 SSE 读取超时到 180 秒
         }
+    else:
+        logger.info(f"🔍 MCP ECharts disabled: enable_echarts={enable_echarts}")
 
     return config
 
@@ -483,15 +494,47 @@ async def build_agent(
         try:
             raw_tools = await _cached_mcp_client.get_tools()
         except Exception as e:
-            logger.warning(
-                "Failed to load MCP tools; will retry without echarts if enabled",
-                exc_info=True,
+            # 检查是否是连接错误（如 ClientConnectorError）
+            error_type = type(e).__name__
+            error_message = str(e)
+            
+            # 检查是否是连接相关的错误
+            is_connection_error = (
+                "ClientConnectorError" in error_type or
+                "ConnectionError" in error_type or
+                "ConnectionRefusedError" in error_type or
+                "无法连接" in error_message or
+                "connection" in error_message.lower() or
+                "refused" in error_message.lower()
             )
+            
+            if is_connection_error and enable_echarts and "echarts" in mcp_config:
+                logger.error(
+                    "❌ 无法连接到 MCP ECharts 服务，请检查 Docker 容器是否启动。"
+                    f"错误类型: {error_type}, 错误信息: {error_message}",
+                    exc_info=True,
+                )
+            else:
+                logger.warning(
+                    f"Failed to load MCP tools; will retry without echarts if enabled. "
+                    f"错误类型: {error_type}, 错误信息: {error_message}",
+                    exc_info=True,
+                )
+            
             # If echarts was enabled, retry without it to keep SQL path working
             if enable_echarts and "echarts" in mcp_config:
+                logger.info("⚠️ 尝试回退：禁用 ECharts 服务，仅使用 PostgreSQL MCP 工具")
                 fallback_config = {k: v for k, v in mcp_config.items() if k != "echarts"}
                 _cached_mcp_client = MultiServerMCPClient(fallback_config)
-                raw_tools = await _cached_mcp_client.get_tools()
+                try:
+                    raw_tools = await _cached_mcp_client.get_tools()
+                    logger.info("✅ 回退成功：已加载 PostgreSQL MCP 工具（不含 ECharts）")
+                except Exception as fallback_error:
+                    logger.error(
+                        f"❌ 回退失败：即使禁用 ECharts 后仍无法加载 MCP 工具。错误: {fallback_error}",
+                        exc_info=True,
+                    )
+                    raise
             else:
                 raise
         logger.info(f"Loaded {len(raw_tools)} tools from MCP")
@@ -673,10 +716,24 @@ async def run_agent(
                         all_messages.extend(messages)
 
                         for msg in messages:
-                            # Capture AI response
+                            # 🔥🔥 DEBUG: 打印所有消息类型
+                            import sys
+                            print(f"🔥🔥 MESSAGE TYPE: {type(msg).__name__}", flush=True)
                             if isinstance(msg, AIMessage):
+                                print(f"🔥🔥 AIMessage - has content: {bool(msg.content)}, content type: {type(msg.content)}, has tool_calls: {bool(getattr(msg, 'tool_calls', None))}", flush=True)
                                 if msg.content:
                                     final_content = msg.content
+                                    # 🔥🔥 DEBUG: 打印 LLM 原始输出
+                                    print("=" * 80, flush=True)
+                                    print("🔥🔥 FINAL LLM OUTPUT (Raw String):", flush=True)
+                                    print("=" * 80, flush=True)
+                                    print(final_content, flush=True)
+                                    print("=" * 80, flush=True)
+                                    sys.stdout.flush()
+                                    logger.info(f"🔥🔥 FINAL LLM OUTPUT (length: {len(final_content)}): {final_content[:500]}...")
+                                elif getattr(msg, 'tool_calls', None):
+                                    print(f"🔥🔥 AIMessage has tool_calls but no content. Tool calls: {len(msg.tool_calls)}", flush=True)
+                                    sys.stdout.flush()
 
                                 # Extract SQL from tool calls
                                 if msg.tool_calls:
@@ -903,11 +960,32 @@ async def run_agent(
         # Extract ECharts JSON configuration from LLM response
         # Look for [CHART_START]...{...}[CHART_END] pattern in final_content
         echarts_option_from_text = None
+        # 🔥🔥 DEBUG: 在解析前再次打印最终内容
+        print("=" * 80)
+        print("🔥🔥 FINAL CONTENT BEFORE PARSING:")
+        print("=" * 80)
+        print(final_content)
+        print("=" * 80)
+        logger.info(f"🔥🔥 FINAL CONTENT BEFORE PARSING (length: {len(final_content)}): {final_content[:500]}...")
+        
         cleaned_content = final_content
         
         if final_content:
             chart_pattern = r'\[CHART_START\]([\s\S]*?)\[CHART_END\]'
             match = re.search(chart_pattern, final_content)
+            
+            # 🔥🔥 DEBUG: 打印匹配结果
+            if match:
+                print("=" * 80)
+                print("🔥🔥 CHART PATTERN MATCHED!")
+                print(f"🔥🔥 Matched JSON string (first 500 chars): {match.group(1)[:500]}")
+                print("=" * 80)
+                logger.info(f"🔥🔥 CHART PATTERN MATCHED! JSON string length: {len(match.group(1))}")
+            else:
+                print("=" * 80)
+                print("🔥🔥 CHART PATTERN NOT FOUND IN FINAL CONTENT!")
+                print("=" * 80)
+                logger.warning("🔥🔥 CHART PATTERN NOT FOUND IN FINAL CONTENT!")
             
             if match:
                 json_str = match.group(1).strip()
@@ -929,6 +1007,100 @@ async def run_agent(
                 # No chart configuration found, keep original content
                 cleaned_content = final_content
 
+        # 🔥 第一步修复：SQL 提取兜底逻辑（被动触发）
+        # 检查是否有 tool_calls 但没有执行 SQL
+        has_tool_calls = False
+        for msg in all_messages:
+            if isinstance(msg, AIMessage) and getattr(msg, 'tool_calls', None):
+                has_tool_calls = True
+                break
+        
+        # 如果 tool_calls 为空，但文本内容中包含 SQL 代码块，强制提取并执行
+        if not executed_sql and final_content:
+            # 尝试从 markdown 代码块中提取 SQL
+            # 匹配 ```sql ... ``` 格式
+            sql_patterns = [
+                r'```sql\s*\n(.*?)\n```',  # 标准格式：```sql\n...\n```
+                r'```sql\n(.*?)\n```',     # 紧凑格式
+                r'```sql(.*?)```',         # 无换行格式
+                r'```\s*sql\s*\n(.*?)\n```',  # 带空格的格式
+            ]
+            
+            for pattern in sql_patterns:
+                match = re.search(pattern, final_content, re.DOTALL | re.IGNORECASE)
+                if match:
+                    extracted_sql = match.group(1).strip()
+                    # 验证提取的 SQL 看起来合理（至少包含 SELECT）
+                    if extracted_sql and ('SELECT' in extracted_sql.upper() or 'WITH' in extracted_sql.upper()):
+                        executed_sql = extracted_sql
+                        logger.warning(f"⚠️ Detected raw SQL in text (no tool call), forcing execution... SQL: {executed_sql[:100]}...")
+                        break
+            
+            # 如果还是没找到，尝试更宽松的模式（查找包含 SELECT 的代码块）
+            if not executed_sql:
+                # 匹配任何包含 SQL 关键字的代码块
+                loose_pattern = r'```(?:sql|SQL)?\s*\n((?:SELECT|WITH|INSERT|UPDATE|DELETE).*?)\n```'
+                match = re.search(loose_pattern, final_content, re.DOTALL | re.IGNORECASE)
+                if match:
+                    extracted_sql = match.group(1).strip()
+                    if extracted_sql:
+                        executed_sql = extracted_sql
+                        logger.warning(f"⚠️ Detected raw SQL in text (loose pattern), forcing execution... SQL: {extracted_sql[:100]}...")
+            
+            # 如果没有找到 SQL 代码块，检查是否在普通文本中有 SQL 语句
+            if not executed_sql:
+                # 查找以 SELECT/WITH 开头的文本行（可能是直接写的 SQL）
+                sql_line_pattern = r'(?:^|\n)((?:SELECT|WITH)\s+[^`]+?)(?:\n|$)'
+                match = re.search(sql_line_pattern, final_content, re.IGNORECASE | re.MULTILINE)
+                if match:
+                    potential_sql = match.group(1).strip()
+                    # 验证这看起来像 SQL（包含常见关键字）
+                    if len(potential_sql) > 20 and any(kw in potential_sql.upper() for kw in ['FROM', 'WHERE', 'JOIN', 'GROUP BY', 'ORDER BY']):
+                        executed_sql = potential_sql
+                        logger.warning(f"⚠️ Detected SQL-like text (no code block), forcing execution... SQL: {executed_sql[:100]}...")
+            
+            if not executed_sql:
+                logger.warning(f"⚠️ 无法从 tool_calls 或文本内容中提取 SQL。final_content 长度: {len(final_content)}, has_tool_calls: {has_tool_calls}")
+
+        # 🔥 关键修复：如果LLM没有执行SQL查询，但提供了SQL（无论是通过工具调用还是文本），强制执行它
+        if not query_results and executed_sql:
+            logger.warning(f"⚠️ LLM提供了SQL但没有执行查询（或查询未返回结果），强制自动执行SQL...")
+            try:
+                # 使用execute_sql_safe工具执行SQL（这是安全的SQL执行工具）
+                from .tools import execute_sql_safe
+                
+                # 执行SQL查询
+                logger.info(f"🔄 正在执行提取的 SQL: {executed_sql[:200]}...")
+                result = execute_sql_safe.invoke({"sql": executed_sql, "query": executed_sql})
+                
+                # 解析结果
+                if isinstance(result, str):
+                    try:
+                        query_results = json.loads(result)
+                        logger.info(f"✅ SQL执行成功，返回JSON格式结果，包含 {len(query_results) if isinstance(query_results, list) else 1} 条记录")
+                    except json.JSONDecodeError:
+                        # 如果不是JSON，可能是错误信息或纯文本结果
+                        logger.warning(f"SQL执行返回非JSON结果: {result[:200]}...")
+                        # 尝试将字符串结果包装为列表
+                        query_results = [{"result": result}] if result else None
+                elif isinstance(result, list):
+                    query_results = result
+                    logger.info(f"✅ SQL执行成功，返回列表格式结果，包含 {len(query_results)} 条记录")
+                elif isinstance(result, dict):
+                    query_results = [result]
+                    logger.info(f"✅ SQL执行成功，返回字典格式结果")
+                else:
+                    query_results = None
+                    logger.warning(f"SQL执行返回未知格式: {type(result)}")
+                
+                if query_results:
+                    logger.info(f"✅ 成功自动执行SQL查询，获取到 {len(query_results) if isinstance(query_results, list) else 1} 条结果")
+                else:
+                    logger.warning("⚠️ 自动执行SQL查询但没有获取到结果")
+            except Exception as e:
+                logger.error(f"❌ 尝试自动执行SQL时出错: {e}", exc_info=True)
+                # 即使执行失败，也继续处理，至少可以显示SQL和错误信息
+
         # Build VisualizationResponse
         query_result = QueryResult()
         chart_config = ChartConfig()
@@ -939,10 +1111,31 @@ async def run_agent(
 
             # Auto-infer chart type and prepare config with ECharts option
             if executed_sql:
+                # 从用户问题中推断图表类型（优先）
+                inferred_type = None
+                question_lower = question.lower()
+                if any(kw in question_lower for kw in ["趋势", "变化", "时间", "月份", "年度", "季度"]):
+                    inferred_type = "line"
+                elif any(kw in question_lower for kw in ["对比", "比较", "排名"]):
+                    inferred_type = "bar"
+                elif any(kw in question_lower for kw in ["占比", "分布", "比例"]):
+                    inferred_type = "pie"
+                
+                # 生成图表标题（从问题中提取或使用默认值）
+                chart_title = "查询结果"
+                if "收入" in question:
+                    chart_title = "收入趋势分析" if inferred_type == "line" else "收入分析"
+                elif "销售" in question:
+                    chart_title = "销售趋势分析" if inferred_type == "line" else "销售分析"
+                elif "趋势" in question:
+                    chart_title = "趋势分析"
+                
                 _, chart_config, echarts_option = prepare_mcp_chart_request(
                     sql_result=query_results,
                     sql=executed_sql,
-                    title="鏌ヨ缁撴灉"
+                    title=chart_title,
+                    chart_type=inferred_type,
+                    question=question
                 )
         
         # Prefer ECharts option from LLM text response over auto-generated one
@@ -951,6 +1144,40 @@ async def run_agent(
             logger.info("Using ECharts configuration from LLM text response")
         elif echarts_option:
             logger.info("Using auto-generated ECharts configuration")
+        elif query_results and isinstance(query_results, list) and len(query_results) > 0:
+            # 如果LLM没有生成图表配置，但有查询结果，强制生成一个基础图表配置
+            logger.warning("LLM did not generate chart configuration, but query results exist. Auto-generating chart...")
+            try:
+                # 从问题中推断图表类型
+                question_lower = question.lower()
+                inferred_type = "table"
+                if any(kw in question_lower for kw in ["趋势", "变化", "时间", "月份", "年度", "季度"]):
+                    inferred_type = "line"
+                elif any(kw in question_lower for kw in ["对比", "比较", "排名"]):
+                    inferred_type = "bar"
+                elif any(kw in question_lower for kw in ["占比", "分布", "比例"]):
+                    inferred_type = "pie"
+                
+                # 生成图表标题
+                chart_title = "查询结果"
+                if "收入" in question:
+                    chart_title = "收入趋势分析" if inferred_type == "line" else "收入分析"
+                elif "销售" in question:
+                    chart_title = "销售趋势分析" if inferred_type == "line" else "销售分析"
+                elif "趋势" in question:
+                    chart_title = "趋势分析"
+                
+                # 自动生成图表配置
+                _, chart_config, echarts_option = prepare_mcp_chart_request(
+                    sql_result=query_results,
+                    sql=executed_sql or "",
+                    title=chart_title,
+                    chart_type=inferred_type,
+                    question=question
+                )
+                logger.info(f"Auto-generated chart configuration: type={inferred_type}, title={chart_title}")
+            except Exception as e:
+                logger.error(f"Failed to auto-generate chart configuration: {e}", exc_info=True)
 
         # Add chart image if extracted from MCP tool call
         if chart_image:

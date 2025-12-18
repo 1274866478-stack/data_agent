@@ -40,33 +40,51 @@ class ChromaDBService:
     @property
     def client(self):
         """延迟初始化ChromaDB客户端"""
+        # 🔥 第一步修复：检查是否启用RAG
+        from src.app.core.config import settings
+        if not getattr(settings, 'enable_rag', False):
+            raise RuntimeError("RAG功能已禁用，无法使用ChromaDB")
+            
         if not CHROMADB_AVAILABLE:
             raise RuntimeError("ChromaDB未安装,无法使用向量数据库功能")
         if self._client is None:
-            self._client = chromadb.HttpClient(
-                host=settings.chroma_host,
-                port=settings.chroma_port
-            )
+            try:
+                self._client = chromadb.HttpClient(
+                    host=settings.chroma_host,
+                    port=settings.chroma_port
+                )
+            except Exception as e:
+                logger.warning(f"ChromaDB客户端初始化失败: {e}，RAG功能将不可用")
+                raise RuntimeError(f"ChromaDB连接失败: {e}")
         return self._client
 
     def check_connection(self) -> bool:
         """
         检查ChromaDB连接状态
         """
+        # 🔥 第一步修复：检查是否启用RAG
+        from src.app.core.config import settings
+        if not getattr(settings, 'enable_rag', False):
+            logger.debug("RAG功能已禁用，跳过ChromaDB连接检查")
+            return False
+            
         if not CHROMADB_AVAILABLE:
             logger.warning("ChromaDB未安装,跳过连接检查")
             return False
         try:
-            # 尝试获取heartbeat来验证连接
+            # 🔥 第一步修复：直接尝试连接，失败时记录警告并返回False，不阻塞
+            # 注意：如果ChromaDB服务不可用，这里可能会稍微延迟，但不会无限等待
+            # 因为HttpClient通常有默认超时设置
             heartbeat = self.client.heartbeat()
             if heartbeat:
                 logger.info("ChromaDB connection: OK")
                 return True
             else:
-                logger.error("ChromaDB connection failed: No heartbeat")
+                logger.warning("ChromaDB connection failed: No heartbeat")
                 return False
         except Exception as e:
-            logger.error(f"ChromaDB connection failed: {e}")
+            # 🔥 第一步修复：连接失败时记录警告并返回False，不抛出异常
+            logger.warning(f"ChromaDB连接失败（服务可能不可用）: {e}，跳过连接检查")
             return False
 
     def create_collection(self, collection_name: str, tenant_id: Optional[str] = None) -> bool:
@@ -137,6 +155,12 @@ class ChromaDBService:
         """
         在集合中查询文档
         """
+        # 🔥 第一步修复：检查是否启用RAG，如果未启用则直接返回空结果
+        from src.app.core.config import settings
+        if not getattr(settings, 'enable_rag', False):
+            logger.debug("RAG功能已禁用，返回空查询结果")
+            return None
+            
         try:
             full_collection_name = f"{collection_name}_{tenant_id}" if tenant_id else collection_name
 
@@ -151,7 +175,8 @@ class ChromaDBService:
             logger.info(f"Query executed on collection '{full_collection_name}', found {len(results['ids'][0])} results")
             return results
         except Exception as e:
-            logger.error(f"Failed to query collection '{collection_name}': {e}")
+            # 🔥 第一步修复：连接失败时记录警告并返回None，不抛出异常
+            logger.warning(f"ChromaDB查询失败（连接可能不可用）: {e}，返回空结果")
             return None
 
     def delete_documents(

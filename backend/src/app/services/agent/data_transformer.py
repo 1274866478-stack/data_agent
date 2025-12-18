@@ -147,24 +147,44 @@ def sql_result_to_mcp_echarts_data(
     return data, actual_x, actual_y
 
 
-def infer_chart_type(sql: str, data: List[Dict[str, Any]]) -> str:
+def infer_chart_type(sql: str, data: List[Dict[str, Any]], question: str = "") -> str:
     """
-    根据 SQL 语句和数据特征推断合适的图表类型
+    根据 SQL 语句、数据特征和用户问题推断合适的图表类型
     
     Args:
         sql: SQL 查询语句
         data: 查询结果
+        question: 用户原始问题（可选，用于更准确的推断）
     
     Returns:
         推荐的图表类型: "bar", "line", "pie", "table"
     """
     sql_lower = sql.lower()
+    question_lower = question.lower() if question else ""
+    
+    # 优先从用户问题中推断（更准确）
+    if question:
+        # 趋势类关键词 -> 折线图
+        if any(kw in question_lower for kw in ["趋势", "变化", "时间", "月份", "年度", "季度", "增长", "下降"]):
+            return "line"
+        # 对比类关键词 -> 柱状图
+        if any(kw in question_lower for kw in ["对比", "比较", "排名", "最高", "最低"]):
+            return "bar"
+        # 占比类关键词 -> 饼图
+        if any(kw in question_lower for kw in ["占比", "分布", "比例", "份额"]):
+            return "pie"
     
     # 1. 检查是否有时间相关字段 -> 折线图
-    time_keywords = ["date", "time", "month", "year", "day", "week", "quarter"]
+    time_keywords = ["date", "time", "month", "year", "day", "week", "quarter", "created", "updated"]
     if any(kw in sql_lower for kw in time_keywords):
-        if "group by" in sql_lower:
+        if "group by" in sql_lower or "extract" in sql_lower:
             return "line"
+        # 检查数据中的列名
+        if data and len(data) > 0:
+            columns = list(data[0].keys())
+            time_cols = [col for col in columns if any(kw in col.lower() for kw in time_keywords)]
+            if time_cols:
+                return "line"
     
     # 2. 检查是否是占比类查询 -> 饼图
     if "count" in sql_lower or "sum" in sql_lower:
@@ -177,7 +197,32 @@ def infer_chart_type(sql: str, data: List[Dict[str, Any]]) -> str:
     if "group by" in sql_lower:
         return "bar"
     
-    # 4. 默认返回表格
+    # 4. 检查数据特征：如果有时间序列特征，推断为折线图
+    if data and len(data) > 0:
+        columns = list(data[0].keys())
+        # 检查是否有数值列和时间相关列
+        numeric_cols = []
+        time_cols = []
+        for col in columns:
+            # 检查是否是数值列
+            try:
+                first_val = data[0].get(col)
+                if isinstance(first_val, (int, float)) or (isinstance(first_val, str) and first_val.replace('.', '').replace('-', '').isdigit()):
+                    numeric_cols.append(col)
+            except:
+                pass
+            # 检查是否是时间列
+            if any(kw in col.lower() for kw in time_keywords):
+                time_cols.append(col)
+        
+        # 如果有时间列和数值列，且数据点较多，推断为折线图
+        if time_cols and numeric_cols and len(data) >= 3:
+            return "line"
+        # 如果有数值列，推断为柱状图
+        elif numeric_cols and len(data) <= 20:
+            return "bar"
+    
+    # 5. 默认返回表格
     return "table"
 
 
@@ -187,7 +232,8 @@ def prepare_mcp_chart_request(
     title: Optional[str] = None,
     x_field: Optional[str] = None,
     y_field: Optional[str] = None,
-    chart_type: Optional[str] = None
+    chart_type: Optional[str] = None,
+    question: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], ChartConfig, Optional[Dict[str, Any]]]:
     """
     准备 ECharts MCP 的请求参数，并返回 ChartConfig 和 ECharts 选项
@@ -199,6 +245,7 @@ def prepare_mcp_chart_request(
         x_field: X轴字段（可选）
         y_field: Y轴字段（可选）
         chart_type: 图表类型（可选，不传则自动推断）
+        question: 用户原始问题（可选，用于更准确的图表类型推断）
     
     Returns:
         (mcp_data, chart_config, echarts_option) 元组
@@ -206,19 +253,19 @@ def prepare_mcp_chart_request(
         - chart_config: ChartConfig 对象
         - echarts_option: ECharts 配置选项（可选）
     """
+    # 推断图表类型（如果未指定）
+    if not chart_type or chart_type in ("table", "none"):
+        chart_type = infer_chart_type(sql, sql_result, question or "")
+    
     # 转换数据
     mcp_data, actual_x, actual_y = sql_result_to_mcp_echarts_data(
         sql_result, 
-        chart_type or "bar", 
+        chart_type, 
         x_field, 
         y_field
     )
     
-    # 推断图表类型
-    if not chart_type or chart_type in ("table", "none"):
-        chart_type = infer_chart_type(sql, sql_result)
-    
-    # 如果还是 table，就不生成图表
+    # 即使类型是 table，如果有数据也生成基础 ECharts 配置（用于前端展示）
     if chart_type == "table":
         chart_config = ChartConfig(
             chart_type=ChartType.TABLE,
@@ -226,7 +273,47 @@ def prepare_mcp_chart_request(
             x_field=actual_x,
             y_field=actual_y
         )
-        return [], chart_config, None
+        # 即使类型是 table，如果有数据也生成基础的 ECharts 配置
+        # 这样前端可以展示表格，或者如果数据适合也可以尝试绘制基础图表
+        echarts_option_for_table = None
+        if sql_result and len(sql_result) > 0:
+            # 尝试生成基础的表格展示配置
+            try:
+                # 如果有时间相关的字段，尝试推断为折线图
+                time_indicators = ['date', 'time', 'month', 'year', 'day', 'created', 'updated']
+                has_time_field = any(
+                    any(indicator in str(col).lower() for indicator in time_indicators)
+                    for col in (actual_x, actual_y)
+                )
+                
+                # 如果有数值字段，生成基础图表配置
+                if actual_y and has_time_field:
+                    echarts_option_for_table = {
+                        "title": {"text": title or "查询结果"},
+                        "tooltip": {"trigger": "axis"},
+                        "xAxis": {"type": "category", "data": [row.get(actual_x, "") for row in sql_result[:20]]},
+                        "yAxis": {"type": "value"},
+                        "series": [{
+                            "type": "line",
+                            "data": [row.get(actual_y, 0) for row in sql_result[:20]]
+                        }]
+                    }
+                elif actual_y:
+                    echarts_option_for_table = {
+                        "title": {"text": title or "查询结果"},
+                        "tooltip": {"trigger": "axis"},
+                        "xAxis": {"type": "category", "data": [str(row.get(actual_x, "")) for row in sql_result[:20]]},
+                        "yAxis": {"type": "value"},
+                        "series": [{
+                            "type": "bar",
+                            "data": [float(row.get(actual_y, 0)) for row in sql_result[:20]]
+                        }]
+                    }
+            except Exception:
+                # 如果生成失败，返回 None（保持原有行为）
+                echarts_option_for_table = None
+        
+        return [], chart_config, echarts_option_for_table
     
     # 创建 ChartConfig
     chart_type_enum = ChartType(chart_type) if chart_type in [e.value for e in ChartType] else ChartType.BAR

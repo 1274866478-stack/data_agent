@@ -21,13 +21,24 @@ if _agent_path.exists() and str(_agent_path) not in sys.path:
     sys.path.insert(0, str(_agent_path))
 
 try:
-    from sql_agent import run_agent
     from models import VisualizationResponse
+    # 优先使用新版本的 run_agent（支持 enable_echarts）
+    try:
+        from app.services.agent.agent_service import run_agent
+        _use_new_agent = True
+        logger.info("使用新版本 Agent (支持 enable_echarts)")
+    except ImportError:
+        # 回退到旧版本
+        from sql_agent import run_agent as run_agent_legacy
+        run_agent = run_agent_legacy
+        _use_new_agent = False
+        logger.info("使用旧版本 Agent (不支持 enable_echarts)")
     _agent_available = True
 except ImportError as e:
     logger.warning(f"Agent模块导入失败: {e}，Agent功能将不可用")
     _agent_available = False
     run_agent = None
+    _use_new_agent = False
     VisualizationResponse = None
 
 
@@ -166,7 +177,8 @@ def convert_agent_response_to_query_response(
             "data_columns": agent_response.data.columns if agent_response.data else [],
             "chart_type": agent_response.chart.chart_type.value if agent_response.chart else None,
             "chart_title": agent_response.chart.title if agent_response.chart else None,
-            "chart_data": chart_data  # 添加Base64编码的图表数据或URL
+            "chart_data": chart_data,  # 添加Base64编码的图表数据或URL
+            "echarts_option": agent_response.echarts_option  # 添加 ECharts 配置选项
         }
     
     response_data = {
@@ -190,7 +202,9 @@ def convert_agent_response_to_query_response(
             "error": agent_response.error
         } if not agent_response.success else None,
         "execution_result": execution_result,
-        "correction_attempts": 0
+        "correction_attempts": 0,
+        # 在顶层也添加 echarts_option，方便前端直接访问
+        "echarts_option": agent_response.echarts_option
     }
     
     return response_data
@@ -242,7 +256,8 @@ def convert_agent_response_to_chat_response(
             "chart_data": agent_response.chart.chart_image if (agent_response.chart and agent_response.chart.chart_image) else (
                 load_chart_as_base64(extract_chart_path_from_answer(agent_response.answer or "") or "") if extract_chart_path_from_answer(agent_response.answer or "") else None
             )
-        } if agent_response.chart and agent_response.chart.chart_type.value != "table" else None
+        } if agent_response.chart and agent_response.chart.chart_type.value != "table" else None,
+        "echarts_option": agent_response.echarts_option  # 添加 ECharts 配置选项
     }
     
     return response
@@ -252,7 +267,8 @@ async def run_agent_query(
     question: str,
     thread_id: str,
     database_url: Optional[str] = None,
-    verbose: bool = False
+    verbose: bool = False,
+    enable_echarts: bool = True  # 默认启用 ECharts 功能
 ) -> Optional[VisualizationResponse]:
     """
     运行Agent查询
@@ -262,6 +278,7 @@ async def run_agent_query(
         thread_id: 线程ID（用于会话管理）
         database_url: 数据库连接URL（可选，如果不提供则使用Agent配置）
         verbose: 是否显示详细输出
+        enable_echarts: 是否启用 ECharts 图表生成功能（默认启用）
     
     Returns:
         VisualizationResponse: Agent响应，如果失败则返回None
@@ -297,9 +314,31 @@ async def run_agent_query(
         # 运行Agent
         logger.info(
             "Starting underlying LangGraph Agent run",
-            extra={"thread_id": thread_id},
+            extra={"thread_id": thread_id, "enable_echarts": enable_echarts},
         )
-        response = await run_agent(question, thread_id, verbose=verbose)
+        # 根据使用的 Agent 版本调用不同的函数
+        if _use_new_agent:
+            # 新版本：需要传递 database_url，返回 Dict 包含 response 字段
+            from config import config as agent_config
+            effective_db_url = database_url or getattr(agent_config, "database_url", None)
+            if not effective_db_url:
+                logger.error("无法获取数据库连接URL")
+                return None
+            result = await run_agent(
+                question=question,
+                database_url=effective_db_url,
+                thread_id=thread_id,
+                enable_echarts=enable_echarts,
+                verbose=verbose
+            )
+            # 新版本返回 Dict，提取 response 字段（VisualizationResponse 对象）
+            if result and isinstance(result, dict) and "response" in result:
+                response = result["response"]
+            else:
+                response = None
+        else:
+            # 旧版本：不支持 enable_echarts 参数
+            response = await run_agent(question, thread_id, verbose=verbose)
         logger.info(
             "Underlying LangGraph Agent finished",
             extra={

@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     chroma_host: str = "vector_db"
     chroma_port: int = 8000
     chroma_collection_name: str = "knowledge_base"
+    enable_rag: bool = False  # 🔥 第一步修复：默认禁用RAG/ChromaDB，防止连接失败导致超时
 
     # Redis 缓存配置
     redis_url: str = "redis://localhost:6379/0"
@@ -49,7 +50,7 @@ class Settings(BaseSettings):
     zhipuai_api_key: str
     zhipuai_default_model: str = "glm-4.6"
     zhipuai_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
-    zhipuai_timeout: int = 30
+    zhipuai_timeout: int = 120  # 增加到 120 秒，防止超时
     zhipuai_max_retries: int = 3
 
     # OpenRouter 配置
@@ -57,11 +58,19 @@ class Settings(BaseSettings):
     openrouter_default_model: str = "google/gemini-2.0-flash-exp"
     openrouter_referer: Optional[str] = None  # 可选，用于OpenRouter排名
     openrouter_app_name: str = "Data Agent"  # 可选，用于OpenRouter排名
+    openrouter_timeout: int = 120  # 增加到 120 秒，防止超时
 
     # DeepSeek 配置（默认 LLM 提供商）
     deepseek_api_key: Optional[str] = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_default_model: str = "deepseek-chat"
+    deepseek_timeout: int = 120  # 增加到 120 秒，防止超时
+    
+    # Agent 执行超时配置
+    agent_execution_timeout: int = 180  # Agent 整体执行超时（秒），设置为 180 秒以应对复杂查询
+    
+    # LLM 输出 Token 限制配置
+    llm_max_output_tokens: int = 4096  # LLM 最大输出 Token 数，设置为 4096 以确保图表 JSON 完整输出
 
     # Clerk 认证配置
     clerk_jwt_public_key: Optional[str] = None  # Clerk JWT公钥（开发环境可选）

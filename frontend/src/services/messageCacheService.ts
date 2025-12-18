@@ -15,6 +15,9 @@ export interface CachedMessage {
     sources?: string[]
     reasoning?: string
     confidence?: number
+    table?: any
+    chart?: any
+    echarts_option?: Record<string, any>
   }
   syncAttempted?: number
   lastSyncAttempt?: Date

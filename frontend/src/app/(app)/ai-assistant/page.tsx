@@ -25,7 +25,7 @@ import { uploadFile, UploadProgress, fileUploadService } from '@/services/fileUp
 import { cn } from '@/lib/utils'
 import { ChatQueryResultView } from '@/components/chat/ChatQueryResultView'
 import { EChartsRenderer } from '@/components/chat/EChartsRenderer'
-import { extractEChartsOption } from '@/utils/chartParser'
+import { extractEChartsOption, removeChartMarkers } from '@/utils/chartParser'
 
 interface UploadedFile {
   file: File
@@ -712,7 +712,7 @@ export default function AIAssistantPage() {
                             <p className="text-base whitespace-pre-wrap">{message.content}</p>
                           ) : (
                             <div className="text-gray-800">
-                              <Markdown content={message.content} className="prose-base" />
+                              <Markdown content={removeChartMarkers(message.content)} className="prose-base" />
                               {/* 如果有结构化结果或图表，追加展示 */}
                               {message.metadata && (message.metadata.table || message.metadata.chart) && (
                                 <ChatQueryResultView

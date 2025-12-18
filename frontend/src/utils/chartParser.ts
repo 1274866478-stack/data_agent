@@ -15,7 +15,8 @@ export function extractEChartsOption(content: string): Record<string, any> | nul
   }
 
   // 使用正则表达式匹配 [CHART_START]...{...}[CHART_END] 模式
-  const chartPattern = /\[CHART_START\]([\s\S]*?)\[CHART_END\]/
+  // 使用贪婪匹配，支持跨行匹配，忽略 JSON 前后的多余空格
+  const chartPattern = /\[CHART_START\]\s*(\{[\s\S]*?\})\s*\[CHART_END\]/
   const match = content.match(chartPattern)
 
   if (!match) {
@@ -54,7 +55,8 @@ export function removeChartMarkers(content: string): string {
     return content
   }
 
-  const chartPattern = /\[CHART_START\]([\s\S]*?)\[CHART_END\]/g
+  // 使用贪婪匹配，支持跨行匹配，忽略 JSON 前后的多余空格
+  const chartPattern = /\[CHART_START\]\s*\{[\s\S]*?\}\s*\[CHART_END\]/g
   return content.replace(chartPattern, '').trim()
 }
 

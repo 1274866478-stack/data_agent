@@ -16,6 +16,7 @@ export interface ChatMessage {
     confidence?: number
     table?: import('@/lib/api-client').ChatQueryResultTable
     chart?: import('@/lib/api-client').ChatQueryChart
+    echarts_option?: Record<string, any>
   }
 }
 
@@ -428,6 +429,7 @@ export const useChatStore = create<ChatState>()(
               confidence: result.confidence,
               table: result.table,
               chart: result.chart,
+              echarts_option: result.echarts_option,
             }
           }
 
@@ -823,6 +825,9 @@ export const useChatStore = create<ChatState>()(
                   sources: apiResult.sources,
                   reasoning: apiResult.reasoning,
                   confidence: apiResult.confidence,
+                  table: apiResult.table,
+                  chart: apiResult.chart,
+                  echarts_option: apiResult.echarts_option,
                 }
               }
 
