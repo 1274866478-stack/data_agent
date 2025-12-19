@@ -63,7 +63,12 @@ services:
       - ./backend:/app
       # 挂载 Agent 目录到容器根目录，供 agent_service.py 导入 sql_agent 等模块
       - ./Agent:/Agent
-      - backend_uploads:/app/uploads
+      # 🔧 修复：使用本地目录映射，确保上传文件持久化且易于访问
+      # 如果使用命名卷 backend_uploads，文件会存储在Docker内部，不易访问
+      # 改为本地目录映射后，文件直接存储在 ./data_storage 目录中
+      - ./data_storage:/app/uploads
+      # 挂载本地 scripts 目录到容器内的 /app/data，供 Agent 读取本地数据文件
+      - ./scripts:/app/data
     ports:
       - "8004:8000"
     depends_on:
@@ -165,8 +170,7 @@ volumes:
     driver: local
   chroma_data:
     driver: local
-  backend_uploads:
-    driver: local
+  # 注意：backend_uploads 已移除，改用本地目录映射 ./data_storage:/app/uploads
 
 networks:
   dataagent-network:

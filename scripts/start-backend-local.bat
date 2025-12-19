@@ -75,5 +75,6 @@ echo 按 Ctrl+C 停止服务
 echo ========================================
 echo.
 
-uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8004
+REM 🔥 Token Expansion: 增加 --timeout-keep-alive 到 300 秒以支持长文本生成
+uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8004 --timeout-keep-alive 300
 

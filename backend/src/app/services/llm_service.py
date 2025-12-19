@@ -157,7 +157,7 @@ class ZhipuProvider(BaseLLMProvider):
         """智谱AI聊天完成"""
         try:
             model = model or self.default_model
-            max_tokens = max_tokens or 4000
+            max_tokens = max_tokens or getattr(settings, "llm_max_output_tokens", 8192)
             temperature = temperature if temperature is not None else 0.7
 
             # 智能思考模式判断
@@ -320,7 +320,7 @@ class DeepSeekProvider(BaseLLMProvider):
         """DeepSeek聊天完成"""
         try:
             model = model or self.default_model
-            max_tokens = max_tokens or 4000
+            max_tokens = max_tokens or getattr(settings, "llm_max_output_tokens", 8192)
             temperature = temperature if temperature is not None else 0.7
 
             # 转换消息格式
@@ -462,7 +462,7 @@ class OpenRouterProvider(BaseLLMProvider):
         """OpenRouter聊天完成"""
         try:
             model = model or self.default_model
-            max_tokens = max_tokens or 4000
+            max_tokens = max_tokens or getattr(settings, "llm_max_output_tokens", 8192)
             temperature = temperature if temperature is not None else 0.7
 
             # 转换消息格式

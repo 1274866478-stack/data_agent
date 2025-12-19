@@ -31,6 +31,8 @@ class QueryResponseV3(BaseModel):
     execution_result: Optional[Dict[str, Any]] = Field(None, description="执行结果")
     correction_attempts: int = Field(0, description="纠正尝试次数")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="时间戳")
+    # 🔴 第三道防线：添加metadata字段，包含工具调用状态和错误信息
+    metadata: Optional[Dict[str, Any]] = Field(None, description="元数据，包含工具调用状态、推理过程等信息")
 
 
 class QueryStatusResponse(BaseModel):

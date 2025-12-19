@@ -162,6 +162,20 @@ def get_pool_status() -> dict:
             }
             invalid_count = 0
         
+        # 尝试获取 max_overflow（SQLAlchemy 2.0 兼容性修复）
+        max_overflow = 0
+        try:
+            if hasattr(pool, 'max_overflow'):
+                max_overflow = pool.max_overflow
+            elif hasattr(pool, '_max_overflow'):
+                max_overflow = pool._max_overflow
+            else:
+                # 如果无法获取，使用配置中的值
+                max_overflow = getattr(settings, 'database_max_overflow', 0)
+        except (AttributeError, TypeError) as e:
+            logger.warning(f"无法获取 max_overflow 属性: {e}，使用默认值 0")
+            max_overflow = getattr(settings, 'database_max_overflow', 0)
+        
         pool_status = {
             "database_type": "postgresql",
             "pool_size": pool_info["size"],
@@ -170,7 +184,7 @@ def get_pool_status() -> dict:
             "overflow": pool_info["overflow"],
             "invalid": invalid_count,
             "total_connections": pool_info["checkedout"] + pool_info["checkedin"],
-            "pool_size_limit": pool_info["size"] + pool.max_overflow,
+            "pool_size_limit": pool_info["size"] + max_overflow,
             "status": "healthy",
         }
 

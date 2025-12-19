@@ -181,13 +181,23 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
 
         if db_type in ["xlsx", "xls"]:
             # 读取所有Sheet
-            excel_file = pd.ExcelFile(io.BytesIO(file_data))
+            try:
+                # 显式指定 engine='openpyxl' 以确保正确读取
+                excel_file = pd.ExcelFile(io.BytesIO(file_data), engine='openpyxl')
+            except ImportError as e:
+                logger.error(f"System Error: Missing dependency 'openpyxl'. {str(e)}")
+                return {}
+            except Exception as e:
+                logger.error(f"Execution Error: Failed to read Excel file. {str(e)}")
+                return {}
+            
             sheet_names = excel_file.sheet_names
             logger.info(f"Excel文件包含 {len(sheet_names)} 个Sheet: {sheet_names}")
 
             for sheet_name in sheet_names:
                 try:
-                    df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                    # 显式指定 engine='openpyxl'
+                    df = pd.read_excel(excel_file, sheet_name=sheet_name, engine='openpyxl')
                     if df.empty:
                         logger.debug(f"跳过空Sheet: {sheet_name}")
                         continue
@@ -305,13 +315,23 @@ async def _try_get_file_schema_fallback(tenant_id: str, data_source_id: str, db_
 
                     if db_type in ["xlsx", "xls"]:
                         # 读取所有Sheet
-                        excel_file = pd.ExcelFile(io.BytesIO(file_data))
+                        try:
+                            # 显式指定 engine='openpyxl' 以确保正确读取
+                            excel_file = pd.ExcelFile(io.BytesIO(file_data), engine='openpyxl')
+                        except ImportError as e:
+                            logger.error(f"System Error: Missing dependency 'openpyxl'. {str(e)}")
+                            continue  # 尝试下一个路径
+                        except Exception as e:
+                            logger.error(f"Execution Error: Failed to read Excel file. {str(e)}")
+                            continue  # 尝试下一个路径
+                        
                         sheet_names = excel_file.sheet_names
                         logger.info(f"备选方案: Excel包含 {len(sheet_names)} 个Sheet: {sheet_names}")
 
                         for sheet_name in sheet_names:
                             try:
-                                df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                                # 显式指定 engine='openpyxl'
+                                df = pd.read_excel(excel_file, sheet_name=sheet_name, engine='openpyxl')
                                 if df.empty:
                                     continue
                                 table_schema = _build_table_schema(df, sheet_name)
@@ -872,13 +892,35 @@ async def _execute_sql_on_file_datasource(
 
         if db_type in ["xlsx", "xls"]:
             # 读取所有Sheet并注册为不同的表
-            excel_file = pd.ExcelFile(io.BytesIO(file_data))
+            try:
+                # 显式指定 engine='openpyxl' 以确保正确读取
+                excel_file = pd.ExcelFile(io.BytesIO(file_data), engine='openpyxl')
+            except ImportError as e:
+                conn.close()
+                return {
+                    "success": False,
+                    "error": f"System Error: Missing dependency 'openpyxl'. Please install it: pip install openpyxl. Original error: {str(e)}",
+                    "data": [],
+                    "columns": [],
+                    "row_count": 0
+                }
+            except Exception as e:
+                conn.close()
+                return {
+                    "success": False,
+                    "error": f"Execution Error: Failed to read Excel file. {str(e)}",
+                    "data": [],
+                    "columns": [],
+                    "row_count": 0
+                }
+            
             sheet_names = excel_file.sheet_names
             logger.info(f"Excel包含 {len(sheet_names)} 个Sheet: {sheet_names}")
 
             for sheet_name in sheet_names:
                 try:
-                    df = pd.read_excel(excel_file, sheet_name=sheet_name)
+                    # 显式指定 engine='openpyxl'
+                    df = pd.read_excel(excel_file, sheet_name=sheet_name, engine='openpyxl')
                     if df.empty:
                         logger.debug(f"跳过空Sheet: {sheet_name}")
                         continue
@@ -908,13 +950,15 @@ async def _execute_sql_on_file_datasource(
             # 如果第一个Sheet存在，也用数据源名称注册（向后兼容）
             if sheet_names:
                 try:
-                    first_df = pd.read_excel(excel_file, sheet_name=0)
+                    # 显式指定 engine='openpyxl'
+                    first_df = pd.read_excel(excel_file, sheet_name=0, engine='openpyxl')
                     if not first_df.empty:
                         ds_table_name = re.sub(r'[^\w\u4e00-\u9fff]', '_', data_source_name)
                         if ds_table_name not in registered_tables:
                             conn.register(ds_table_name, first_df)
                             registered_tables.append(ds_table_name)
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"注册数据源名称表失败: {e}")
                     pass
 
         elif db_type == "csv":
@@ -1874,7 +1918,7 @@ async def test_intelligent_params(
                 messages=case["messages"],
                 enable_thinking=None,  # 自动判断
                 temperature=complexity.get("recommend_temperature", 0.7),
-                max_tokens=complexity.get("recommend_max_tokens", 4000)
+                max_tokens=complexity.get("recommend_max_tokens", getattr(settings, "llm_max_output_tokens", 8192))
             )
 
             results.append({
@@ -2041,7 +2085,7 @@ async def test_all_features(
             stream=False,
             enable_thinking=None,  # 自动启用思考模式
             temperature=complexity_analysis.get("recommend_temperature", 0.7),
-            max_tokens=complexity_analysis.get("recommend_max_tokens", 6000)
+            max_tokens=complexity_analysis.get("recommend_max_tokens", getattr(settings, "llm_max_output_tokens", 8192))
         )
 
         # 获取可用模型列表

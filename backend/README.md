@@ -103,10 +103,12 @@ cp .env.example .env
 ### 启动应用
 ```bash
 # 开发模式
-uvicorn src.app.main:app --host 0.0.0.0 --port 8000 --reload
+# 🔥 Token Expansion: 增加 --timeout-keep-alive 到 300 秒以支持长文本生成
+uvicorn src.app.main:app --host 0.0.0.0 --port 8000 --reload --timeout-keep-alive 300
 
 # 生产模式
-gunicorn src.app.main:app -w 4 -k uvicorn.workers.UvicornWorker
+# 🔥 Token Expansion: 增加 --timeout 到 300 秒以支持长文本生成
+gunicorn src.app.main:app -w 4 -k uvicorn.workers.UvicornWorker --timeout 300
 ```
 
 ### Docker 部署

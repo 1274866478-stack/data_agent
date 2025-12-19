@@ -54,7 +54,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Development command with hot reload
-CMD ["uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug"]
+# 🔥 Token Expansion: 增加 --timeout-keep-alive 到 300 秒以支持长文本生成
+CMD ["uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug", "--timeout-keep-alive", "300"]
 
 # Production stage
 FROM base AS production
@@ -82,4 +83,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Production command
-CMD ["uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# 🔥 Token Expansion: 增加 --timeout-keep-alive 到 300 秒以支持长文本生成
+CMD ["uvicorn", "src.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--timeout-keep-alive", "300"]

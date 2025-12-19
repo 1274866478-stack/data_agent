@@ -181,6 +181,13 @@ def convert_agent_response_to_query_response(
             "echarts_option": agent_response.echarts_option  # 添加 ECharts 配置选项
         }
     
+    # 🔴 第三道防线：提取metadata（如果存在）
+    metadata = None
+    if hasattr(agent_response, "metadata") and agent_response.metadata:
+        metadata = agent_response.metadata
+    elif hasattr(agent_response, "__dict__") and "metadata" in agent_response.__dict__:
+        metadata = agent_response.__dict__["metadata"]
+    
     response_data = {
         "query_id": query_id,
         "tenant_id": tenant_id,
@@ -204,7 +211,9 @@ def convert_agent_response_to_query_response(
         "execution_result": execution_result,
         "correction_attempts": 0,
         # 在顶层也添加 echarts_option，方便前端直接访问
-        "echarts_option": agent_response.echarts_option
+        "echarts_option": agent_response.echarts_option,
+        # 🔴 第三道防线：添加metadata供前端使用
+        "metadata": metadata
     }
     
     return response_data
@@ -334,6 +343,10 @@ async def run_agent_query(
             # 新版本返回 Dict，提取 response 字段（VisualizationResponse 对象）
             if result and isinstance(result, dict) and "response" in result:
                 response = result["response"]
+                # 🔴 第三道防线：将metadata附加到response对象
+                if "metadata" in result:
+                    # 将metadata作为属性附加到response对象
+                    response.metadata = result["metadata"]
             else:
                 response = None
         else:

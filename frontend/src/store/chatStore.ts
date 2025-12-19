@@ -405,6 +405,26 @@ export const useChatStore = create<ChatState>()(
             connection_id: finalConnectionId,
           }
 
+          // 🔍 诊断：记录数据源选择信息
+          console.log('🔍 [数据源诊断] 前端发送请求时的数据源信息:')
+          console.log('  - 用户选择的数据源IDs:', normalizedDataSourceIds)
+          console.log('  - 最终使用的 connection_id:', finalConnectionId)
+          console.log('  - context.data_sources:', queryRequest.context?.data_sources)
+          if (normalizedDataSourceIds && normalizedDataSourceIds.length > 0) {
+            try {
+              const { useDataSourceStore } = await import('@/store/dataSourceStore')
+              const dataSourceStore = useDataSourceStore.getState()
+              const tenantId = 'default_tenant'
+              const allSources = await dataSourceStore.fetchDataSources(tenantId, { active_only: true })
+              const selectedSources = allSources.filter(ds => normalizedDataSourceIds.includes(ds.id))
+              console.log('  - 选中的数据源详情:')
+              selectedSources.forEach((ds, idx) => {
+                console.log(`    [${idx+1}] ID: ${ds.id}, 名称: ${ds.name}, 类型: ${ds.db_type}, 状态: ${ds.status}`)
+              })
+            } catch (error) {
+              console.warn('  - 无法获取数据源详情:', error)
+            }
+          }
           console.log('[ChatStore] 准备调用 API, request:', queryRequest)
           const response = await api.chat.sendQuery(queryRequest)
           console.log('[ChatStore] API 响应:', response)

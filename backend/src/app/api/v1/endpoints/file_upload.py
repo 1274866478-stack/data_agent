@@ -103,14 +103,27 @@ async def process_csv_file(file_path: str, table_name: str) -> pd.DataFrame:
 
 async def process_excel_file(file_path: str, table_name: str) -> pd.DataFrame:
     """处理Excel文件"""
+    import os
+    
+    # 1. 检查文件是否存在
+    if not os.path.exists(file_path):
+        error_msg = f"System Error: File not found at path {file_path}. Please check file upload."
+        logger.error(error_msg)
+        raise HTTPException(status_code=400, detail=error_msg)
+    
     try:
-        # 读取Excel文件（默认读取第一个sheet）
-        df = pd.read_excel(file_path, sheet_name=0)
+        # 2. 尝试读取 (显式指定 engine='openpyxl')
+        df = pd.read_excel(file_path, sheet_name=0, engine='openpyxl')
         logger.info(f"成功读取Excel文件，行数: {len(df)}")
         return df
+    except ImportError as e:
+        error_msg = f"System Error: Missing dependency 'openpyxl'. Please install it: pip install openpyxl. Original error: {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
     except Exception as e:
+        error_msg = f"Execution Error: Failed to read Excel file. {str(e)}"
         logger.error(f"处理Excel文件失败: {e}")
-        raise HTTPException(status_code=400, detail=f"处理Excel文件失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=error_msg)
 
 
 async def process_sqlite_file(file_path: str) -> dict:

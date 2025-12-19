@@ -43,6 +43,7 @@ from .tools import (
     get_table_schema,
     list_available_tables,
     set_mcp_client,
+    analyze_dataframe,
 )
 from .examples import load_golden_examples
 
@@ -173,9 +174,14 @@ class MCPClientWrapper:
                     kwargs = {}
                 if hasattr(tool, "ainvoke"):
                     try:
-                        return await tool.ainvoke(tool_input, **kwargs)
+                        result = await tool.ainvoke(tool_input, **kwargs)
+                        # 🔴 第一道防线：检查空数据
+                        if result is None or result == "" or (isinstance(result, (list, dict)) and len(result) == 0):
+                            logger.warning(f"⚠️ [第一道防线] 工具 {getattr(tool, 'name', 'unknown')} 返回空数据")
+                            return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+                        return result
                     except BaseException as e:
-                        # Catch all exceptions including ExceptionGroup
+                        # 🔴 第一道防线：异常处理 - 返回特定错误字符串
                         error_msg = str(e)
                         # Extract underlying exception if it's an ExceptionGroup
                         if hasattr(e, "exceptions") and e.exceptions:
@@ -188,14 +194,21 @@ class MCPClientWrapper:
                                 error_msg = f"Tool execution failed: {str(e.__cause__)}"
                             else:
                                 error_msg = "Tool execution failed: 工具执行过程中发生错误"
-                        logger.error(f"Tool async execution failed: {error_msg}", exc_info=True)
-                        return f"Error executing tool: {error_msg}"
+                        logger.error(f"⚠️ [第一道防线] 工具执行异常: {error_msg}", exc_info=True)
+                        # 返回特定错误字符串，强制LLM停止生成答案
+                        return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
                 if hasattr(tool, "invoke"):
                     try:
-                        return await asyncio.to_thread(tool.invoke, tool_input, **kwargs)
+                        result = await asyncio.to_thread(tool.invoke, tool_input, **kwargs)
+                        # 🔴 第一道防线：检查空数据
+                        if result is None or result == "" or (isinstance(result, (list, dict)) and len(result) == 0):
+                            logger.warning(f"⚠️ [第一道防线] 工具 {getattr(tool, 'name', 'unknown')} 返回空数据")
+                            return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+                        return result
                     except Exception as e:
-                        logger.error(f"Tool thread execution failed: {e}", exc_info=True)
-                        return f"Error executing tool: {str(e)}"
+                        logger.error(f"⚠️ [第一道防线] 工具线程执行异常: {e}", exc_info=True)
+                        # 返回特定错误字符串，强制LLM停止生成答案
+                        return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
                 raise RuntimeError("Tool has neither invoke nor ainvoke")
 
         wrapped = SyncAdapter()
@@ -284,8 +297,8 @@ def create_llm(
             api_key=api_key or getattr(settings, "zhipuai_api_key", ""),
             base_url=base_url or getattr(settings, "zhipuai_base_url", "https://open.bigmodel.cn/api/paas/v4"),
             temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
-            timeout=getattr(settings, "zhipuai_timeout", 120),  # 🔥 第二步修复：增加超时时间到 120 秒
-            max_tokens=getattr(settings, "llm_max_output_tokens", 4096),  # 🔥 增加最大输出 Token 限制，确保图表 JSON 完整输出
+            timeout=getattr(settings, "zhipuai_timeout", 300),  # 🔥 Token Expansion: 增加超时时间到 300 秒（5分钟）以支持长文本生成
+            max_tokens=getattr(settings, "llm_max_output_tokens", 8192),  # 🔥 Token Expansion: 提升最大输出 Token 限制到 8192，确保完整的 ECharts JSON 配置输出
         )
 
     if provider == "openrouter":
@@ -294,8 +307,8 @@ def create_llm(
             api_key=api_key or getattr(settings, "openrouter_api_key", ""),
             base_url=base_url or getattr(settings, "openrouter_base_url", "https://openrouter.ai/api/v1"),
             temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
-            timeout=getattr(settings, "openrouter_timeout", 120),  # 🔥 第二步修复：增加超时时间到 120 秒
-            max_tokens=getattr(settings, "llm_max_output_tokens", 4096),  # 🔥 增加最大输出 Token 限制，确保图表 JSON 完整输出
+            timeout=getattr(settings, "openrouter_timeout", 300),  # 🔥 Token Expansion: 增加超时时间到 300 秒（5分钟）以支持长文本生成
+            max_tokens=getattr(settings, "llm_max_output_tokens", 8192),  # 🔥 Token Expansion: 提升最大输出 Token 限制到 8192，确保完整的 ECharts JSON 配置输出
         )
 
     # default: deepseek
@@ -304,8 +317,8 @@ def create_llm(
         api_key=api_key or getattr(settings, 'DEEPSEEK_API_KEY', ''),
         base_url=base_url or getattr(settings, 'DEEPSEEK_BASE_URL', 'https://api.deepseek.com'),
         temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
-        timeout=getattr(settings, "deepseek_timeout", 120),  # 🔥 第二步修复：增加超时时间到 120 秒
-        max_tokens=getattr(settings, "llm_max_output_tokens", 4096),  # 🔥 增加最大输出 Token 限制，确保图表 JSON 完整输出
+        timeout=getattr(settings, "deepseek_timeout", 300),  # 🔥 Token Expansion: 增加超时时间到 300 秒（5分钟）以支持长文本生成
+        max_tokens=getattr(settings, "llm_max_output_tokens", 8192),  # 🔥 Token Expansion: 提升最大输出 Token 限制到 8192，确保完整的 ECharts JSON 配置输出
     )
 
 
@@ -407,12 +420,106 @@ def _wrap_tool_for_langgraph(t: BaseTool) -> BaseTool:
             if tool_input is None:
                 tool_input = {}
             if hasattr(t, "ainvoke"):
-                return await t.ainvoke(tool_input, **kwargs)
+                try:
+                    result = await t.ainvoke(tool_input, **kwargs)
+                    # 🔴 第一道防线：检查空数据
+                    if result is None or result == "" or (isinstance(result, (list, dict)) and len(result) == 0):
+                        logger.warning(f"⚠️ [第一道防线] 工具 {getattr(t, 'name', 'unknown')} 返回空数据")
+                        return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+                    return result
+                except Exception as e:
+                    logger.error(f"⚠️ [第一道防线] 工具执行异常: {e}", exc_info=True)
+                    return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
             if hasattr(t, "invoke"):
-                return await asyncio.to_thread(t.invoke, tool_input, **kwargs)
+                try:
+                    result = await asyncio.to_thread(t.invoke, tool_input, **kwargs)
+                    # 🔴 第一道防线：检查空数据
+                    if result is None or result == "" or (isinstance(result, (list, dict)) and len(result) == 0):
+                        logger.warning(f"⚠️ [第一道防线] 工具 {getattr(t, 'name', 'unknown')} 返回空数据")
+                        return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+                    return result
+                except Exception as e:
+                    logger.error(f"⚠️ [第一道防线] 工具线程执行异常: {e}", exc_info=True)
+                    return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
             raise RuntimeError("Tool has neither invoke nor ainvoke")
 
     return WrappedTool()
+
+
+def _wrap_inspect_file_tool(t: BaseTool) -> BaseTool:
+    """
+    Special wrapper for inspect_file tool that returns specific error message
+    when file cannot be read or result is empty.
+    """
+    class WrappedInspectFileTool(BaseTool):
+        name: str = t.name
+        description: str = getattr(t, "description", "")
+        args_schema: Optional[type] = getattr(t, "args_schema", None)
+
+        def _run(self, tool_input=None, *args, **kwargs):
+            if kwargs:
+                if tool_input is None:
+                    tool_input = kwargs
+                elif isinstance(tool_input, dict):
+                    tool_input = {**tool_input, **kwargs}
+                kwargs = {}
+            if tool_input is None:
+                tool_input = {}
+            try:
+                if hasattr(t, "ainvoke"):
+                    try:
+                        result = asyncio.run(t.ainvoke(tool_input, **kwargs))
+                    except RuntimeError:
+                        result = anyio.from_thread.run(t.ainvoke, tool_input, **kwargs)
+                elif hasattr(t, "invoke"):
+                    result = t.invoke(tool_input, **kwargs)
+                else:
+                    raise RuntimeError("Tool has neither invoke nor ainvoke")
+                
+                # 🔴 第一道防线：检查空数据或错误
+                if result is None or result == "" or (isinstance(result, (list, dict)) and len(result) == 0):
+                    logger.warning(f"⚠️ [第一道防线] inspect_file 返回空数据")
+                    return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+                # 检查是否是错误信息
+                if isinstance(result, str) and (result.startswith("错误") or result.startswith("Error") or "失败" in result or "not found" in result.lower() or "不存在" in result):
+                    logger.warning(f"⚠️ [第一道防线] inspect_file 返回错误: {result}")
+                    return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+                return result
+            except Exception as e:
+                logger.error(f"⚠️ [第一道防线] inspect_file 执行异常: {e}", exc_info=True)
+                return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+
+        async def _arun(self, tool_input=None, *args, **kwargs):
+            if kwargs:
+                if tool_input is None:
+                    tool_input = kwargs
+                elif isinstance(tool_input, dict):
+                    tool_input = {**tool_input, **kwargs}
+                kwargs = {}
+            if tool_input is None:
+                tool_input = {}
+            try:
+                if hasattr(t, "ainvoke"):
+                    result = await t.ainvoke(tool_input, **kwargs)
+                elif hasattr(t, "invoke"):
+                    result = await asyncio.to_thread(t.invoke, tool_input, **kwargs)
+                else:
+                    raise RuntimeError("Tool has neither invoke nor ainvoke")
+                
+                # 🔴 第一道防线：检查空数据或错误
+                if result is None or result == "" or (isinstance(result, (list, dict)) and len(result) == 0):
+                    logger.warning(f"⚠️ [第一道防线] inspect_file 返回空数据")
+                    return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+                # 检查是否是错误信息
+                if isinstance(result, str) and (result.startswith("错误") or result.startswith("Error") or "失败" in result or "not found" in result.lower() or "不存在" in result):
+                    logger.warning(f"⚠️ [第一道防线] inspect_file 返回错误: {result}")
+                    return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+                return result
+            except Exception as e:
+                logger.error(f"⚠️ [第一道防线] inspect_file 执行异常: {e}", exc_info=True)
+                return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+
+    return WrappedInspectFileTool()
 
 
 def create_secure_tools(mcp_tools: List[BaseTool]) -> List[BaseTool]:
@@ -420,7 +527,8 @@ def create_secure_tools(mcp_tools: List[BaseTool]) -> List[BaseTool]:
     Wrap MCP tools with security layer.
 
     The 'query' tool is replaced with our sanitized version.
-    Other tools pass through with logging.
+    File data source tools (analyze_dataframe, inspect_file) are replaced with custom versions
+    that handle MinIO file paths correctly.
 
     Args:
         mcp_tools: Raw tools from MCP client
@@ -440,8 +548,16 @@ def create_secure_tools(mcp_tools: List[BaseTool]) -> List[BaseTool]:
             secure_tools.append(_wrap_tool_for_langgraph(get_table_schema))
         elif tool.name == "list_tables":
             secure_tools.append(_wrap_tool_for_langgraph(list_available_tables))
+        elif tool.name == "analyze_dataframe":
+            # Replace with our custom version that handles MinIO file paths
+            logger.info("Replacing 'analyze_dataframe' tool with custom MinIO-aware version")
+            secure_tools.append(_wrap_tool_for_langgraph(analyze_dataframe))
+        elif tool.name == "inspect_file":
+            # Replace with special wrapper that returns specific error message
+            logger.info("Replacing 'inspect_file' tool with anti-hallucination wrapper")
+            secure_tools.append(_wrap_inspect_file_tool(tool))
         else:
-            # Pass through other tools (e.g., echarts)
+            # Pass through other tools (e.g., echarts, etc.)
             logger.info(f"Passing through tool: {tool.name}")
             secure_tools.append(_wrap_tool_for_langgraph(tool))
 
@@ -737,8 +853,12 @@ async def run_agent(
 
                                 # Extract SQL from tool calls
                                 if msg.tool_calls:
+                                    # 🔍 详细记录工具调用（用于诊断编造数据问题）
+                                    logger.info(f"🔍 [AI工具调用] 共 {len(msg.tool_calls)} 个工具调用")
                                     for tc in msg.tool_calls:
                                         tool_name = tc.get("name", "unknown")
+                                        tool_args = tc.get("args", {})
+                                        logger.info(f"🔍 [AI工具调用] 工具: {tool_name}, 参数: {tool_args}")
                                         if verbose:
                                             logger.debug(f"AI tool call: {tool_name}")
                                         
@@ -755,6 +875,18 @@ async def run_agent(
                                 try:
                                     content = msg.content
                                     tool_name = getattr(msg, 'name', None) or 'unknown'
+                                    
+                                    # 🔍 详细记录工具调用结果（用于诊断编造数据问题）
+                                    logger.info(f"🔍 [工具调用结果] 工具名: {tool_name}")
+                                    logger.info(f"🔍 [工具调用结果] 内容类型: {type(content)}")
+                                    if isinstance(content, str):
+                                        content_preview = content[:500] if len(content) > 500 else content
+                                        logger.info(f"🔍 [工具调用结果] 内容预览: {content_preview}")
+                                        # 检查是否包含错误信息
+                                        if "错误" in content or "Error" in content or "失败" in content:
+                                            logger.warning(f"⚠️ [工具调用结果] 工具返回了错误信息: {content[:200]}")
+                                    else:
+                                        logger.info(f"🔍 [工具调用结果] 内容: {str(content)[:500]}")
                                     
                                     # Log tool message for debugging
                                     if verbose:
@@ -1062,6 +1194,100 @@ async def run_agent(
             if not executed_sql:
                 logger.warning(f"⚠️ 无法从 tool_calls 或文本内容中提取 SQL。final_content 长度: {len(final_content)}, has_tool_calls: {has_tool_calls}")
 
+        # 🔥 关键修复：检查文件数据源是否调用了必要的工具
+        # 如果 database_url 是文件类型（file://开头或容器内绝对路径），但LLM没有调用 inspect_file 或 analyze_dataframe，强制返回错误
+        logger.info(f"🔍 [文件数据源检查] 开始检查 - database_url类型: {type(database_url)}, database_url值: {database_url}")
+        
+        # 🔧 改进：支持多种文件路径格式
+        is_file_datasource = False
+        if database_url:
+            # 检查是否是文件路径格式
+            is_file_datasource = (
+                database_url.startswith("file://") or  # MinIO路径格式
+                database_url.startswith("/app/uploads/") or  # 容器内绝对路径
+                database_url.startswith("/app/data/") or  # 容器内数据路径
+                database_url.endswith((".xlsx", ".xls", ".csv")) or  # 直接以扩展名结尾
+                ".xlsx" in database_url or ".xls" in database_url or ".csv" in database_url  # 路径中包含扩展名
+            )
+        
+        logger.info(f"🔍 [文件数据源检查] database_url: {database_url}, is_file_datasource: {is_file_datasource}, final_content长度: {len(final_content) if final_content else 0}")
+        
+        if is_file_datasource:
+            # 检查是否调用了文件工具
+            has_inspect_file = False
+            has_analyze_dataframe = False
+            logger.info(f"🔍 [文件数据源检查] 开始检查工具调用，all_messages 数量: {len(all_messages)}")
+            for msg in all_messages:
+                if isinstance(msg, AIMessage):
+                    tool_calls = getattr(msg, 'tool_calls', None)
+                    if tool_calls:
+                        logger.info(f"🔍 [文件数据源检查] 找到 AIMessage 包含 tool_calls: {len(tool_calls)} 个")
+                        for tc in tool_calls:
+                            # 处理不同的 tool_calls 格式
+                            if isinstance(tc, dict):
+                                tool_name = tc.get("name", "").lower()
+                            elif hasattr(tc, 'name'):
+                                tool_name = str(tc.name).lower()
+                            else:
+                                tool_name = str(tc).lower()
+                            logger.info(f"🔍 [文件数据源检查] 工具名称: {tool_name}")
+                            if "inspect_file" in tool_name or "get_column_info" in tool_name:
+                                has_inspect_file = True
+                                logger.info(f"✅ [文件数据源检查] 检测到 inspect_file 调用")
+                            if "analyze_dataframe" in tool_name or "python_interpreter" in tool_name:
+                                has_analyze_dataframe = True
+                                logger.info(f"✅ [文件数据源检查] 检测到 analyze_dataframe 调用")
+            logger.info(f"🔍 [文件数据源检查] 工具调用状态 - inspect_file: {has_inspect_file}, analyze_dataframe: {has_analyze_dataframe}")
+            
+            # 🔧 改进：更严格的检查逻辑
+            # 如果LLM没有调用必要的文件工具，但生成了答案，强制返回错误
+            logger.info(f"🔍 [文件数据源检查] 检查条件 - has_inspect_file: {has_inspect_file}, has_analyze_dataframe: {has_analyze_dataframe}, final_content长度: {len(final_content) if final_content else 0}")
+            
+            # 🚨 关键修复：如果没有任何工具调用，且生成了答案，直接判定为幻觉
+            if not has_inspect_file and not has_analyze_dataframe:
+                if final_content and len(final_content.strip()) > 50:  # 如果生成了较长的答案
+                    # 检查答案中是否包含数据（如用户名称列表、统计数据等），如果是，说明是幻觉数据
+                    # 扩展可疑关键词列表，包含更多常见的测试数据
+                    suspicious_keywords = [
+                        # 中文测试数据（扩展列表）
+                        "张三", "李四", "王五", "赵六", "钱七", "孙七", "周八", "吴九", "郑十",
+                        # 英文测试数据
+                        "John Doe", "Jane Smith", "Bob Johnson", "Alice", "Bob", "Charlie", 
+                        "David", "Eve", "Frank", "Grace", "Henry", "Irene", "Jack",
+                        # 其他常见测试名字
+                        "Test User", "Sample User", "Demo User",
+                        # 常见的幻觉数据模式
+                        "平均消费金额", "VIP 等级", "order_id", "user_id", "product_id"
+                    ]
+                    has_suspicious_data = any(keyword in final_content for keyword in suspicious_keywords)
+                    
+                    # 更严格的检查：如果包含数据相关的关键词，且没有调用工具
+                    is_data_query = (
+                        ("用户" in final_content and "名称" in final_content) or 
+                        ("users" in final_content.lower() and "name" in final_content.lower()) or
+                        ("列名" in final_content or "工作表" in final_content) or
+                        ("列" in final_content and "统计" in final_content) or
+                        ("VIP" in final_content and "等级" in final_content) or
+                        ("平均" in final_content and "金额" in final_content)
+                    )
+                    
+                    # 🚨 关键修复：如果生成了答案但没有调用工具，直接判定为幻觉
+                    if has_suspicious_data or is_data_query or len(final_content) > 200:
+                        logger.error(f"🚨 [文件数据源检查] LLM没有调用文件工具但生成了答案，疑似幻觉数据！")
+                        logger.error(f"   调用了 inspect_file: {has_inspect_file}, 调用了 analyze_dataframe: {has_analyze_dataframe}")
+                        logger.error(f"   答案内容预览: {final_content[:500]}...")
+                        logger.error(f"   包含可疑关键词: {has_suspicious_data}, 是数据查询: {is_data_query}, 答案长度: {len(final_content)}")
+                        # 强制返回错误
+                        cleaned_content = "无法读取数据文件，请检查上传路径。系统检测到未调用必要的文件工具（inspect_file 或 analyze_dataframe），无法验证数据真实性。请确保文件已正确上传。"
+                        final_content = cleaned_content
+                        query_results = None
+                    else:
+                        logger.warning(f"⚠️ [文件数据源检查] LLM没有调用文件工具，但答案看起来不是数据查询，暂不拦截")
+                else:
+                    logger.info(f"ℹ️ [文件数据源检查] LLM没有调用文件工具，但也没有生成答案或答案很短，暂不拦截")
+            else:
+                logger.info(f"✅ [文件数据源检查] LLM已调用必要的文件工具，检查通过")
+
         # 🔥 关键修复：如果LLM没有执行SQL查询，但提供了SQL（无论是通过工具调用还是文本），强制执行它
         if not query_results and executed_sql:
             logger.warning(f"⚠️ LLM提供了SQL但没有执行查询（或查询未返回结果），强制自动执行SQL...")
@@ -1211,6 +1437,41 @@ async def run_agent(
             # Don't set chart_image to None explicitly - let it remain None
             # Frontend will handle missing chart_image gracefully
 
+        # 🔴 第一道防线：检测工具调用失败
+        tool_error_detected = False
+        tool_calls_info = []
+        
+        # 检查所有工具消息，看是否有SYSTEM ERROR
+        for msg in all_messages:
+            if isinstance(msg, ToolMessage):
+                content = msg.content
+                tool_name = getattr(msg, 'name', None) or 'unknown'
+                if isinstance(content, str) and 'SYSTEM ERROR' in content:
+                    tool_error_detected = True
+                    tool_calls_info.append({
+                        "name": tool_name,
+                        "status": "error",
+                        "error": "工具执行失败或返回空数据"
+                    })
+                    logger.warning(f"⚠️ [第一道防线] 检测到工具调用失败: {tool_name}")
+                elif isinstance(content, str) and ('错误' in content or 'Error' in content or '失败' in content):
+                    # 检查是否是错误信息（但不是SYSTEM ERROR）
+                    tool_calls_info.append({
+                        "name": tool_name,
+                        "status": "error",
+                        "error": content[:100]
+                    })
+                else:
+                    tool_calls_info.append({
+                        "name": tool_name,
+                        "status": "success"
+                    })
+        
+        # 检查最终回答中是否包含SYSTEM ERROR
+        if cleaned_content and 'SYSTEM ERROR' in cleaned_content:
+            tool_error_detected = True
+            logger.warning("⚠️ [第一道防线] 最终回答中包含SYSTEM ERROR")
+
         response = VisualizationResponse(
             answer=cleaned_content or "",  # Use cleaned content without JSON configuration
             sql=executed_sql or "",
@@ -1229,6 +1490,13 @@ async def run_agent(
             "success": True,
             "error": None,
             "response": response,  # V5.1: structured response
+            # 🔴 第三道防线：添加工具调用状态信息供前端使用
+            "metadata": {
+                "tool_error": tool_error_detected,
+                "tool_status": "error" if tool_error_detected else "success",
+                "tool_calls": tool_calls_info,
+                "reasoning": None  # 可以在这里添加推理过程
+            }
         }
 
     except Exception as e:

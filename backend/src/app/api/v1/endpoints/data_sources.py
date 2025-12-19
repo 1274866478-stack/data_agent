@@ -219,8 +219,34 @@ async def upload_data_source(
         file_ext = validation_result["extension"]
         storage_path = f"data-sources/{tenant_id}/{file_id}{file_ext}"
 
-        # 上传到 MinIO
+        # 🚨 修复策略：强制落地逻辑 - 确保文件一定会保存到本地磁盘
         import io
+        import os
+        
+        # 定义本地存储目录（使用Docker卷挂载的目录）
+        local_upload_dir = "/app/uploads/data-sources"
+        tenant_upload_dir = os.path.join(local_upload_dir, tenant_id)
+        
+        # 确保目录存在
+        os.makedirs(tenant_upload_dir, exist_ok=True)
+        
+        # 本地文件路径（容器内绝对路径）
+        local_file_path = os.path.join(tenant_upload_dir, f"{file_id}{file_ext}")
+        
+        # 🔥 关键修复：无论MinIO是否成功，都先保存到本地磁盘
+        try:
+            with open(local_file_path, "wb") as f:
+                f.write(file_content)
+            logger.info(f"✅ 文件已强制保存到本地: {local_file_path}")
+        except Exception as save_error:
+            logger.error(f"❌ 保存文件到本地失败: {save_error}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"文件保存失败: {str(save_error)}"
+            )
+        
+        # 尝试上传到 MinIO（可选，不影响主流程）
+        minio_upload_success = False
         try:
             upload_success = minio_service.upload_file(
                 bucket_name="data-sources",
@@ -229,19 +255,17 @@ async def upload_data_source(
                 file_size=file_size,
                 content_type=file.content_type or "application/octet-stream"
             )
-
-            if not upload_success:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="文件上传到存储服务失败"
-                )
+            if upload_success:
+                minio_upload_success = True
+                logger.info(f"✅ 文件已同时上传到MinIO: {storage_path}")
         except Exception as e:
-            logger.warning(f"MinIO上传失败，使用本地存储: {e}")
-            # 如果MinIO不可用，保存到本地临时目录
-            storage_path = f"local://{storage_path}"
+            logger.warning(f"⚠️ MinIO上传失败（不影响主流程）: {e}")
 
         # 创建数据源记录
-        connection_string = f"file://{storage_path}"
+        # 🔧 修复：统一路径格式
+        # 优先使用本地路径（容器内绝对路径），确保Agent一定能找到文件
+        # 格式：/app/uploads/data-sources/{tenant_id}/{file_id}{ext}
+        connection_string = local_file_path  # 直接使用容器内绝对路径，确保Agent能找到文件
 
         new_connection = DataSourceConnection(
             tenant_id=tenant_id,

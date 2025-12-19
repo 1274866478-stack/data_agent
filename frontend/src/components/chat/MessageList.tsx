@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useImperativeHandle, forwardRef, useState } from 'react'
-import { User, Bot } from 'lucide-react'
+import { User, Bot, AlertTriangle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Markdown } from '@/components/ui/markdown'
 import { ChatMessage } from '@/store/chatStore'
@@ -164,6 +164,26 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                 />
               )}
 
+              {/* 🔴 第三道防线：检测工具调用失败并显示警告图标 */}
+              {message.role === 'assistant' && (
+                (() => {
+                  const hasSystemError = message.content.includes('SYSTEM ERROR') || 
+                                         message.content.includes('无法获取数据') ||
+                                         message.content.includes('工具调用失败') ||
+                                         (message.metadata as any)?.tool_error === true ||
+                                         (message.metadata as any)?.tool_status === 'error'
+                  if (hasSystemError) {
+                    return (
+                      <div className="mt-2 flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">
+                        <AlertTriangle className="w-4 h-4" />
+                        <span>数据源连接失败，以下回答可能不准确</span>
+                      </div>
+                    )
+                  }
+                  return null
+                })()
+              )}
+
               {/* 时间戳 */}
               <div className={cn(
                 'text-xs text-gray-500 mt-1',
@@ -174,14 +194,37 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                 {message.status === 'error' && ' • 发送失败'}
               </div>
 
-              {/* 简化的元数据显示 */}
+              {/* 🔴 第三道防线：默认展开显示推理过程和工具输出 */}
               {message.metadata && (
-                <div className="mt-2 text-xs text-gray-500">
-                  {message.metadata.reasoning && (
-                    <div className="mb-1">
-                      <strong>推理：</strong> {message.metadata.reasoning}
-                    </div>
+                <div className="mt-2 text-xs space-y-2">
+                  {/* 工具调用状态（默认展开） */}
+                  {(message.metadata as any).tool_calls && (message.metadata as any).tool_calls.length > 0 && (
+                    <details open className="bg-blue-50 border border-blue-200 rounded p-2">
+                      <summary className="font-medium text-blue-800 cursor-pointer mb-1">工具调用状态</summary>
+                      <div className="mt-1 space-y-1">
+                        {(message.metadata as any).tool_calls.map((tc: any, idx: number) => (
+                          <div key={idx} className="flex items-center gap-2 text-blue-700">
+                            <span>• {tc.name || 'unknown'}</span>
+                            {tc.status === 'error' && (
+                              <span className="text-red-600">⚠️ 失败</span>
+                            )}
+                            {tc.status === 'success' && (
+                              <span className="text-green-600">✓ 成功</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
                   )}
+                  
+                  {/* 推理过程（默认展开） */}
+                  {message.metadata.reasoning && (
+                    <details open className="bg-gray-50 border border-gray-200 rounded p-2">
+                      <summary className="font-medium text-gray-700 cursor-pointer mb-1">推理过程</summary>
+                      <p className="text-gray-600 mt-1 whitespace-pre-wrap">{message.metadata.reasoning}</p>
+                    </details>
+                  )}
+                  
                   {message.metadata.sources && message.metadata.sources.length > 0 && (
                     <div className="mb-1">
                       <strong>数据源：</strong> {message.metadata.sources.join(', ')}

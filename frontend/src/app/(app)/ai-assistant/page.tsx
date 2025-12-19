@@ -17,7 +17,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { Send, Bot, User, Sparkles, Paperclip, X, FileText, CheckCircle, AlertCircle, Loader2, Plus, History, Search, MessageSquare, Trash2, ChevronLeft, CheckSquare, Database, ChevronDown } from 'lucide-react'
+import { Send, Bot, User, Sparkles, Paperclip, X, FileText, CheckCircle, AlertCircle, Loader2, Plus, History, Search, MessageSquare, Trash2, ChevronLeft, CheckSquare, Database, ChevronDown, AlertTriangle } from 'lucide-react'
 import { Markdown } from '@/components/ui/markdown'
 import { useChatStore } from '@/store/chatStore'
 import { useDataSourceStore, DataSourceConnection } from '@/store/dataSourceStore'
@@ -712,6 +712,57 @@ export default function AIAssistantPage() {
                             <p className="text-base whitespace-pre-wrap">{message.content}</p>
                           ) : (
                             <div className="text-gray-800">
+                              {/* 🔴 第三道防线：检测工具调用失败并显示警告 */}
+                              {(() => {
+                                const hasSystemError = message.content.includes('SYSTEM ERROR') || 
+                                                       message.content.includes('无法获取数据') ||
+                                                       message.content.includes('工具调用失败') ||
+                                                       (message.metadata as any)?.tool_error === true ||
+                                                       (message.metadata as any)?.tool_status === 'error'
+                                if (hasSystemError) {
+                                  return (
+                                    <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
+                                      <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                                      <div className="flex-1">
+                                        <p className="text-sm font-medium text-red-800">数据源连接失败</p>
+                                        <p className="text-xs text-red-600 mt-1">以下回答可能不准确，请检查数据源连接状态</p>
+                                      </div>
+                                    </div>
+                                  )
+                                }
+                                return null
+                              })()}
+                              
+                              {/* 显示工具调用状态和推理过程（默认展开） */}
+                              {message.metadata && (
+                                <div className="mb-3 space-y-2">
+                                  {/* 工具调用状态 */}
+                                  {(message.metadata as any).tool_calls && (message.metadata as any).tool_calls.length > 0 && (
+                                    <div className="text-xs bg-blue-50 border border-blue-200 rounded p-2">
+                                      <div className="font-medium text-blue-800 mb-1">工具调用:</div>
+                                      <div className="space-y-1">
+                                        {(message.metadata as any).tool_calls.map((tc: any, idx: number) => (
+                                          <div key={idx} className="flex items-center gap-2">
+                                            <span className="text-blue-600">• {tc.name || 'unknown'}</span>
+                                            {tc.status === 'error' && (
+                                              <AlertTriangle className="w-3 h-3 text-red-500" />
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  
+                                  {/* 推理过程（默认展开） */}
+                                  {message.metadata.reasoning && (
+                                    <details open className="text-xs bg-gray-50 border border-gray-200 rounded p-2">
+                                      <summary className="font-medium text-gray-700 cursor-pointer mb-1">推理过程</summary>
+                                      <p className="text-gray-600 mt-1 whitespace-pre-wrap">{message.metadata.reasoning}</p>
+                                    </details>
+                                  )}
+                                </div>
+                              )}
+                              
                               <Markdown content={removeChartMarkers(message.content)} className="prose-base" />
                               {/* 如果有结构化结果或图表，追加展示 */}
                               {message.metadata && (message.metadata.table || message.metadata.chart) && (

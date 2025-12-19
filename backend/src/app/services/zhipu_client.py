@@ -117,7 +117,7 @@ class ZhipuAIService:
     def __init__(self):
         self.client = ZhipuAI(api_key=settings.zhipuai_api_key)
         self.default_model = getattr(settings, 'zhipuai_default_model', 'glm-4-flash')
-        self.max_tokens = 4000
+        self.max_tokens = getattr(settings, "llm_max_output_tokens", 8192)
         self.temperature = 0.7
         self.rate_limit_delay = 0.1  # 速率限制延迟(秒)
 
@@ -662,7 +662,7 @@ class ZhipuAIService:
                 "complexity_score": 0.5,
                 "recommend_thinking": False,
                 "recommend_temperature": 0.7,
-                "recommend_max_tokens": 4000
+                "recommend_max_tokens": getattr(settings, "llm_max_output_tokens", 8192)
             }
 
     async def smart_chat_completion(

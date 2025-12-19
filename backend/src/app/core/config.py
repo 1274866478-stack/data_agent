@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     zhipuai_api_key: str
     zhipuai_default_model: str = "glm-4.6"
     zhipuai_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
-    zhipuai_timeout: int = 120  # 增加到 120 秒，防止超时
+    zhipuai_timeout: int = 300  # 增加到 300 秒（5分钟），支持长文本生成
     zhipuai_max_retries: int = 3
 
     # OpenRouter 配置
@@ -58,19 +58,22 @@ class Settings(BaseSettings):
     openrouter_default_model: str = "google/gemini-2.0-flash-exp"
     openrouter_referer: Optional[str] = None  # 可选，用于OpenRouter排名
     openrouter_app_name: str = "Data Agent"  # 可选，用于OpenRouter排名
-    openrouter_timeout: int = 120  # 增加到 120 秒，防止超时
+    openrouter_timeout: int = 300  # 增加到 300 秒（5分钟），支持长文本生成
 
     # DeepSeek 配置（默认 LLM 提供商）
     deepseek_api_key: Optional[str] = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_default_model: str = "deepseek-chat"
-    deepseek_timeout: int = 120  # 增加到 120 秒，防止超时
+    deepseek_timeout: int = 300  # 增加到 300 秒（5分钟），支持长文本生成
     
     # Agent 执行超时配置
     agent_execution_timeout: int = 180  # Agent 整体执行超时（秒），设置为 180 秒以应对复杂查询
     
     # LLM 输出 Token 限制配置
-    llm_max_output_tokens: int = 4096  # LLM 最大输出 Token 数，设置为 4096 以确保图表 JSON 完整输出
+    llm_max_output_tokens: int = 8192  # LLM 最大输出 Token 数，设置为 8192 以确保完整的 ECharts JSON 配置输出
+    
+    # LLM 请求超时配置（生成长文本需要更多时间）
+    llm_timeout_seconds: int = 300  # LLM 请求超时时间（秒），设置为 300 秒（5分钟）以应对长文本生成
 
     # Clerk 认证配置
     clerk_jwt_public_key: Optional[str] = None  # Clerk JWT公钥（开发环境可选）

@@ -499,28 +499,46 @@ async def create_query(
         # 选择数据源：优先用户指定，否则自动取第一个活跃数据源；后续仅使用这一条
         data_source_id = request.connection_id
         selected_source = None
+        
+        # 🔍 诊断：记录所有活跃数据源信息
+        all_active_sources = await data_source_service.get_data_sources(
+            tenant_id=tenant.id,
+            db=db,
+            active_only=True
+        )
+        logger.info(f"🔍 [数据源诊断] 租户 {tenant.id} 共有 {len(all_active_sources)} 个活跃数据源:")
+        for idx, ds in enumerate(all_active_sources):
+            logger.info(f"  [{idx+1}] ID: {ds.id}, 名称: {ds.name}, 类型: {ds.db_type}, 状态: {ds.status}")
+        
         if not data_source_id:
-            active_sources = await data_source_service.get_data_sources(
-                tenant_id=tenant.id,
-                db=db,
-                active_only=True,
-                limit=1
-            )
-            if active_sources:
-                selected_source = active_sources[0]
+            if all_active_sources:
+                selected_source = all_active_sources[0]
                 data_source_id = selected_source.id
-                logger.info(f"未指定数据源，自动使用第一个活跃数据源: {data_source_id}")
+                logger.info(f"⚠️ [数据源诊断] 未指定数据源，自动使用第一个活跃数据源: ID={data_source_id}, 名称={selected_source.name}, 类型={selected_source.db_type}")
+            else:
+                logger.warning(f"❌ [数据源诊断] 没有找到任何活跃数据源")
+        else:
+            logger.info(f"✅ [数据源诊断] 用户指定了数据源ID: {data_source_id}")
+            
         if data_source_id and not selected_source:
             selected_source = await data_source_service.get_data_source_by_id(
                 data_source_id=data_source_id,
                 tenant_id=tenant.id,
                 db=db
             )
+            if selected_source:
+                logger.info(f"✅ [数据源诊断] 找到指定的数据源: ID={selected_source.id}, 名称={selected_source.name}, 类型={selected_source.db_type}")
+            else:
+                logger.error(f"❌ [数据源诊断] 无法找到指定的数据源ID: {data_source_id}")
+                
         if not selected_source:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="未找到可用的数据源，请先选择或创建数据源"
             )
+        
+        # 🔍 最终确认使用的数据源
+        logger.info(f"🎯 [数据源诊断] 最终使用的数据源: ID={selected_source.id}, 名称={selected_source.name}, 类型={selected_source.db_type}, 连接字符串预览={str(selected_source.connection_string)[:50] if selected_source.connection_string else 'N/A'}...")
 
         # 尝试使用 Agent 处理查询（如果可用且有数据源）
         use_agent = is_agent_available() and data_source_id is not None
@@ -559,11 +577,41 @@ async def create_query(
                     data_source_id=data_source_id,
                     database_url_preview=str(database_url)[:80] if database_url else None,
                 )
+                
+                # 🔧 关键修复：根据数据源类型修改问题，明确告诉AI助手数据源类型
+                enhanced_question = request.query
+                if selected_source.db_type in ["xlsx", "xls", "csv"]:
+                    # 文件数据源：明确告诉AI这是文件，必须使用文件工具
+                    enhanced_question = f"""【重要提示：当前数据源是{selected_source.db_type.upper()}文件，不是SQL数据库】
+                    
+你必须：
+1. 使用 `inspect_file` 工具查看文件结构和工作表名称（对于Excel文件）
+2. 使用 `analyze_dataframe` 或 `python_interpreter` 工具执行Pandas查询
+3. **严禁使用SQL工具（query, list_tables, get_schema）**
+
+用户问题：{request.query}"""
+                    logger.info(f"🔧 [数据源类型修复] 检测到文件数据源（{selected_source.db_type}），已增强问题提示")
+                    print(f"🔧 [数据源类型修复] 检测到文件数据源（{selected_source.db_type}），已增强问题提示")
+                    print(f"🔧 [增强后的问题] {enhanced_question[:200]}...")
+                elif selected_source.db_type in ["postgresql", "mysql", "postgres"]:
+                    # SQL数据库：明确告诉AI这是SQL数据库
+                    enhanced_question = f"""【重要提示：当前数据源是{selected_source.db_type.upper()}数据库】
+
+你必须：
+1. 使用 `list_tables` 工具查看数据库中有哪些表
+2. 使用 `get_schema` 工具获取表结构
+3. 使用 `query_database` 工具执行SQL查询
+4. **严禁使用文件工具（inspect_file, analyze_dataframe）**
+
+用户问题：{request.query}"""
+                    logger.info(f"🔧 [数据源类型修复] 检测到SQL数据库（{selected_source.db_type}），已增强问题提示")
+                    print(f"🔧 [数据源类型修复] 检测到SQL数据库（{selected_source.db_type}），已增强问题提示")
+                
                 agent_response = await run_agent_query(
-                    question=request.query,
+                    question=enhanced_question,  # 使用增强后的问题
                     thread_id=thread_id,
                     database_url=database_url,
-                    verbose=False,
+                    verbose=True,  # 🔍 启用详细日志以诊断编造数据问题
                     enable_echarts=True  # 启用 ECharts 图表生成功能
                 )
                 if agent_response:

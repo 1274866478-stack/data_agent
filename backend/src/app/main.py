@@ -537,6 +537,12 @@ app.include_router(api_router, prefix=settings.api_v1_prefix)
 if __name__ == "__main__":
     import uvicorn
 
+    # 🔥 Token Expansion: 增加 timeout_keep_alive 到 300 秒以支持长文本生成
     uvicorn.run(
-        "main:app", host="0.0.0.0", port=8000, reload=settings.debug, log_level="info"
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=settings.debug,
+        log_level="info",
+        timeout_keep_alive=300  # 5分钟，支持长文本生成
     )

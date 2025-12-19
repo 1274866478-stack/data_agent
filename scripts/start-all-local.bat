@@ -168,7 +168,8 @@ echo.
 
 REM 启动后端（在新窗口）
 echo [INFO] 启动后端服务（新窗口）...
-start "Data Agent V4 - Backend" cmd /k "cd backend && call venv\Scripts\activate.bat && uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8004"
+REM 🔥 Token Expansion: 增加 --timeout-keep-alive 到 300 秒以支持长文本生成
+start "Data Agent V4 - Backend" cmd /k "cd backend && call venv\Scripts\activate.bat && uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8004 --timeout-keep-alive 300"
 timeout /t 5 /nobreak >nul
 
 REM 启动前端（在新窗口）
