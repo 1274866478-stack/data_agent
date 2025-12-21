@@ -625,11 +625,30 @@ def analyze_dataframe_func(input_data: Dict[str, Any] = None, query: str = None,
             column_refs = re.findall(r"df\[['\"]([^'\"]+)['\"]\]|df\.(\w+)|df\[(\w+)\]", query)
             referenced_columns = [col for match in column_refs for col in match if col]
             
+            # 🔥 修复：定义 Pandas 方法/属性白名单，避免误判为列名
+            PANDAS_WHITELIST = {
+                'head', 'tail', 'shape', 'columns', 'index', 'dtypes', 'info', 
+                'describe', 'iloc', 'loc', 'groupby', 'value_counts', 'sort_values',
+                'mean', 'sum', 'count', 'max', 'min', 'apply', 'lambda', 'len',
+                'str', 'dt', 'unique', 'nunique', 'isnull', 'notnull', 'dropna', 'fillna',
+                'astype', 'copy', 'reset_index', 'set_index', 'merge', 'join', 'concat',
+                'agg', 'aggregate', 'transform', 'filter', 'sample', 'drop', 'rename',
+                'fillna', 'replace', 'map', 'round', 'abs', 'std', 'var', 'median',
+                'quantile', 'corr', 'cov', 'pivot', 'pivot_table', 'melt', 'stack', 'unstack'
+            }
+            
             if referenced_columns:
-                missing_columns = [col for col in referenced_columns if col not in df.columns]
-                if missing_columns:
-                    logger.error(f"❌ [第一道防线] 查询中引用的列不存在: {missing_columns}，实际列名: {list(df.columns)}")
-                    return f'SYSTEM ERROR: Data Access Failed. Columns {missing_columns} not found. Available columns: {", ".join(df.columns)}. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法找到指定的列，请检查列名"。'
+                # 过滤掉白名单中的 Pandas 方法和数字（用于 iloc）
+                real_missing_columns = [
+                    col for col in referenced_columns 
+                    if col not in PANDAS_WHITELIST 
+                    and not col.isdigit()  # 忽略数字（用于 iloc，如 df.iloc[0]）
+                    and col not in df.columns
+                ]
+                
+                if real_missing_columns:
+                    logger.error(f"❌ [第一道防线] 查询中引用的列不存在: {real_missing_columns}，实际列名: {list(df.columns)}")
+                    return f'SYSTEM ERROR: Data Access Failed. Columns {real_missing_columns} not found. Available columns: {", ".join(df.columns)}. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法找到指定的列，请检查列名"。'
         elif container_file_path.endswith('.csv'):
             df = pd.read_csv(container_file_path)
             logger.info(f"✅ 成功读取 CSV 文件，行数: {len(df)}, 列数: {len(df.columns)}")
@@ -641,12 +660,10 @@ def analyze_dataframe_func(input_data: Dict[str, Any] = None, query: str = None,
         # 执行 Pandas 查询
         # 注意: query 参数应该包含有效的 Pandas 代码，例如: df.head(), df.describe() 等
         # 为了安全，我们限制只能使用 df 变量
-        try:
-            # 使用 eval 执行查询（限制在安全环境中）
-            # 注意: 这里使用 eval 是为了支持动态 Pandas 查询，但应该在生产环境中考虑更安全的方式
-            result = eval(query, {"df": df, "pd": pd, "__builtins__": {}})
-            
-            # 格式化结果
+        
+        # 🔥 修复：定义格式化结果的内部函数，便于重用
+        def format_result(result):
+            """格式化查询结果"""
             if isinstance(result, pd.DataFrame):
                 # 使用 tabulate 格式化输出（如果可用）
                 try:
@@ -659,6 +676,77 @@ def analyze_dataframe_func(input_data: Dict[str, Any] = None, query: str = None,
                 result_str = result.to_string()
             else:
                 result_str = str(result)
+            return result_str
+        
+        # 🔥 修复：定义执行查询的内部函数，支持赋值语句
+        def execute_query(query_str, scope):
+            """执行查询并返回结果（支持赋值语句）"""
+            # 判断是简单表达式还是复杂查询（包含换行或赋值）
+            if "=" in query_str or "\n" in query_str:
+                # 复杂查询：使用 exec() 执行（支持赋值语句）
+                # 记录执行前的变量，以便找出新定义的变量
+                vars_before = set(scope.keys())
+                
+                # 直接执行，不自动包装（避免破坏赋值语句）
+                exec(query_str, {}, scope)
+                
+                # 智能结果捕获：
+                # 1. 如果代码定义了名为 'result' 的变量，优先使用它
+                if 'result' in scope:
+                    result = scope['result']
+                # 2. 否则，查找最后定义的新变量（排除默认变量）
+                else:
+                    # 找出新定义的变量（保持顺序）
+                    # 遍历 scope 字典（Python 3.7+ 保持插入顺序），找出新定义的变量
+                    filtered_vars = []
+                    for key in scope.keys():
+                        if key not in vars_before and key not in ['df', 'pd', '__builtins__'] and not key.startswith('_'):
+                            filtered_vars.append(key)
+                    
+                    if filtered_vars:
+                        # 使用最后定义的变量（通常是 Agent 想要的结果）
+                        # 由于字典保持插入顺序，最后一个就是最后定义的
+                        last_var = filtered_vars[-1]
+                        result = scope[last_var]
+                        logger.debug(f"🔍 [执行逻辑] 捕获变量 '{last_var}' 作为结果")
+                    else:
+                        # 如果没有新变量，返回成功消息
+                        result = "✅ Code executed successfully (No output variable captured)."
+                        logger.warning("⚠️ [执行逻辑] 查询执行后未找到输出变量")
+                
+                return result
+            else:
+                # 简单表达式：使用 eval() 执行（如 df.head()）
+                return eval(query_str, {}, scope)
+        
+        try:
+            # 🔥 修复：使用更健壮的 exec/eval 混合方法，支持中文和复杂查询
+            # 准备本地作用域，包含 pandas 和 dataframe
+            local_scope = {"df": df, "pd": pd, "__builtins__": {}}
+            
+            # 清理查询字符串：移除前后空白、代码块标记等
+            query_clean = query.strip()
+            # 移除代码块标记（可能有多层）
+            while query_clean.startswith("```"):
+                query_clean = query_clean[3:].strip()
+            while query_clean.endswith("```"):
+                query_clean = query_clean[:-3].strip()
+            # 移除反引号
+            query_clean = query_clean.strip('`').strip()
+            # 移除可能的语言标记（如 "python"）
+            if query_clean.lower().startswith("python"):
+                query_clean = query_clean[6:].strip()
+            # 确保最终清理
+            query_clean = query_clean.strip()
+            
+            # 记录清理后的查询（用于调试）
+            logger.debug(f"🔍 [执行逻辑] 清理后的查询: {query_clean[:200]}...")  # 只记录前200字符
+            
+            # 执行查询
+            result = execute_query(query_clean, local_scope)
+            
+            # 格式化结果
+            result_str = format_result(result)
             
             logger.info(f"✅ Pandas 查询执行成功，结果长度: {len(result_str)}")
             # 🔴 第一道防线：检查空数据
@@ -667,10 +755,47 @@ def analyze_dataframe_func(input_data: Dict[str, Any] = None, query: str = None,
                 return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
             return result_str
             
-        except Exception as e:
-            logger.error(f"⚠️ [第一道防线] Pandas 查询执行失败: {e}", exc_info=True)
+        except SyntaxError as e:
+            # 🔥 修复：对语法错误提供更详细的诊断信息
+            logger.error(f"❌ [执行逻辑] 查询语法错误: {e}")
+            logger.error(f"   查询内容: {query_clean[:500]}")  # 记录前500字符
+            logger.error(f"   错误位置: {e.lineno if hasattr(e, 'lineno') else 'unknown'}")
+            
+            # 尝试修复常见的引号问题（如果查询中包含中文引号）
+            if '''' in query_clean or ''' in query_clean or '"' in query_clean or '"' in query_clean:
+                logger.warning("⚠️ [执行逻辑] 检测到中文引号，尝试修复...")
+                query_fixed = query_clean.replace(''', "'").replace(''', "'").replace('"', '"').replace('"', '"')
+                try:
+                    # 重新执行修复后的查询
+                    result = execute_query(query_fixed, local_scope)
+                    
+                    # 如果修复成功，继续执行格式化逻辑
+                    logger.info("✅ [执行逻辑] 引号修复成功，继续执行")
+                    result_str = format_result(result)
+                    
+                    # 检查空数据
+                    if not result_str or result_str.strip() == "" or result_str == "Empty DataFrame\nColumns: []\nIndex: []":
+                        logger.warning("⚠️ [第一道防线] Pandas查询返回空数据")
+                        return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+                    
+                    logger.info(f"✅ [执行逻辑] 修复后查询执行成功，结果长度: {len(result_str)}")
+                    return result_str
+                except Exception as fix_error:
+                    logger.error(f"❌ [执行逻辑] 引号修复后仍失败: {fix_error}")
+            
             # 🔴 第一道防线：返回特定错误字符串
-            return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+            return f'SYSTEM ERROR: Data Access Failed. Query syntax error: {str(e)}. Please check your query syntax. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "查询语法错误，请检查查询语句"。'
+        except Exception as e:
+            logger.error(f"❌ [执行逻辑] Pandas 查询执行失败: {e}", exc_info=True)
+            query_content = query_clean[:500] if 'query_clean' in locals() else query[:500]
+            logger.error(f"   查询内容: {query_content}")
+            
+            # 🔥 修复：返回详细的错误信息，让 Agent 能够重试
+            # 对于执行错误（非语法错误），返回错误详情以便 Agent 调整查询
+            error_msg = f"SYSTEM ERROR: Pandas Execution Failed. Error: {str(e)}"
+            if "query_clean" in locals():
+                error_msg += f"\nQuery: {query_clean[:200]}..."
+            return error_msg
             
     except ImportError as e:
         logger.error(f"❌ 缺少依赖: {e}", exc_info=True)

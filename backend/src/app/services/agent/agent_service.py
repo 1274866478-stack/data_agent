@@ -1000,7 +1000,49 @@ async def build_agent(
 
         # Inject system prompt if not present
         if not any(isinstance(m, SystemMessage) for m in messages):
-            messages = [SystemMessage(content=system_prompt)] + messages
+            # 🔥 修复：检测文件模式，添加早期停止规则
+            # 检查是否有文件数据源工具（inspect_file 或 analyze_dataframe）
+            is_file_mode = any(
+                getattr(tool, "name", "") in ["inspect_file", "analyze_dataframe"] 
+                for tool in _cached_tools
+            ) if _cached_tools else False
+            
+            # 如果是文件模式，添加强制早期停止规则（核弹级严格版本）
+            if is_file_mode:
+                file_mode_instructions = (
+                    "\n\n## 🛑 [文件模式 - 核弹级强制停止] 🛑\n"
+                    "【🚨 SYSTEM ALERT: FILE MODE ACTIVE】\n\n"
+                    "你正在一个受限的执行环境中，步数限制非常低。\n\n"
+                    "**目标（GOAL）**: 以最快的速度回答用户的具体问题。\n\n"
+                    "**🚨 关键规则（CRITICAL RULES）**:\n\n"
+                    "1. **一次性分析（ONE-SHOT ANALYSIS）**:\n"
+                    "   - 尝试在 1-2 个复杂的 Pandas 查询中获取所有必要的数据。\n"
+                    "   - 不要逐个查询表，如果可以将它们合并或一起检查。\n"
+                    "   - 使用 groupby、agg、filter 等组合查询，而不是多次单独查询。\n\n"
+                    "2. **立即回答（IMMEDIATE ANSWER）**:\n"
+                    "   - 一旦你看到数字（例如：销量=567，销售额=1416933），你必须立即停止。\n"
+                    "   - 不要尝试'验证'、'排名'或'分析分类'，除非用户明确要求。\n"
+                    "   - 如果用户问'索尼卖得怎么样'，你找到了销量和销售额，立即报告这些数字，然后停止。\n"
+                    "   - 不要为了'完善分析'而查询分类表或其他表。\n\n"
+                    "3. **禁止行为（FORBIDDEN BEHAVIOR）**:\n"
+                    "   - 如果用户只是问'索尼卖得怎么样'，不要创建'完整的分析报告'。\n"
+                    "   - 只给出索尼的统计数据和一个快速对比，然后停止。\n"
+                    "   - 不要试图获取'所有品牌排名'来对比，除非用户明确要求。\n"
+                    "   - 不要重复查询相同的数据来'确认'。\n\n"
+                    "4. **失败风险（FAILURE RISK）**:\n"
+                    "   - 如果你超过 5 步，系统将崩溃，任务将失败。\n"
+                    "   - 现在立即回答，不要等待！\n"
+                    "   - 不要试图'完善'答案，立即停止并回答。\n\n"
+                    "**工具（TOOLS）**:\n"
+                    "- 使用 `analyze_dataframe` 获取数据。\n"
+                    "- 只有在不知道列名时才使用 `inspect_file`。\n"
+                    "- SQL 工具已被禁用。\n\n"
+                    "**记住：看到数据 = 立即停止 = 立即回答。不要犹豫，不要完善，不要分析分类！**\n"
+                )
+                enhanced_system_prompt = system_prompt + file_mode_instructions
+                messages = [SystemMessage(content=enhanced_system_prompt)] + messages
+            else:
+                messages = [SystemMessage(content=system_prompt)] + messages
 
         try:
             response = await llm_with_tools.ainvoke(messages)
