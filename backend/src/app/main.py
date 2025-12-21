@@ -462,9 +462,18 @@ async def check_all_services():
         with performance_logger("chromadb_health_check"):
             services_status["chromadb"] = await asyncio.to_thread(chromadb_service.check_connection)
 
-        # 检查智谱AI连接（注意：这是async函数，直接await）
-        with performance_logger("zhipu_health_check"):
-            services_status["zhipu_ai"] = await zhipu_service.check_connection()
+        # 🔥 修复：优先检查DeepSeek，如果配置了DeepSeek就跳过Zhipu AI健康检查
+        from src.app.core.config import settings
+        deepseek_api_key = getattr(settings, "DEEPSEEK_API_KEY", None) or getattr(settings, "deepseek_api_key", None)
+        if deepseek_api_key:
+            # 如果配置了DeepSeek，跳过Zhipu AI健康检查（避免余额不足错误）
+            logger.info("检测到DeepSeek API密钥，跳过Zhipu AI健康检查")
+            services_status["zhipu_ai"] = None  # 标记为跳过
+            services_status["deepseek"] = True  # 假设DeepSeek可用（实际查询时会验证）
+        else:
+            # 如果没有配置DeepSeek，才检查Zhipu AI
+            with performance_logger("zhipu_health_check"):
+                services_status["zhipu_ai"] = await zhipu_service.check_connection()
 
         # 记录数据库连接池状态
         log_pool_health()

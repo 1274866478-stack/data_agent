@@ -69,6 +69,7 @@ class VisualizationResponse(BaseModel):
     # 元信息
     success: bool = Field(default=True, description="是否成功")
     error: Optional[str] = Field(default=None, description="错误信息")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="元数据（包含幻觉检测信息等）")
 
 
 # 占位符类型定义（如果其他地方需要）
@@ -83,4 +84,5 @@ class AgentRequest(BaseModel):
 class EChartsOption(BaseModel):
     """ECharts配置选项"""
     option: Dict[str, Any] = Field(default_factory=dict)
+
 

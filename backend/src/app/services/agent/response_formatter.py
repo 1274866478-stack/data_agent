@@ -40,24 +40,81 @@ def format_api_response(response: VisualizationResponse) -> Dict[str, Any]:
             "row_count": response.data.row_count,
         }
     
-    # 添加图表配置（如果有）
-    if response.chart and response.chart.chart_type.value != "table":
-        chart_dict: Dict[str, Any] = {
-            "chart_type": response.chart.chart_type.value,
-        }
+    # 🛡️ 安全添加图表配置（如果有）- 支持 Pydantic 模型
+    if response.chart:
+        chart_obj = response.chart
         
-        if response.chart.title:
-            chart_dict["title"] = response.chart.title
+        # 安全获取 chart_type
+        chart_type_value = None
+        if isinstance(chart_obj, dict):
+            chart_type_value = chart_obj.get('chart_type')
+            if hasattr(chart_type_value, 'value'):
+                chart_type_value = chart_type_value.value
+        else:
+            try:
+                if hasattr(chart_obj, 'chart_type') and chart_obj.chart_type:
+                    if hasattr(chart_obj.chart_type, 'value'):
+                        chart_type_value = chart_obj.chart_type.value
+                    else:
+                        chart_type_value = str(chart_obj.chart_type)
+            except AttributeError:
+                pass
         
-        if response.chart.x_field:
-            chart_dict["x_field"] = response.chart.x_field
+        # 只有非 table 类型才构建图表配置
+        if chart_type_value and chart_type_value != "table":
+            chart_dict: Dict[str, Any] = {
+                "chart_type": chart_type_value,
+            }
+            
+            # 安全访问其他属性
+            if isinstance(chart_obj, dict):
+                if chart_obj.get('title'):
+                    chart_dict["title"] = chart_obj.get('title')
+                if chart_obj.get('x_field'):
+                    chart_dict["x_field"] = chart_obj.get('x_field')
+                if chart_obj.get('y_field'):
+                    chart_dict["y_field"] = chart_obj.get('y_field')
+            else:
+                try:
+                    if hasattr(chart_obj, 'title') and chart_obj.title:
+                        chart_dict["title"] = chart_obj.title
+                    if hasattr(chart_obj, 'x_field') and chart_obj.x_field:
+                        chart_dict["x_field"] = chart_obj.x_field
+                    if hasattr(chart_obj, 'y_field') and chart_obj.y_field:
+                        chart_dict["y_field"] = chart_obj.y_field
+                except AttributeError:
+                    pass
         
-        if response.chart.y_field:
-            chart_dict["y_field"] = response.chart.y_field
+        # 🛡️ 安全添加图表图片（如果有）- 支持 Pydantic 模型
+        chart_image = None
+        chart_obj = response.chart
         
-        # 添加图表图片（如果有）
-        if response.chart.chart_image:
-            chart_dict["chart_image"] = response.chart.chart_image
+        # 尝试多种方式获取 chart_image
+        if isinstance(chart_obj, dict):
+            chart_image = chart_obj.get('chart_image')
+        else:
+            # 方法1: 属性访问
+            try:
+                if hasattr(chart_obj, 'chart_image'):
+                    chart_image = getattr(chart_obj, 'chart_image', None)
+            except AttributeError:
+                pass
+            
+            # 方法2: Pydantic 的 .dict() 或 .model_dump()
+            if not chart_image:
+                try:
+                    if hasattr(chart_obj, 'dict'):
+                        chart_dict_temp = chart_obj.dict()
+                        chart_image = chart_dict_temp.get('chart_image')
+                    elif hasattr(chart_obj, 'model_dump'):
+                        chart_dict_temp = chart_obj.model_dump()
+                        chart_image = chart_dict_temp.get('chart_image')
+                except (AttributeError, TypeError):
+                    pass
+        
+        # 只有找到有效的图片字符串才添加
+        if chart_image and isinstance(chart_image, str) and len(chart_image) > 0:
+            chart_dict["chart_image"] = chart_image
         
         result["chart"] = chart_dict
     
@@ -93,4 +150,5 @@ def format_error_response(error_message: str, sql: Optional[str] = None) -> Dict
         result["sql"] = sql
     
     return result
+
 

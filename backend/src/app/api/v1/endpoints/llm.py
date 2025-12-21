@@ -7,6 +7,7 @@ import json
 import asyncio
 import logging
 import io
+import os
 import time
 from typing import Dict, Any, Optional, List, Union
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -151,7 +152,7 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
     从文件数据源获取schema信息（支持Excel多Sheet）
 
     Args:
-        connection_string: 文件存储路径（格式: file://data-sources/{tenant_id}/{file_id}.xlsx）
+        connection_string: 文件存储路径（格式: file://data-sources/{tenant_id}/{file_id}.xlsx 或 /app/uploads/...）
         db_type: 文件类型（xlsx, csv, xls等）
         data_source_name: 数据源名称
 
@@ -159,22 +160,40 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
         schema信息字典，包含所有表（Sheet）的列名、类型和示例数据
     """
     try:
-        # 解析存储路径
-        if connection_string.startswith("file://"):
-            storage_path = connection_string[7:]  # 去掉 "file://" 前缀
+        # 🔧 修复：使用新的路径解析逻辑，优先尝试本地文件系统
+        from src.app.services.agent.path_extractor import resolve_file_path_with_fallback
+        
+        # 首先尝试解析路径（包含本地回退逻辑）
+        local_file_path = resolve_file_path_with_fallback(connection_string)
+        file_data = None
+        use_local_file = False
+        
+        # 如果找到本地文件，直接使用
+        if local_file_path and os.path.exists(local_file_path):
+            logger.info(f"从本地文件系统读取文件: {local_file_path}")
+            use_local_file = True
+            file_path_for_read = local_file_path
         else:
-            storage_path = connection_string
-
-        # 从MinIO下载文件
-        logger.info(f"从MinIO下载文件: {storage_path}")
-        file_data = minio_service.download_file(
-            bucket_name="data-sources",
-            object_name=storage_path
-        )
-
-        if not file_data:
-            logger.warning(f"无法从MinIO获取文件: {storage_path}")
-            return {}
+            # 尝试从MinIO下载
+            storage_path = connection_string[7:] if connection_string.startswith("file://") else connection_string
+            logger.info(f"尝试从MinIO下载文件: {storage_path}")
+            file_data = minio_service.download_file(
+                bucket_name="data-sources",
+                object_name=storage_path
+            )
+            
+            if not file_data:
+                logger.warning(f"无法从MinIO获取文件: {storage_path}")
+                # 最后尝试本地回退
+                if local_file_path:
+                    logger.info(f"尝试使用解析的本地路径: {local_file_path}")
+                    if os.path.exists(local_file_path):
+                        use_local_file = True
+                        file_path_for_read = local_file_path
+                    else:
+                        return {}
+                else:
+                    return {}
 
         tables = []
         sample_data = {}
@@ -182,8 +201,12 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
         if db_type in ["xlsx", "xls"]:
             # 读取所有Sheet
             try:
-                # 显式指定 engine='openpyxl' 以确保正确读取
-                excel_file = pd.ExcelFile(io.BytesIO(file_data), engine='openpyxl')
+                if use_local_file:
+                    # 从本地文件读取
+                    excel_file = pd.ExcelFile(file_path_for_read, engine='openpyxl')
+                else:
+                    # 从MinIO下载的数据读取
+                    excel_file = pd.ExcelFile(io.BytesIO(file_data), engine='openpyxl')
             except ImportError as e:
                 logger.error(f"System Error: Missing dependency 'openpyxl'. {str(e)}")
                 return {}
@@ -214,12 +237,22 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
         elif db_type == "csv":
             # CSV文件只有一个表
             df = None
-            for encoding in ['utf-8', 'gbk', 'gb2312', 'gb18030']:
-                try:
-                    df = pd.read_csv(io.BytesIO(file_data), encoding=encoding)
-                    break
-                except UnicodeDecodeError:
-                    continue
+            if use_local_file:
+                # 从本地文件读取
+                for encoding in ['utf-8', 'gbk', 'gb2312', 'gb18030']:
+                    try:
+                        df = pd.read_csv(file_path_for_read, encoding=encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+            else:
+                # 从MinIO下载的数据读取
+                for encoding in ['utf-8', 'gbk', 'gb2312', 'gb18030']:
+                    try:
+                        df = pd.read_csv(io.BytesIO(file_data), encoding=encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
 
             if df is not None:
                 table_schema = _build_table_schema(df, data_source_name)
@@ -227,7 +260,8 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
                 sample_data[data_source_name] = table_schema["sample_data"]
 
         if not tables:
-            logger.warning(f"无法从文件解析任何表: {storage_path}")
+            path_info = file_path_for_read if use_local_file else (connection_string[7:] if connection_string.startswith("file://") else connection_string)
+            logger.warning(f"无法从文件解析任何表: {path_info}")
             return {}
 
         schema_info = {
@@ -464,10 +498,19 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
                     print(f"[PERF] PostgreSQL get_schema for {ds.name} took {time.time() - t3:.2f}s")
 
                 elif ds.db_type in ["xlsx", "xls", "csv"]:
-                    if connection_string:
-                        # 文件类型数据源：从MinIO读取文件并解析schema
+                    # 🔧 修复：从connection_config或connection_string提取文件路径
+                    file_path = connection_string
+                    if hasattr(ds, 'connection_config') and ds.connection_config:
+                        # 如果存在connection_config字段，优先使用它
+                        from src.app.services.agent.path_extractor import extract_file_path_from_config
+                        extracted_path = extract_file_path_from_config(ds.connection_config, connection_string)
+                        if extracted_path:
+                            file_path = extracted_path
+                    
+                    if file_path:
+                        # 文件类型数据源：从文件读取并解析schema
                         t4 = time.time()
-                        schema_info = await _get_file_schema(connection_string, ds.db_type, ds.name)
+                        schema_info = await _get_file_schema(file_path, ds.db_type, ds.name)
                         print(f"[PERF] _get_file_schema for {ds.name} took {time.time() - t4:.2f}s")
                     else:
                         # 连接字符串获取失败，尝试备选方案

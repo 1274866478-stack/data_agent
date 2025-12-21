@@ -13,6 +13,7 @@ from langchain_core.tools import StructuredTool, BaseTool
 import pandas as pd
 
 from src.app.services.minio_client import minio_service
+from src.app.services.agent.path_extractor import resolve_file_path_with_fallback, get_latest_excel_file
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +66,28 @@ class ExecuteSQLInput(BaseModel):
     query: Optional[str] = Field(None, description="SQL 查询语句（别名）")
 
 
-def execute_sql_safe_func(input_data: Dict[str, Any]) -> str:
+def execute_sql_safe_func(sql: str = None, query: str = None, input_data: Dict[str, Any] = None) -> str:
     """安全执行 SQL 查询"""
     global _mcp_client_wrapper
     
-    sql = input_data.get("sql") or input_data.get("query", "")
+    # 处理参数：StructuredTool.from_function可能直接传递关键字参数，也可能传递input_data字典
+    if sql:
+        pass  # 使用sql参数
+    elif query:
+        sql = query
+    elif input_data:
+        # 处理字典输入
+        if not isinstance(input_data, dict):
+            # 如果是BaseModel对象，转换为dict
+            if hasattr(input_data, 'dict'):
+                input_data = input_data.dict()
+            elif hasattr(input_data, '__dict__'):
+                input_data = input_data.__dict__
+            else:
+                input_data = {}
+        sql = input_data.get("sql") or input_data.get("query", "")
+    else:
+        sql = ""
     if not sql:
         # 🔴 第一道防线：返回特定错误字符串
         return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
@@ -94,6 +112,27 @@ def execute_sql_safe_func(input_data: Dict[str, Any]) -> str:
         if isinstance(result, str) and (result.startswith("错误") or result.startswith("Error") or "失败" in result):
             logger.warning(f"⚠️ [第一道防线] SQL查询返回错误: {result}")
             return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+        
+        # 🔥 上下文管理：限制返回数据长度
+        MAX_RESULT_LENGTH = 5000  # 与agent_service.py中的MAX_TOOL_RESULT_LENGTH保持一致
+        if isinstance(result, str) and len(result) > MAX_RESULT_LENGTH:
+            # 尝试解析JSON，如果是JSON数组，只保留前N条记录
+            try:
+                import json
+                data = json.loads(result)
+                if isinstance(data, list) and len(data) > 0:
+                    # 保留前10条记录
+                    truncated_data = data[:10]
+                    truncated_result = json.dumps(truncated_data, ensure_ascii=False, indent=2)
+                    truncated_result += f"\n\n[数据已截断：共 {len(data)} 条记录，仅显示前 10 条]"
+                    logger.warning(f"⚠️ [上下文管理] SQL查询返回数据过长 ({len(result)} 字符)，已截断至前10条记录")
+                    return truncated_result
+            except (json.JSONDecodeError, Exception):
+                # 如果不是JSON或解析失败，直接截断字符串
+                truncated_result = result[:MAX_RESULT_LENGTH] + f"\n\n[数据已截断，原始长度: {len(result)} 字符]"
+                logger.warning(f"⚠️ [上下文管理] SQL查询返回数据过长 ({len(result)} 字符)，已截断至 {MAX_RESULT_LENGTH} 字符")
+                return truncated_result
+        
         return result
     except Exception as e:
         logger.error(f"⚠️ [第一道防线] SQL执行异常: {e}", exc_info=True)
@@ -114,11 +153,25 @@ class GetTableSchemaInput(BaseModel):
     table_name: str = Field(description="表名")
 
 
-def get_table_schema_func(input_data: Dict[str, Any]) -> str:
+def get_table_schema_func(table_name: str = None, input_data: Dict[str, Any] = None) -> str:
     """获取表结构信息"""
     global _mcp_client_wrapper
     
-    table_name = input_data.get("table_name", "")
+    # 处理参数：StructuredTool.from_function可能直接传递关键字参数，也可能传递input_data字典
+    if not table_name:
+        if input_data:
+            # 处理字典输入
+            if not isinstance(input_data, dict):
+                # 如果是BaseModel对象，转换为dict
+                if hasattr(input_data, 'dict'):
+                    input_data = input_data.dict()
+                elif hasattr(input_data, '__dict__'):
+                    input_data = input_data.__dict__
+                else:
+                    input_data = {}
+            table_name = input_data.get("table_name", "")
+        else:
+            table_name = ""
     if not table_name:
         # 🔴 第一道防线：返回特定错误字符串
         return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
@@ -156,9 +209,21 @@ class ListTablesInput(BaseModel):
     pass
 
 
-def list_available_tables_func(input_data: Dict[str, Any]) -> str:
+def list_available_tables_func(input_data: Dict[str, Any] = None) -> str:
     """列出所有可用的表"""
     global _mcp_client_wrapper
+    
+    # 处理空输入或不同类型的输入（LangChain可能传递BaseModel对象）
+    if input_data is None:
+        input_data = {}
+    elif not isinstance(input_data, dict):
+        # 如果是BaseModel对象，转换为dict
+        if hasattr(input_data, 'dict'):
+            input_data = input_data.dict()
+        elif hasattr(input_data, '__dict__'):
+            input_data = input_data.__dict__
+        else:
+            input_data = {}
     
     if not _mcp_client_wrapper:
         # 🔴 第一道防线：返回特定错误字符串
@@ -173,6 +238,67 @@ def list_available_tables_func(input_data: Dict[str, Any]) -> str:
         if isinstance(result, str) and (result.startswith("错误") or result.startswith("Error") or "失败" in result):
             logger.warning(f"⚠️ [第一道防线] 列出表返回错误: {result}")
             return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+        
+        # 🔥 修复：排除系统表，只返回用户数据表
+        # 系统表列表（需要排除的表）
+        system_tables = {
+            'api_keys', 'audit_logs', 'data_source_connections', 
+            'sessions', 'users', 'tenants', 'queries', 'query_results',
+            'migrations', 'schema_migrations', 'pg_', 'information_schema',
+            'pg_catalog', 'pg_toast', 'pg_temp'
+        }
+        
+        # 如果结果是字符串，尝试解析并过滤
+        if isinstance(result, str):
+            # 尝试解析 JSON 格式的表列表
+            import json
+            try:
+                tables_data = json.loads(result)
+                if isinstance(tables_data, list):
+                    # 过滤掉系统表
+                    filtered_tables = [
+                        table for table in tables_data 
+                        if not any(sys_table in str(table).lower() for sys_table in system_tables)
+                    ]
+                    if filtered_tables:
+                        result = json.dumps(filtered_tables, ensure_ascii=False)
+                    else:
+                        # 如果没有用户表，返回空列表
+                        result = "[]"
+                elif isinstance(tables_data, dict):
+                    # 如果是字典格式，尝试过滤
+                    filtered_data = {
+                        k: v for k, v in tables_data.items()
+                        if not any(sys_table in str(k).lower() for sys_table in system_tables)
+                    }
+                    if filtered_data:
+                        result = json.dumps(filtered_data, ensure_ascii=False)
+                    else:
+                        result = "{}"
+            except (json.JSONDecodeError, TypeError):
+                # 如果不是 JSON 格式，尝试简单的字符串过滤
+                lines = result.split('\n')
+                filtered_lines = [
+                    line for line in lines
+                    if not any(sys_table in line.lower() for sys_table in system_tables)
+                ]
+                result = '\n'.join(filtered_lines) if filtered_lines else "未找到用户数据表"
+        elif isinstance(result, (list, dict)):
+            # 如果结果是列表或字典，直接过滤
+            import json
+            if isinstance(result, list):
+                filtered_result = [
+                    item for item in result
+                    if not any(sys_table in str(item).lower() for sys_table in system_tables)
+                ]
+                result = json.dumps(filtered_result, ensure_ascii=False) if filtered_result else "[]"
+            else:
+                filtered_result = {
+                    k: v for k, v in result.items()
+                    if not any(sys_table in str(k).lower() for sys_table in system_tables)
+                }
+                result = json.dumps(filtered_result, ensure_ascii=False) if filtered_result else "{}"
+        
         return result
     except Exception as e:
         logger.error(f"⚠️ [第一道防线] 列出表异常: {e}", exc_info=True)
@@ -192,22 +318,192 @@ list_available_tables = StructuredTool.from_function(
 # File Data Source Tools (自定义工具，处理 MinIO 文件路径)
 # ============================================================
 
+class InspectFileInput(BaseModel):
+    """检查文件工具输入"""
+    file_path: str = Field(description="🚨 文件路径（必填！必须使用用户问题或系统提示中提供的实际文件路径，如 file://data-sources/... 或 /app/data/... 或 local:///app/uploads/...。绝对不要使用示例路径或猜测路径！）")
+
+
+def inspect_file_func(input_data: Dict[str, Any] = None, file_path: str = None) -> str:
+    """
+    检查文件结构（Excel/CSV）
+    
+    对于Excel文件，返回所有工作表名称和基本信息
+    对于CSV文件，返回列信息和前几行数据
+    """
+    # 处理参数：StructuredTool.from_function可能直接传递关键字参数，也可能传递input_data字典
+    if file_path:
+        pass  # 使用file_path参数
+    elif input_data:
+        # 处理字典输入
+        if not isinstance(input_data, dict):
+            # 如果是BaseModel对象，转换为dict
+            if hasattr(input_data, 'dict'):
+                input_data = input_data.dict()
+            elif hasattr(input_data, '__dict__'):
+                input_data = input_data.__dict__
+            else:
+                input_data = {}
+        file_path = input_data.get("file_path", "")
+    else:
+        file_path = ""
+    
+    if not file_path:
+        # 🔴 第一道防线：返回特定错误字符串
+        return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+    
+    # --- Debug Info ---
+    current_dir = os.getcwd()
+    logger.info(f"🔍 [Debug] Current Dir: {current_dir}")
+    logger.info(f"🔍 [Debug] Input file_path: {file_path}")
+    
+    # 🔥 修复：强制使用动态文件发现（仅对Excel文件）
+    # 对于Excel文件，直接使用动态文件发现，忽略用户提供的路径（因为文件可能被重命名为UUID）
+    is_excel_file = file_path and (file_path.endswith('.xlsx') or file_path.endswith('.xls') or '.xlsx' in file_path.lower() or '.xls' in file_path.lower())
+    
+    if is_excel_file:
+        # 🔥 强制使用动态文件发现
+        try:
+            logger.info(f"🔥 [强制动态文件发现] 检测到Excel文件，使用动态文件发现: {file_path}")
+            container_file_path = get_latest_excel_file("/app/uploads")
+            logger.info(f"✅ [强制动态文件发现] 成功发现Excel文件: {container_file_path}")
+        except FileNotFoundError as e:
+            logger.error(f"❌ [第一道防线] 动态文件发现失败: {e}")
+            return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+        except Exception as e:
+            logger.error(f"❌ [第一道防线] 动态文件发现异常: {e}", exc_info=True)
+            return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+    else:
+        # 对于非Excel文件（如CSV），使用原有的路径解析逻辑
+        # 🔧 修复：使用新的路径提取和解析函数
+        container_file_path = resolve_file_path_with_fallback(file_path)
+        
+        # 如果路径解析失败，尝试从MinIO下载（仅当路径是file://格式时）
+        if not container_file_path and file_path.startswith("file://"):
+            storage_path = file_path[7:]  # 移除 file:// 前缀
+            if storage_path.startswith("data-sources/"):
+                logger.info(f"🔍 [Debug] 尝试从MinIO下载: {storage_path}")
+                file_data = minio_service.download_file(
+                    bucket_name="data-sources",
+                    object_name=storage_path
+                )
+                
+                if file_data:
+                    # MinIO下载成功，保存到容器内临时目录
+                    temp_dir = os.getenv("TEMP", "/tmp")
+                    if not os.path.exists(temp_dir):
+                        os.makedirs(temp_dir, exist_ok=True)
+                    
+                    filename = os.path.basename(storage_path)
+                    container_file_path = os.path.join(temp_dir, filename)
+                    
+                    try:
+                        with open(container_file_path, "wb") as f:
+                            f.write(file_data)
+                        logger.info(f"✅ 文件已从MinIO下载到容器内路径: {container_file_path}")
+                    except Exception as e:
+                        logger.error(f"⚠️ [第一道防线] 写入临时文件失败: {e}", exc_info=True)
+                        return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+        
+        # 最终检查：如果仍然没有找到文件
+        if not container_file_path or not os.path.exists(container_file_path):
+            logger.error(f"❌ [第一道防线] 无法找到或访问文件: {file_path}")
+            return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+    
+    # 读取文件信息
+    try:
+        if container_file_path.endswith('.xlsx') or container_file_path.endswith('.xls'):
+            # Excel文件：返回工作表列表和基本信息
+            try:
+                excel_file = pd.ExcelFile(container_file_path, engine='openpyxl')
+                sheet_names = excel_file.sheet_names
+                logger.info(f"📋 Excel文件可用工作表: {sheet_names}")
+                
+                # 读取第一个工作表获取列信息
+                first_sheet_df = pd.read_excel(container_file_path, sheet_name=sheet_names[0], engine='openpyxl', nrows=0)
+                columns = list(first_sheet_df.columns)
+                
+                result = f"文件类型: Excel\n"
+                result += f"工作表列表: {', '.join(sheet_names)}\n"
+                result += f"第一个工作表 '{sheet_names[0]}' 的列: {', '.join(columns)}\n"
+                result += f"总工作表数: {len(sheet_names)}"
+                
+                logger.info(f"✅ 成功读取Excel文件信息: {len(sheet_names)}个工作表")
+                return result
+            except Exception as e:
+                logger.error(f"❌ [第一道防线] 无法读取Excel文件结构: {e}", exc_info=True)
+                return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+        elif container_file_path.endswith('.csv'):
+            # CSV文件：返回列信息和前几行
+            try:
+                df = pd.read_csv(container_file_path, nrows=5)  # 只读取前5行用于预览
+                columns = list(df.columns)
+                
+                result = f"文件类型: CSV\n"
+                result += f"列名: {', '.join(columns)}\n"
+                result += f"总列数: {len(columns)}\n"
+                result += f"预览数据（前5行）:\n{df.to_string()}"
+                
+                logger.info(f"✅ 成功读取CSV文件信息: {len(columns)}列")
+                return result
+            except Exception as e:
+                logger.error(f"❌ [第一道防线] 无法读取CSV文件: {e}", exc_info=True)
+                return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+        else:
+            logger.warning(f"⚠️ [第一道防线] 不支持的文件类型: {container_file_path}")
+            return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+    except Exception as e:
+        logger.error(f"❌ 读取文件失败: {e}", exc_info=True)
+        return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+
+
+inspect_file = StructuredTool.from_function(
+    func=inspect_file_func,
+    name="inspect_file",
+    description="检查文件结构（Excel/CSV）。对于Excel文件，返回所有工作表名称和列信息；对于CSV文件，返回列信息和预览数据。🚨 必须使用用户问题或系统提示中提供的实际文件路径，绝对不要使用示例路径或猜测路径！",
+    args_schema=InspectFileInput,
+)
+
+
 class AnalyzeDataFrameInput(BaseModel):
     """分析 DataFrame 工具输入"""
     query: str = Field(description="Pandas 查询代码（例如: df.head(), df.describe(), df.groupby(...) 等）")
-    file_path: str = Field(description="文件路径（可以是 MinIO 路径 file://data-sources/... 或容器内绝对路径）")
-    sheet_name: Optional[str] = Field(default=None, description="Excel工作表名称（可选，仅用于Excel文件。如果不指定，默认读取第一个工作表）")
+    file_path: str = Field(description="🚨 文件路径（必填！必须使用用户问题或系统提示中提供的实际文件路径，如 file://data-sources/... 或 /app/data/... 或 local:///app/uploads/...。绝对不要使用示例路径或猜测路径！）")
+    sheet_name: Optional[str] = Field(default=None, description="Excel工作表名称（可选，仅用于Excel文件。⚠️ 必须使用 inspect_file 工具返回的实际工作表名称，不能猜测！如果不指定，默认读取第一个工作表）")
 
 
-def analyze_dataframe_func(input_data: Dict[str, Any]) -> str:
+def analyze_dataframe_func(input_data: Dict[str, Any] = None, query: str = None, file_path: str = None, sheet_name: Optional[str] = None) -> str:
     """
     使用 Pandas 分析数据文件（Excel/CSV）
     
     支持从 MinIO 下载文件到容器内临时目录，然后使用容器内绝对路径读取
     """
-    query = input_data.get("query", "")
-    file_path = input_data.get("file_path", "")
-    sheet_name = input_data.get("sheet_name", None)
+    # 处理参数：StructuredTool.from_function可能直接传递关键字参数，也可能传递input_data字典
+    if query is not None:
+        pass  # 使用query参数
+    elif file_path is not None:
+        pass  # 使用file_path参数
+    elif input_data is not None:
+        # 处理字典输入
+        if not isinstance(input_data, dict):
+            # 如果是BaseModel对象，转换为dict
+            if hasattr(input_data, 'dict'):
+                input_data = input_data.dict()
+            elif hasattr(input_data, '__dict__'):
+                input_data = input_data.__dict__
+            else:
+                input_data = {}
+        
+        # 从字典中提取参数
+        if query is None:
+            query = input_data.get("query", "")
+        if file_path is None:
+            file_path = input_data.get("file_path", "")
+        if sheet_name is None:
+            sheet_name = input_data.get("sheet_name", None)
+    else:
+        query = ""
+        file_path = ""
+        sheet_name = None
     
     if not query:
         # 🔴 第一道防线：返回特定错误字符串
@@ -221,162 +517,75 @@ def analyze_dataframe_func(input_data: Dict[str, Any]) -> str:
     logger.info(f"🔍 [Debug] Current Dir: {current_dir}")
     logger.info(f"🔍 [Debug] Input file_path: {file_path}")
     
-    # --- 路径修正逻辑 ---
-    # 容器内的标准数据目录（挂载了本地 scripts 目录）
-    CONTAINER_DATA_DIR = "/app/data"
-    CONTAINER_UPLOADS_DIR = "/app/uploads"
+    # 🔥 修复：强制使用动态文件发现（仅对Excel文件）
+    # 对于Excel文件，直接使用动态文件发现，忽略用户提供的路径（因为文件可能被重命名为UUID）
+    is_excel_file = file_path and (file_path.endswith('.xlsx') or file_path.endswith('.xls') or '.xlsx' in file_path.lower() or '.xls' in file_path.lower())
     
-    # 解析文件路径（可能是 MinIO 路径、Windows 路径或容器内路径）
-    container_file_path = None
-    
-    # 🔧 修复：支持多种路径格式
-    # 1. 本地存储路径（local:///app/uploads/...）
-    if file_path.startswith("local://"):
-        # 移除 local:// 前缀，直接使用容器内路径
-        container_file_path = file_path[8:]  # 移除 local:// 前缀
-        logger.info(f"🔍 [Debug] 检测到本地存储路径: {container_file_path}")
-        # 验证路径是否存在
-        if not os.path.exists(container_file_path):
-            logger.warning(f"⚠️ [第一道防线] 本地存储路径不存在: {container_file_path}")
-            # 尝试在 /app/data 目录查找同名文件
-            filename = os.path.basename(container_file_path)
-            fallback_path = os.path.join(CONTAINER_DATA_DIR, filename)
-            if os.path.exists(fallback_path):
-                container_file_path = fallback_path
-                logger.info(f"✅ 在 /app/data 目录找到文件: {container_file_path}")
-            else:
-                logger.error(f"❌ [第一道防线] 文件不存在: {container_file_path} 和 {fallback_path}")
-                return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
-    # 2. 容器内绝对路径（如 /app/uploads/data-sources/...）
-    elif file_path.startswith("/"):
-        # 已经是容器内绝对路径
-        container_file_path = file_path
-        logger.info(f"🔍 [Debug] 检测到容器内绝对路径: {container_file_path}")
-        # 🔥 关键修复：验证文件是否存在
-        if not os.path.exists(container_file_path):
-            logger.error(f"❌ [第一道防线] 容器内绝对路径不存在: {container_file_path}")
-            # 尝试从MinIO下载（如果路径看起来像MinIO路径）
-            if "data-sources" in container_file_path:
-                # 提取相对路径
-                relative_path = container_file_path.replace("/app/uploads/", "").replace("/app/data/", "")
-                if relative_path.startswith("data-sources/"):
-                    logger.warning(f"⚠️ 尝试从MinIO下载: {relative_path}")
-                    file_data = minio_service.download_file(
-                        bucket_name="data-sources",
-                        object_name=relative_path
-                    )
-                    if file_data:
-                        # 保存到指定路径
-                        os.makedirs(os.path.dirname(container_file_path), exist_ok=True)
+    if is_excel_file:
+        # 🔥 强制使用动态文件发现
+        try:
+            logger.info(f"🔥 [强制动态文件发现] 检测到Excel文件，使用动态文件发现: {file_path}")
+            container_file_path = get_latest_excel_file("/app/uploads")
+            logger.info(f"✅ [强制动态文件发现] 成功发现Excel文件: {container_file_path}")
+        except FileNotFoundError as e:
+            logger.error(f"❌ [第一道防线] 动态文件发现失败: {e}")
+            # 列出当前目录和标准目录的文件，帮助调试
+            CONTAINER_UPLOADS_DIR = "/app/uploads"
+            CONTAINER_DATA_DIR = "/app/data"
+            files_in_current_dir = os.listdir(current_dir) if os.path.exists(current_dir) else []
+            files_in_data_dir = os.listdir(CONTAINER_DATA_DIR) if os.path.exists(CONTAINER_DATA_DIR) else []
+            files_in_uploads_dir = os.listdir(CONTAINER_UPLOADS_DIR) if os.path.exists(CONTAINER_UPLOADS_DIR) else []
+            logger.warning(f"   Files in {current_dir}: {files_in_current_dir}")
+            logger.warning(f"   Files in {CONTAINER_DATA_DIR}: {files_in_data_dir}")
+            logger.warning(f"   Files in {CONTAINER_UPLOADS_DIR}: {files_in_uploads_dir}")
+            return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+        except Exception as e:
+            logger.error(f"❌ [第一道防线] 动态文件发现异常: {e}", exc_info=True)
+            return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
+    else:
+        # 对于非Excel文件（如CSV），使用原有的路径解析逻辑
+        # 🔧 修复：使用新的路径提取和解析函数
+        container_file_path = resolve_file_path_with_fallback(file_path)
+        
+        # 如果路径解析失败，尝试从MinIO下载（仅当路径是file://格式时）
+        if not container_file_path and file_path.startswith("file://"):
+            storage_path = file_path[7:]  # 移除 file:// 前缀
+            if storage_path.startswith("data-sources/"):
+                logger.info(f"🔍 [Debug] 尝试从MinIO下载: {storage_path}")
+                file_data = minio_service.download_file(
+                    bucket_name="data-sources",
+                    object_name=storage_path
+                )
+                
+                if file_data:
+                    # MinIO下载成功，保存到容器内临时目录
+                    temp_dir = os.getenv("TEMP", "/tmp")
+                    if not os.path.exists(temp_dir):
+                        os.makedirs(temp_dir, exist_ok=True)
+                    
+                    filename = os.path.basename(storage_path)
+                    container_file_path = os.path.join(temp_dir, filename)
+                    
+                    try:
                         with open(container_file_path, "wb") as f:
                             f.write(file_data)
-                        logger.info(f"✅ 从MinIO下载并保存到: {container_file_path}")
-                    else:
+                        logger.info(f"✅ 文件已从MinIO下载到容器内路径: {container_file_path}")
+                    except Exception as e:
+                        logger.error(f"⚠️ [第一道防线] 写入临时文件失败: {e}", exc_info=True)
                         return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
-            else:
-                return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
-    # 3. MinIO 路径（file://data-sources/...）
-    elif file_path.startswith("file://"):
-        storage_path = file_path[7:]  # 移除 file:// 前缀
         
-        # 检查是否是 MinIO 路径（data-sources/...）
-        if storage_path.startswith("data-sources/"):
-            logger.info(f"🔍 [Debug] 检测到 MinIO 路径，准备下载: {storage_path}")
-            
-            # 从 MinIO 下载文件
-            file_data = minio_service.download_file(
-                bucket_name="data-sources",
-                object_name=storage_path
-            )
-            
-            if not file_data:
-                # 🔧 修复：MinIO下载失败时，尝试从本地文件系统读取
-                logger.warning(f"⚠️ MinIO下载失败，尝试从本地文件系统读取: {storage_path}")
-                
-                # 尝试从本地上传目录读取
-                local_paths = [
-                    os.path.join(CONTAINER_UPLOADS_DIR, storage_path),  # /app/uploads/data-sources/...
-                    os.path.join(CONTAINER_DATA_DIR, os.path.basename(storage_path)),  # /app/data/filename
-                ]
-                
-                found_local = False
-                for local_path in local_paths:
-                    if os.path.exists(local_path):
-                        container_file_path = local_path
-                        found_local = True
-                        logger.info(f"✅ 从本地文件系统找到文件: {container_file_path}")
-                        break
-                
-                if not found_local:
-                    # 列出当前目录文件，帮助调试
-                    files_in_dir = os.listdir(current_dir) if os.path.exists(current_dir) else []
-                    files_in_uploads = os.listdir(CONTAINER_UPLOADS_DIR) if os.path.exists(CONTAINER_UPLOADS_DIR) else []
-                    logger.warning(f"⚠️ [第一道防线] 无法从 MinIO 或本地文件系统获取文件: {storage_path}")
-                    logger.warning(f"   Files in {current_dir}: {files_in_dir}")
-                    logger.warning(f"   Files in {CONTAINER_UPLOADS_DIR}: {files_in_uploads}")
-                    # 🔴 第一道防线：返回特定错误字符串
-                    return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
-            else:
-                # MinIO下载成功，保存到容器内临时目录
-                temp_dir = os.getenv("TEMP", "/tmp")
-                if not os.path.exists(temp_dir):
-                    os.makedirs(temp_dir, exist_ok=True)
-                
-                # 从路径提取文件名
-                filename = os.path.basename(storage_path)
-                container_file_path = os.path.join(temp_dir, filename)
-                
-                # 写入临时文件
-                try:
-                    with open(container_file_path, "wb") as f:
-                        f.write(file_data)
-                    logger.info(f"✅ 文件已从MinIO下载到容器内路径: {container_file_path}")
-                except Exception as e:
-                    logger.error(f"⚠️ [第一道防线] 写入临时文件失败: {e}", exc_info=True)
-                    # 🔴 第一道防线：返回特定错误字符串
-                    return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
-        else:
-            # 不是 MinIO 路径，直接使用
-            container_file_path = storage_path
-    else:
-        # 不是 file:// 前缀，可能是 Windows 路径或其他路径
-        # 检查是否是 Windows 路径（C:\... 或包含反斜杠）
-        if "\\" in file_path or (len(file_path) > 1 and file_path[1] == ":"):
-            # Windows 路径，提取文件名并转换为容器内路径
-            filename = os.path.basename(file_path)
-            container_file_path = os.path.join(CONTAINER_DATA_DIR, filename)
-            logger.info(f"🔄 Path Correction: Windows path '{file_path}' -> Container path '{container_file_path}'")
-        else:
-            # 其他路径，直接使用
-            container_file_path = file_path
-    
-    # 检查文件是否存在
-    if not os.path.exists(container_file_path):
-        # 尝试在容器数据目录查找
-        filename = os.path.basename(container_file_path)
-        potential_paths = [
-            os.path.join(CONTAINER_DATA_DIR, filename),  # /app/data/filename
-            os.path.join(current_dir, filename),  # 当前目录
-            container_file_path  # 原始路径
-        ]
-        
-        # 再次列出当前目录和容器数据目录的文件，帮用户找原因
-        files_in_current_dir = os.listdir(current_dir) if os.path.exists(current_dir) else []
-        files_in_data_dir = os.listdir(CONTAINER_DATA_DIR) if os.path.exists(CONTAINER_DATA_DIR) else []
-        logger.warning(f"⚠️ File not found at {container_file_path}")
-        logger.warning(f"   Files in {current_dir}: {files_in_current_dir}")
-        logger.warning(f"   Files in {CONTAINER_DATA_DIR}: {files_in_data_dir}")
-        
-        # 尝试所有可能的路径
-        for potential_path in potential_paths:
-            if os.path.exists(potential_path):
-                logger.info(f"✅ Found file at: {potential_path}")
-                container_file_path = potential_path
-                break
-        else:
-            # 所有路径都不存在
-            logger.warning(f"⚠️ [第一道防线] 文件不存在: {filename}")
-            # 🔴 第一道防线：返回特定错误字符串
+        # 最终检查：如果仍然没有找到文件
+        if not container_file_path or not os.path.exists(container_file_path):
+            logger.error(f"❌ [第一道防线] 无法找到或访问文件: {file_path}")
+            # 列出当前目录和标准目录的文件，帮助调试
+            CONTAINER_UPLOADS_DIR = "/app/uploads"
+            CONTAINER_DATA_DIR = "/app/data"
+            files_in_current_dir = os.listdir(current_dir) if os.path.exists(current_dir) else []
+            files_in_data_dir = os.listdir(CONTAINER_DATA_DIR) if os.path.exists(CONTAINER_DATA_DIR) else []
+            files_in_uploads_dir = os.listdir(CONTAINER_UPLOADS_DIR) if os.path.exists(CONTAINER_UPLOADS_DIR) else []
+            logger.warning(f"   Files in {current_dir}: {files_in_current_dir}")
+            logger.warning(f"   Files in {CONTAINER_DATA_DIR}: {files_in_data_dir}")
+            logger.warning(f"   Files in {CONTAINER_UPLOADS_DIR}: {files_in_uploads_dir}")
             return 'SYSTEM ERROR: Data Access Failed. The file could not be read. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法读取数据文件，请检查上传路径"。'
     
     # 读取文件

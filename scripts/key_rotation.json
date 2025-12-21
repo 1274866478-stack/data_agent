@@ -1,0 +1,42 @@
+{
+  "minio_access_key": {
+    "key_type": "minio_access_key",
+    "service": "MinIO",
+    "last_rotation": null,
+    "rotation_interval_days": 90,
+    "is_rotated": false,
+    "rotation_notes": "系统自动注册的默认密钥",
+    "created_at": "2025-12-19T19:25:50.915208",
+    "next_rotation_date": null
+  },
+  "minio_secret_key": {
+    "key_type": "minio_secret_key",
+    "service": "MinIO",
+    "last_rotation": null,
+    "rotation_interval_days": 90,
+    "is_rotated": false,
+    "rotation_notes": "系统自动注册的默认密钥",
+    "created_at": "2025-12-19T19:25:50.918814",
+    "next_rotation_date": null
+  },
+  "zhipu_api_key": {
+    "key_type": "zhipuai_api_key",
+    "service": "ZhipuAI",
+    "last_rotation": null,
+    "rotation_interval_days": 180,
+    "is_rotated": false,
+    "rotation_notes": "系统自动注册的默认密钥",
+    "created_at": "2025-12-19T19:25:50.940670",
+    "next_rotation_date": null
+  },
+  "database_password": {
+    "key_type": "database_password",
+    "service": "PostgreSQL",
+    "last_rotation": null,
+    "rotation_interval_days": 120,
+    "is_rotated": false,
+    "rotation_notes": "系统自动注册的默认密钥",
+    "created_at": "2025-12-19T19:25:50.962887",
+    "next_rotation_date": null
+  }
+}

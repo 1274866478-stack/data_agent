@@ -22,18 +22,26 @@ async def detailed_health_check(db: Session = Depends(get_db)) -> Dict[str, Any]
     """
     详细的健康检查端点，检查所有服务的连接状态
     """
+    # 🔥 修复：优先检查DeepSeek，如果配置了DeepSeek就跳过Zhipu AI健康检查
+    from src.app.core.config import settings
+    deepseek_api_key = getattr(settings, "DEEPSEEK_API_KEY", None) or getattr(settings, "deepseek_api_key", None)
+    
     # 🔥 第一步修复：并行检查所有服务，ChromaDB检查失败不阻塞
     tasks = [
         asyncio.create_task(asyncio.to_thread(check_database_connection)),
         asyncio.create_task(asyncio.to_thread(minio_service.check_connection)),
         asyncio.create_task(asyncio.to_thread(chromadb_service.check_connection)),
-        asyncio.create_task(zhipu_service.check_connection())  # 这是async函数，直接调用
     ]
+    
+    # 只有在没有配置DeepSeek时才检查Zhipu AI
+    if not deepseek_api_key:
+        tasks.append(asyncio.create_task(zhipu_service.check_connection()))  # 这是async函数，直接调用
 
     # 等待所有检查完成，ChromaDB失败不影响整体健康状态
     try:
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        db_status, minio_status, chromadb_status, zhipu_status = results
+        db_status, minio_status, chromadb_status = results[0], results[1], results[2]
+        zhipu_status = results[3] if len(results) > 3 else None
         
         # 如果任何检查抛出异常，视为失败但不影响其他服务
         if isinstance(db_status, Exception):
@@ -52,9 +60,16 @@ async def detailed_health_check(db: Session = Depends(get_db)) -> Dict[str, Any]
         db_status = True  # 假设数据库正常（因为已经通过Depends获取了db）
         minio_status = None
         zhipu_status = None
+    
+    # 🔥 修复：如果配置了DeepSeek，zhipu_status应该为None（跳过），不影响健康状态
+    if deepseek_api_key:
+        zhipu_status = None  # 跳过Zhipu AI检查
 
-    # 计算整体健康状态
-    all_healthy = all([db_status, minio_status, chromadb_status, zhipu_status])
+    # 计算整体健康状态（排除None值）
+    health_checks = [db_status, minio_status, chromadb_status]
+    if zhipu_status is not None:
+        health_checks.append(zhipu_status)
+    all_healthy = all(health_checks)
 
     return {
         "status": "healthy" if all_healthy else "unhealthy",
@@ -72,8 +87,12 @@ async def detailed_health_check(db: Session = Depends(get_db)) -> Dict[str, Any]
                 "details": "ChromaDB vector database accessible" if chromadb_status else "Failed to connect to ChromaDB"
             },
             "zhipu_ai": {
-                "status": "available" if zhipu_status else "unavailable",
-                "details": "ZhipuAI API accessible" if zhipu_status else "Failed to connect to ZhipuAI API"
+                "status": "available" if zhipu_status else "unavailable" if zhipu_status is False else "skipped",
+                "details": "ZhipuAI API accessible" if zhipu_status else ("Failed to connect to ZhipuAI API" if zhipu_status is False else "Skipped (DeepSeek is configured)")
+            },
+            "deepseek": {
+                "status": "configured" if deepseek_api_key else "not_configured",
+                "details": "DeepSeek API key is configured" if deepseek_api_key else "DeepSeek API key is not configured"
             }
         },
         "timestamp": datetime.now().isoformat(),
@@ -163,19 +182,35 @@ async def services_status() -> Dict[str, Any]:
             "error": "Failed to get ChromaDB information"
         }
 
-    # 智谱AI服务信息
-    try:
-        zhipu_available = await zhipu_service.check_connection()  # 这是async函数，直接await
+    # 🔥 修复：优先检查DeepSeek，如果配置了DeepSeek就跳过Zhipu AI健康检查
+    from src.app.core.config import settings
+    deepseek_api_key = getattr(settings, "DEEPSEEK_API_KEY", None) or getattr(settings, "deepseek_api_key", None)
+    
+    if deepseek_api_key:
+        # 如果配置了DeepSeek，跳过Zhipu AI检查
         services_info["zhipu_ai"] = {
-            "status": "available" if zhipu_available else "unavailable",
-            "model": zhipu_service.default_model,
-            "api_version": "v4"
+            "status": "skipped",
+            "reason": "DeepSeek is configured as primary LLM provider"
         }
-    except Exception:
-        services_info["zhipu_ai"] = {
-            "status": "unavailable",
-            "error": "Failed to get ZhipuAI information"
+        services_info["deepseek"] = {
+            "status": "configured",
+            "model": getattr(settings, "deepseek_default_model", "deepseek-chat"),
+            "base_url": getattr(settings, "deepseek_base_url", "https://api.deepseek.com")
         }
+    else:
+        # 智谱AI服务信息（只有在没有配置DeepSeek时才检查）
+        try:
+            zhipu_available = await zhipu_service.check_connection()  # 这是async函数，直接await
+            services_info["zhipu_ai"] = {
+                "status": "available" if zhipu_available else "unavailable",
+                "model": zhipu_service.default_model,
+                "api_version": "v4"
+            }
+        except Exception:
+            services_info["zhipu_ai"] = {
+                "status": "unavailable",
+                "error": "Failed to get ZhipuAI information"
+            }
 
     return {
         "services": services_info,

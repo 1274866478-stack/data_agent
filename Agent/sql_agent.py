@@ -20,6 +20,52 @@ from terminal_viz import render_response
 from data_transformer import sql_result_to_echarts_data, sql_result_to_mcp_echarts_data
 from chart_service import ChartRequest, generate_chart_simple, ChartResponse
 
+# 🔥 强制导入文件数据源工具（多种路径尝试）
+_inspect_file_tool = None
+_analyze_dataframe_tool = None
+
+try:
+    import sys
+    from pathlib import Path
+    
+    # 尝试多种导入路径
+    import_paths = [
+        # 路径1: 从项目根目录导入
+        (Path(__file__).parent.parent / "backend" / "src", "app.services.agent.tools"),
+        # 路径2: 从 backend 目录导入
+        (Path(__file__).parent.parent / "backend" / "src" / "app" / "services" / "agent", "tools"),
+        # 路径3: 直接导入（如果已经在路径中）
+        (None, "src.app.services.agent.tools"),
+    ]
+    
+    for backend_path, import_module in import_paths:
+        try:
+            if backend_path and str(backend_path) not in sys.path:
+                sys.path.insert(0, str(backend_path))
+            
+            module = __import__(import_module, fromlist=['inspect_file', 'analyze_dataframe'])
+            _inspect_file_tool = getattr(module, 'inspect_file', None)
+            _analyze_dataframe_tool = getattr(module, 'analyze_dataframe', None)
+            
+            if _inspect_file_tool and _analyze_dataframe_tool:
+                print(f"✅ 文件数据源工具导入成功 (路径: {import_module})")
+                print(f"   - inspect_file: {getattr(_inspect_file_tool, 'name', 'unknown')}")
+                print(f"   - analyze_dataframe: {getattr(_analyze_dataframe_tool, 'name', 'unknown')}")
+                break
+        except (ImportError, AttributeError) as e:
+            continue
+    
+    if not _inspect_file_tool or not _analyze_dataframe_tool:
+        raise ImportError("所有导入路径都失败了")
+        
+except Exception as e:
+    import os
+    print(f"⚠️ 文件数据源工具导入失败: {e}")
+    print(f"   当前工作目录: {os.getcwd()}")
+    print(f"   脚本路径: {Path(__file__).absolute()}")
+    print(f"   Python 路径: {sys.path[:3]}")
+    print("   提示: 这些工具可能在某些环境下不可用，但会尝试继续运行")
+
 import base64
 import os
 from datetime import datetime
@@ -416,10 +462,32 @@ _cached_checkpointer = None
 
 def _get_mcp_config():
     """获取 MCP 服务器配置"""
+    import shutil
+    import sys
+    
+    # Check if npx is available
+    npx_command = "npx.cmd" if sys.platform == "win32" else "npx"
+    npx_path = shutil.which(npx_command)
+    
+    if not npx_path:
+        error_msg = (
+            f"❌ npx 命令不可用。MCP PostgreSQL 服务器需要 Node.js/npm。\n"
+            f"   请安装 Node.js 或设置 DISABLE_MCP_TOOLS=true 使用自定义工具。\n"
+            f"   当前平台: {sys.platform}, 查找的命令: {npx_command}"
+        )
+        print(error_msg)
+        raise RuntimeError(
+            f"npx command not found. Node.js is required for MCP servers. "
+            f"Platform: {sys.platform}, Command: {npx_command}. "
+            f"Set DISABLE_MCP_TOOLS=true to use custom tools instead."
+        )
+    
+    print(f"✅ npx 可用: {npx_path}")
+    
     mcp_config = {
         "postgres": {
             "transport": "stdio",
-            "command": "npx",
+            "command": npx_command,
             "args": [
                 "-y",
                 "@modelcontextprotocol/server-postgres",
@@ -455,11 +523,74 @@ async def _get_or_create_agent():
     print("🔄 首次初始化 Agent（后续查询将复用连接）...")
 
     # 创建 MCP 客户端
-    mcp_config = _get_mcp_config()
-    _cached_mcp_client = MultiServerMCPClient(mcp_config)
+    try:
+        mcp_config = _get_mcp_config()
+        _cached_mcp_client = MultiServerMCPClient(mcp_config)
+    except RuntimeError as e:
+        print(f"❌ MCP 配置失败: {e}")
+        print("   提示: 设置 DISABLE_MCP_TOOLS=true 可以禁用 MCP 并使用自定义工具")
+        raise
+    except Exception as e:
+        print(f"❌ MCP 客户端创建失败: {e}")
+        raise
 
     # 获取工具
-    _cached_tools = await _cached_mcp_client.get_tools()
+    try:
+        _cached_tools = await _cached_mcp_client.get_tools()
+        print(f"✅ MCP 工具加载成功，共 {len(_cached_tools)} 个工具")
+        
+        # 🔥🔥🔥 强制添加文件数据源工具（硬编码方式，不依赖任何条件）
+        tool_names_before = [getattr(t, "name", str(t)) for t in _cached_tools]
+        print(f"📋 MCP 工具列表: {', '.join(tool_names_before)}")
+        
+        # 强制添加 inspect_file
+        if _inspect_file_tool:
+            tool_name = getattr(_inspect_file_tool, "name", "inspect_file")
+            if tool_name not in tool_names_before:
+                print(f"➕ [强制添加] inspect_file 工具")
+                _cached_tools.append(_inspect_file_tool)
+            else:
+                print(f"ℹ️ inspect_file 工具已存在于 MCP 工具列表中")
+        else:
+            print(f"⚠️ inspect_file 工具未导入，无法添加")
+        
+        # 强制添加 analyze_dataframe
+        if _analyze_dataframe_tool:
+            tool_name = getattr(_analyze_dataframe_tool, "name", "analyze_dataframe")
+            if tool_name not in tool_names_before:
+                print(f"➕ [强制添加] analyze_dataframe 工具")
+                _cached_tools.append(_analyze_dataframe_tool)
+            else:
+                print(f"ℹ️ analyze_dataframe 工具已存在于 MCP 工具列表中")
+        else:
+            print(f"⚠️ analyze_dataframe 工具未导入，无法添加")
+        
+        # 最终验证
+        final_tool_count = len(_cached_tools)
+        final_tool_names = [getattr(t, "name", str(t)) for t in _cached_tools]
+        print(f"\n{'='*60}")
+        print(f"✅ FORCED REGISTRATION: 最终工具列表包含 {final_tool_count} 个工具")
+        print(f"   工具名称: {', '.join(final_tool_names)}")
+        print(f"   - inspect_file: {'✅' if 'inspect_file' in final_tool_names else '❌'}")
+        print(f"   - analyze_dataframe: {'✅' if 'analyze_dataframe' in final_tool_names else '❌'}")
+        print(f"{'='*60}\n")
+        
+    except FileNotFoundError as e:
+        error_message = str(e)
+        print(
+            f"❌ MCP 工具初始化失败：命令未找到\n"
+            f"   错误信息: {error_message}\n"
+            f"   可能原因: Node.js/npm 未安装或不在 PATH 中\n"
+            f"   解决方案: 安装 Node.js 或设置 DISABLE_MCP_TOOLS=true"
+        )
+        raise RuntimeError(
+            f"MCP initialization failed: command not found. "
+            f"Error: {error_message}. "
+            f"Install Node.js or set DISABLE_MCP_TOOLS=true"
+        ) from e
+    except Exception as e:
+        print(f"❌ MCP 工具加载失败: {e}")
+        raise
 
     # 创建 LLM
     llm = create_llm()

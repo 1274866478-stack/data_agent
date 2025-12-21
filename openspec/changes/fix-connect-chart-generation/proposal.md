@@ -23,3 +23,4 @@
   - `backend/src/app/services/agent/response_formatter.py` (API 响应格式化，确保 chart_image 字段正确)
   - `backend/src/app/services/agent_service.py` (图表路径提取和 Base64 编码)
 
+

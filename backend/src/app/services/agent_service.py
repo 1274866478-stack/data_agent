@@ -143,24 +143,79 @@ def convert_agent_response_to_query_response(
     Returns:
         Dict: 符合QueryResponseV3格式的字典
     """
+    # 🛡️ 通用安全属性访问辅助函数 - 支持 Pydantic 模型、字典和普通对象
+    def safe_get(obj, attr, default=None):
+        """
+        安全获取对象属性，支持多种数据类型
+        
+        Args:
+            obj: 对象（可以是 Pydantic 模型、字典或普通对象）
+            attr: 属性名
+            default: 默认值
+        
+        Returns:
+            属性值，如果不存在则返回默认值
+        """
+        try:
+            # Case 1: 字典类型
+            if isinstance(obj, dict):
+                return obj.get(attr, default)
+            
+            # Case 2: Pydantic 模型或其他对象
+            # 方法1: 直接属性访问
+            if hasattr(obj, attr):
+                value = getattr(obj, attr, default)
+                # 如果值是 None，也返回默认值（可选，根据需求调整）
+                return value if value is not None else default
+            
+            # 方法2: 尝试使用 Pydantic 的 .dict() 或 .model_dump()
+            try:
+                if hasattr(obj, 'dict'):
+                    obj_dict = obj.dict()
+                    return obj_dict.get(attr, default)
+                elif hasattr(obj, 'model_dump'):
+                    obj_dict = obj.model_dump()
+                    return obj_dict.get(attr, default)
+            except (AttributeError, TypeError):
+                pass
+            
+            # 方法3: 尝试 __dict__ 属性
+            try:
+                if hasattr(obj, '__dict__'):
+                    return obj.__dict__.get(attr, default)
+            except (AttributeError, TypeError):
+                pass
+            
+            return default
+        except Exception as e:
+            logger.debug(f"safe_get 访问属性 {attr} 时出错: {e}")
+            return default
+    
     # 将QueryResult转换为字典列表格式
     results = []
-    if agent_response.data and agent_response.data.rows:
-        for row in agent_response.data.rows:
-            row_dict = {}
-            for i, col in enumerate(agent_response.data.columns):
-                if i < len(row):
-                    row_dict[col] = row[i]
-            results.append(row_dict)
+    data_obj = safe_get(agent_response, 'data')
+    if data_obj:
+        rows = safe_get(data_obj, 'rows', [])
+        columns = safe_get(data_obj, 'columns', [])
+        if rows:
+            for row in rows:
+                row_dict = {}
+                for i, col in enumerate(columns):
+                    if i < len(row):
+                        row_dict[col] = row[i]
+                results.append(row_dict)
     
-    # 处理图表数据 - 优先使用 chart.chart_image 字段
+    # 🛡️ 健壮的图表图片提取 - 支持 Pydantic 模型、字典和普通对象
     chart_data = None
-    if agent_response.chart and agent_response.chart.chart_image:
-        # 直接使用 chart_image 字段（已经是 Base64 data URI 或 HTTP URL）
-        chart_data = agent_response.chart.chart_image
-    else:
-        # 降级：尝试从 answer 中提取（向后兼容）
-        chart_path = extract_chart_path_from_answer(agent_response.answer or "")
+    chart_obj = safe_get(agent_response, 'chart')
+    if chart_obj:
+        # 使用 safe_get 获取 chart_image
+        chart_data = safe_get(chart_obj, 'chart_image')
+    
+    # 降级：如果 chart_image 不存在，尝试从 answer 中提取（向后兼容）
+    if not chart_data:
+        answer = safe_get(agent_response, 'answer', '')
+        chart_path = extract_chart_path_from_answer(answer)
         if chart_path:
             # 如果是本地文件，转换为Base64
             if not (chart_path.startswith('http://') or chart_path.startswith('https://')):
@@ -171,47 +226,154 @@ def convert_agent_response_to_query_response(
     
     # 构建响应数据
     execution_result = None
-    if agent_response.success:
+    success = safe_get(agent_response, 'success', False)
+    if success:
+        # 🛡️ 安全访问所有 chart 属性
+        chart_type = None
+        chart_title = None
+        chart_obj = safe_get(agent_response, 'chart')
+        if chart_obj:
+            chart_type_obj = safe_get(chart_obj, 'chart_type')
+            if chart_type_obj:
+                if hasattr(chart_type_obj, 'value'):
+                    chart_type = chart_type_obj.value
+                else:
+                    chart_type = str(chart_type_obj)
+            chart_title = safe_get(chart_obj, 'title')
+        
+        # 🛡️ 安全访问 data 属性
+        data_obj = safe_get(agent_response, 'data')
+        data_columns = []
+        if data_obj:
+            data_columns = safe_get(data_obj, 'columns', [])
+        
         execution_result = {
-            "success": agent_response.success,
-            "data_columns": agent_response.data.columns if agent_response.data else [],
-            "chart_type": agent_response.chart.chart_type.value if agent_response.chart else None,
-            "chart_title": agent_response.chart.title if agent_response.chart else None,
+            "success": success,
+            "data_columns": data_columns,
+            "chart_type": chart_type,
+            "chart_title": chart_title,
             "chart_data": chart_data,  # 添加Base64编码的图表数据或URL
-            "echarts_option": agent_response.echarts_option  # 添加 ECharts 配置选项
+            "echarts_option": safe_get(agent_response, 'echarts_option')  # 🛡️ 安全访问 ECharts 配置选项
         }
     
-    # 🔴 第三道防线：提取metadata（如果存在）
-    metadata = None
-    if hasattr(agent_response, "metadata") and agent_response.metadata:
-        metadata = agent_response.metadata
-    elif hasattr(agent_response, "__dict__") and "metadata" in agent_response.__dict__:
-        metadata = agent_response.__dict__["metadata"]
+    # 🔴 第三道防线：提取metadata（如果存在）- 使用 safe_get
+    metadata = safe_get(agent_response, 'metadata')
+    if metadata and not isinstance(metadata, dict):
+        # 如果是 Pydantic 模型，转换为字典
+        try:
+            if hasattr(metadata, 'dict'):
+                metadata = metadata.dict()
+            elif hasattr(metadata, 'model_dump'):
+                metadata = metadata.model_dump()
+            elif hasattr(metadata, '__dict__'):
+                metadata = metadata.__dict__
+        except Exception:
+            metadata = None
+    
+    # 🔥 优先级1和4：检查幻觉检测标志和进行二次检查
+    explanation = safe_get(agent_response, 'answer', '')
+    hallucination_detected_in_metadata = False
+    hallucination_reason_in_metadata = None
+    
+    # 检查metadata中的幻觉标志
+    if metadata and isinstance(metadata, dict):
+        hallucination_detected_in_metadata = metadata.get("hallucination_detected", False)
+        hallucination_reason_in_metadata = metadata.get("hallucination_reason", None)
+    
+    # 如果metadata中检测到幻觉，使用错误消息替换explanation
+    if hallucination_detected_in_metadata:
+        error_message = (
+            "⚠️ **数据验证失败**\n\n"
+            "系统检测到AI助手可能返回了不准确的数据。\n\n"
+        )
+        if hallucination_reason_in_metadata:
+            if isinstance(hallucination_reason_in_metadata, list):
+                error_message += f"**检测详情：** {', '.join(hallucination_reason_in_metadata)}\n\n"
+            else:
+                error_message += f"**检测详情：** {hallucination_reason_in_metadata}\n\n"
+        error_message += (
+            "**可能的原因：**\n"
+            "- AI未能正确调用数据查询工具\n"
+            "- 工具返回的数据为空或错误\n"
+            "- AI生成了测试数据而非真实数据\n\n"
+            "**建议操作：**\n"
+            "1. 请检查数据源是否正确配置\n"
+            "2. 确认数据源已成功加载（状态显示为✓）\n"
+            "3. 重新提问您的问题\n"
+        )
+        explanation = error_message
+        # 清除可能包含假数据的结果
+        results = []
+        logger.error(f"🚫 [响应转换] 检测到metadata中的幻觉标志，已拦截并替换explanation")
+    
+    # 🔥 优先级4：二次检查 - 即使metadata中没有标志，也要检查answer字段是否包含假数据
+    if not hallucination_detected_in_metadata and explanation:
+        import re
+        # 检测常见的假数据模式
+        fake_data_patterns = [
+            r"张三|李四|王五|赵六",  # 常见的中文测试名字
+            r"用户[1-9]\d*",  # 用户1、用户2等
+            r"Alice|Bob|Charlie|Diana|Eve",  # 常见的英文测试名字
+        ]
+        detected_patterns = []
+        for pattern in fake_data_patterns:
+            if re.search(pattern, explanation):
+                detected_patterns.append(pattern)
+        
+        # 如果检测到多个假数据模式，很可能是假数据
+        if len(detected_patterns) >= 2:
+            error_message = (
+                "⚠️ **数据验证失败**\n\n"
+                "系统检测到回答中可能包含测试数据而非真实数据。\n\n"
+                "**检测到的可疑模式：**\n"
+                f"- {', '.join(detected_patterns)}\n\n"
+                "**可能的原因：**\n"
+                "- AI未能正确调用数据查询工具\n"
+                "- 工具返回的数据为空或错误\n"
+                "- AI生成了测试数据而非真实数据\n\n"
+                "**建议操作：**\n"
+                "1. 请检查数据源是否正确配置\n"
+                "2. 确认数据源已成功加载（状态显示为✓）\n"
+                "3. 重新提问您的问题\n"
+            )
+            explanation = error_message
+            results = []
+            logger.error(f"🚫 [响应转换] 二次检查检测到假数据模式，已拦截并替换explanation")
+    
+    # 🛡️ 安全访问所有属性
+    sql = safe_get(agent_response, 'sql', '')
+    data_obj = safe_get(agent_response, 'data')
+    row_count = 0
+    if data_obj:
+        row_count = safe_get(data_obj, 'row_count', 0)
+    
+    error = safe_get(agent_response, 'error')
+    echarts_option = safe_get(agent_response, 'echarts_option')
     
     response_data = {
         "query_id": query_id,
         "tenant_id": tenant_id,
         "original_query": original_query,
-        "generated_sql": agent_response.sql or "",
+        "generated_sql": sql,
         "results": results,
-        "row_count": agent_response.data.row_count if agent_response.data else 0,
+        "row_count": row_count,
         "processing_time_ms": processing_time_ms,
-        "confidence_score": 0.9 if agent_response.success else 0.5,
-        "explanation": agent_response.answer or "",
+        "confidence_score": 0.9 if success else 0.5,
+        "explanation": explanation,
         "processing_steps": [
             "解析用户查询",
             "生成SQL语句",
             "执行SQL查询",
             "生成可视化响应"
-        ] if agent_response.success else ["查询处理失败"],
+        ] if success else ["查询处理失败"],
         "validation_result": {
-            "valid": agent_response.success,
-            "error": agent_response.error
-        } if not agent_response.success else None,
+            "valid": success,
+            "error": error
+        } if not success else None,
         "execution_result": execution_result,
         "correction_attempts": 0,
-        # 在顶层也添加 echarts_option，方便前端直接访问
-        "echarts_option": agent_response.echarts_option,
+        # 🛡️ 在顶层也添加 echarts_option，使用安全访问
+        "echarts_option": echarts_option,
         # 🔴 第三道防线：添加metadata供前端使用
         "metadata": metadata
     }
@@ -233,40 +395,107 @@ def convert_agent_response_to_chat_response(
     Returns:
         Dict: 符合ChatQueryResponse格式的字典
     """
+    # 🛡️ 通用安全属性访问辅助函数（与 convert_agent_response_to_query_response 中的相同）
+    def safe_get(obj, attr, default=None):
+        """安全获取对象属性，支持多种数据类型"""
+        try:
+            if isinstance(obj, dict):
+                return obj.get(attr, default)
+            if hasattr(obj, attr):
+                value = getattr(obj, attr, default)
+                return value if value is not None else default
+            try:
+                if hasattr(obj, 'dict'):
+                    obj_dict = obj.dict()
+                    return obj_dict.get(attr, default)
+                elif hasattr(obj, 'model_dump'):
+                    obj_dict = obj.model_dump()
+                    return obj_dict.get(attr, default)
+            except (AttributeError, TypeError):
+                pass
+            try:
+                if hasattr(obj, '__dict__'):
+                    return obj.__dict__.get(attr, default)
+            except (AttributeError, TypeError):
+                pass
+            return default
+        except Exception:
+            return default
+    
     # 提取数据源信息（从SQL中推断）
     sources = []
-    if agent_response.sql:
+    sql = safe_get(agent_response, 'sql', '')
+    if sql:
         # 简单提取表名（可以改进）
         import re
         table_pattern = r'FROM\s+(\w+)'
-        tables = re.findall(table_pattern, agent_response.sql, re.IGNORECASE)
+        tables = re.findall(table_pattern, sql, re.IGNORECASE)
         sources.extend(tables)
+    
+    # 🛡️ 安全构建 chart 对象，防止 AttributeError
+    chart_dict = None
+    chart_obj = safe_get(agent_response, 'chart')
+    if chart_obj:
+        # 检查是否是 table 类型（不需要图表）
+        chart_type_obj = safe_get(chart_obj, 'chart_type')
+        chart_type_value = None
+        if chart_type_obj:
+            if hasattr(chart_type_obj, 'value'):
+                chart_type_value = chart_type_obj.value
+            else:
+                chart_type_value = str(chart_type_obj)
+        
+        # 只有非 table 类型才构建 chart 对象
+        if chart_type_value and chart_type_value != "table":
+            # 🛡️ 使用 safe_get 安全提取所有 chart 属性
+            chart_image_attr = safe_get(chart_obj, 'chart_image')
+            
+            # 使用提取的 chart_image 或从 answer 中提取
+            chart_data = None
+            if chart_image_attr and isinstance(chart_image_attr, str) and len(chart_image_attr) > 0:
+                chart_data = chart_image_attr
+            else:
+                # 降级：从 answer 中提取
+                answer = safe_get(agent_response, 'answer', '')
+                chart_path = extract_chart_path_from_answer(answer)
+                if chart_path:
+                    if not (chart_path.startswith('http://') or chart_path.startswith('https://')):
+                        chart_data = load_chart_as_base64(chart_path)
+                    else:
+                        chart_data = chart_path
+            
+            # 🛡️ 安全访问所有 chart 属性
+            chart_dict = {
+                "chart_type": chart_type_value,
+                "title": safe_get(chart_obj, 'title'),
+                "x_field": safe_get(chart_obj, 'x_field'),
+                "y_field": safe_get(chart_obj, 'y_field'),
+                "chart_image": chart_image_attr if (chart_image_attr and isinstance(chart_image_attr, str) and len(chart_image_attr) > 0) else None,
+                "chart_data": chart_data
+            }
+    
+    # 🛡️ 使用 safe_get 安全访问所有属性
+    answer = safe_get(agent_response, 'answer', '')
+    sql = safe_get(agent_response, 'sql', '')
+    success = safe_get(agent_response, 'success', False)
+    data_obj = safe_get(agent_response, 'data')
+    echarts_option = safe_get(agent_response, 'echarts_option')
     
     # 构建响应
     response = {
-        "answer": agent_response.answer or "",
+        "answer": answer,
         "sources": sources,
-        "reasoning": f"执行了SQL查询：{agent_response.sql}" if agent_response.sql else "",
-        "confidence": 0.9 if agent_response.success else 0.5,
+        "reasoning": f"执行了SQL查询：{sql}" if sql else "",
+        "confidence": 0.9 if success else 0.5,
         "execution_time": execution_time,
-        "sql": agent_response.sql or "",
+        "sql": sql,
         "data": {
-            "columns": agent_response.data.columns if agent_response.data else [],
-            "rows": agent_response.data.rows if agent_response.data else [],
-            "row_count": agent_response.data.row_count if agent_response.data else 0
-        } if agent_response.data else None,
-        "chart": {
-            "chart_type": agent_response.chart.chart_type.value if agent_response.chart else None,
-            "title": agent_response.chart.title if agent_response.chart else None,
-            "x_field": agent_response.chart.x_field if agent_response.chart else None,
-            "y_field": agent_response.chart.y_field if agent_response.chart else None,
-            "chart_image": agent_response.chart.chart_image if agent_response.chart else None,  # 使用 chart_image 字段
-            # 向后兼容：如果 chart_image 不存在，尝试从 answer 中提取
-            "chart_data": agent_response.chart.chart_image if (agent_response.chart and agent_response.chart.chart_image) else (
-                load_chart_as_base64(extract_chart_path_from_answer(agent_response.answer or "") or "") if extract_chart_path_from_answer(agent_response.answer or "") else None
-            )
-        } if agent_response.chart and agent_response.chart.chart_type.value != "table" else None,
-        "echarts_option": agent_response.echarts_option  # 添加 ECharts 配置选项
+            "columns": safe_get(data_obj, 'columns', []) if data_obj else [],
+            "rows": safe_get(data_obj, 'rows', []) if data_obj else [],
+            "row_count": safe_get(data_obj, 'row_count', 0) if data_obj else 0
+        } if data_obj else None,
+        "chart": chart_dict,
+        "echarts_option": echarts_option  # 🛡️ 安全访问 ECharts 配置选项
     }
     
     return response
@@ -306,19 +535,131 @@ async def run_agent_query(
         return None
     
     try:
-        # 如果提供了数据库URL，临时更新Agent配置
+        # -----------------------------------------------------
+        # 1️⃣ STEP 1: EARLY ROUTING DETECTION (Check raw URL before modification)
+        # -----------------------------------------------------
+        # 先判断文件模式，在清理 database_url 之前
+        is_file_mode = False
+        raw_url_for_check = database_url or ""
+        
+        if isinstance(raw_url_for_check, str):
+            # Check for file extensions or local paths
+            if (raw_url_for_check.endswith(('.xlsx', '.xls', '.csv')) or 
+                raw_url_for_check.startswith(('/', './', 'file://', 'local://')) or
+                '/uploads/' in raw_url_for_check or
+                '/data/' in raw_url_for_check):
+                is_file_mode = True
+        
+        logger.info(
+            f"🔧 [Router] 早期路由检测: {'FILE MODE' if is_file_mode else 'DATABASE MODE'}",
+            extra={
+                "is_file_mode": is_file_mode,
+                "raw_url_preview": raw_url_for_check[:100] if raw_url_for_check else None
+            }
+        )
+        
+        # -----------------------------------------------------
+        # 2️⃣ STEP 2: DATABASE URL SANITIZATION (Prevent Postgres Crash)
+        # -----------------------------------------------------
+        # 如果检测到是文件模式，清理 database_url，防止 Postgres 工具崩溃
         original_url = None
-        if database_url:
-            from config import config
-            original_url = getattr(config, "database_url", None)
-            logger.info(
-                "Temporarily overriding Agent database_url",
-                extra={
-                    "old_url_preview": str(original_url)[:80] if original_url else None,
-                    "new_url_preview": str(database_url)[:80],
-                },
+        if is_file_mode:
+            if database_url:
+                logger.warning(
+                    f"🔧 [Sanitization] 检测到文件路径，清理 database_url 配置以防止 Postgres 工具崩溃: {database_url[:100]}",
+                    extra={
+                        "database_url_preview": database_url[:100],
+                        "reason": "file_mode_detected"
+                    }
+                )
+            # 设置为 None，防止 Postgres 工具尝试连接
+            database_url = None
+        elif database_url:
+            # 这是有效的数据库 URL，可以设置到 config
+            # 检查是否是有效的数据库 URL（以数据库协议开头）
+            is_valid_db_url = (
+                database_url.startswith('postgresql://') or
+                database_url.startswith('postgres://') or
+                database_url.startswith('mysql://') or
+                database_url.startswith('mysql+pymysql://') or
+                database_url.startswith('sqlite://') or
+                database_url.startswith('sqlite:///') or
+                database_url.startswith('mssql://') or
+                database_url.startswith('oracle://')
             )
-            config.database_url = database_url
+            
+            if is_valid_db_url:
+                # 这是有效的数据库 URL，可以设置
+                from config import config
+                original_url = getattr(config, "database_url", None)
+                logger.info(
+                    "Temporarily overriding Agent database_url",
+                    extra={
+                        "old_url_preview": str(original_url)[:80] if original_url else None,
+                        "new_url_preview": str(database_url)[:80],
+                    },
+                )
+                config.database_url = database_url
+            else:
+                # 不是有效的数据库 URL，也不像是文件路径，记录警告
+                logger.warning(
+                    f"⚠️ database_url 参数格式异常，既不是文件路径也不是有效的数据库 URL: {database_url[:100]}",
+                    extra={
+                        "database_url_preview": database_url[:100],
+                        "reason": "invalid_format"
+                    }
+                )
+        
+        # -----------------------------------------------------
+        # 3️⃣ STEP 3: CONSTRUCT SYSTEM INSTRUCTION (Based on Step 1)
+        # -----------------------------------------------------
+        
+        system_instruction = ""
+        
+        if is_file_mode:
+            # 📂 FILE MODE: Aggressive Anti-SQL Prompt (核威慑级别)
+            system_instruction = (
+                "【🛑 SYSTEM ALERT: FILE MODE ACTIVE】\n"
+                "You are processing a local Excel/CSV file. \n"
+                "CRITICAL RULES:\n"
+                "1. The 'query' tool and SQL tools are DISCONNECTED and will cause a SYSTEM CRASH.\n"
+                "2. You MUST ONLY use `analyze_dataframe` (for data analysis) or `inspect_file` (for schema).\n"
+                "3. DO NOT attempt to list tables or schema. The data is already loaded in the dataframe tool.\n"
+                "4. If you use 'query', the task will fail immediately.\n"
+                "5. The SQL database connection is NOT available in file mode. All SQL tools (`query`, `list_tables`, `get_schema`, `query_database`, `execute_sql_safe`) are DISABLED and will return errors.\n"
+                "6. You MUST use file-specific tools: `inspect_file` to see file structure, `analyze_dataframe` to query data."
+            )
+            logger.info("🔧 [Router] Detected FILE MODE. Locking SQL tools.")
+        else:
+            # 🛢️ DATABASE MODE: Standard SQL behavior
+            system_instruction = (
+                "【SYSTEM MODE: DATABASE ANALYSIS】\n"
+                "You are connected to a SQL database. \n"
+                "RULES:\n"
+                "1. Use `list_available_tables` or `list_tables` to see available tables first.\n"
+                "2. Query the relevant tables using `execute_sql_safe` or `query_database` tools."
+            )
+            logger.info("🛢️ [Router] Detected DATABASE MODE.")
+        
+        # -----------------------------------------------------
+        # 4️⃣ STEP 4: INJECT & EXECUTE
+        # -----------------------------------------------------
+        # Inject the instruction into the question (Prompt Engineering)
+        enhanced_question = f"{system_instruction}\n\nUser Question: {question}"
+        logger.info("📋 [Prompt Injection] System instruction added to question.")
+        
+        # Log full system instruction for debugging
+        if system_instruction:
+            logger.debug(
+                f"📋 [系统指令注入] 完整系统指令内容",
+                extra={
+                    "system_instruction": system_instruction,
+                    "instruction_length": len(system_instruction),
+                    "is_file_mode": is_file_mode
+                }
+            )
+        
+        # -----------------------------------------------------
         
         # 运行Agent
         logger.info(
@@ -329,13 +670,29 @@ async def run_agent_query(
         if _use_new_agent:
             # 新版本：需要传递 database_url，返回 Dict 包含 response 字段
             from config import config as agent_config
-            effective_db_url = database_url or getattr(agent_config, "database_url", None)
-            if not effective_db_url:
-                logger.error("无法获取数据库连接URL")
-                return None
+            
+            # 在文件模式下，传递原始文件路径；在数据库模式下，传递数据库 URL
+            if is_file_mode:
+                # 文件模式：传递原始文件路径（raw_url_for_check）
+                effective_db_url = raw_url_for_check if raw_url_for_check else None
+                logger.info(
+                    f"📂 [文件模式] 传递文件路径给 run_agent: {effective_db_url[:100] if effective_db_url else None}",
+                    extra={"file_path": effective_db_url}
+                )
+            else:
+                # 数据库模式：使用清理后的 database_url 或配置中的默认值
+                effective_db_url = database_url or getattr(agent_config, "database_url", None)
+                if not effective_db_url:
+                    logger.error("无法获取数据库连接URL")
+                    return None
+                logger.info(
+                    f"🛢️ [数据库模式] 传递数据库 URL 给 run_agent",
+                    extra={"database_url_preview": effective_db_url[:80] if effective_db_url else None}
+                )
+            
             result = await run_agent(
-                question=question,
-                database_url=effective_db_url,
+                question=enhanced_question,  # 🔥 使用增强后的问题（包含智能路由指令）
+                database_url=effective_db_url,  # 文件模式下传递文件路径，数据库模式下传递数据库 URL
                 thread_id=thread_id,
                 enable_echarts=enable_echarts,
                 verbose=verbose
@@ -343,15 +700,13 @@ async def run_agent_query(
             # 新版本返回 Dict，提取 response 字段（VisualizationResponse 对象）
             if result and isinstance(result, dict) and "response" in result:
                 response = result["response"]
-                # 🔴 第三道防线：将metadata附加到response对象
-                if "metadata" in result:
-                    # 将metadata作为属性附加到response对象
-                    response.metadata = result["metadata"]
+                # 🔥 修复：response对象已经包含metadata字段，不需要再动态添加
+                # metadata已经在run_agent中设置到VisualizationResponse对象中
             else:
                 response = None
         else:
             # 旧版本：不支持 enable_echarts 参数
-            response = await run_agent(question, thread_id, verbose=verbose)
+            response = await run_agent(enhanced_question, thread_id, verbose=verbose)  # 🔥 使用增强后的问题
         logger.info(
             "Underlying LangGraph Agent finished",
             extra={
@@ -362,8 +717,8 @@ async def run_agent_query(
             },
         )
         
-        # 恢复原始配置
-        if database_url and original_url is not None:
+        # 恢复原始配置（只有当 original_url 被设置时才恢复）
+        if original_url is not None:
             from config import config
             logger.info("Restoring original Agent database_url")
             config.database_url = original_url

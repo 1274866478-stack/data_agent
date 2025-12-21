@@ -20,3 +20,4 @@ AI 助手在回答数据分析查询时，SHALL 能够生成并显示可视化�
 - **AND** API 响应中 `chart.chart_image` 为 null
 - **AND** 前端仅显示表格，不显示图表
 
+
