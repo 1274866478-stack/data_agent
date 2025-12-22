@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { devtools, subscribeWithSelector } from 'zustand/middleware'
-import { api, ChatQueryRequest } from '@/lib/api-client'
+import { api, ChatQueryRequest, ChatCompletionRequest, StreamEvent } from '@/lib/api-client'
+import { apiClient } from '@/lib/api-client'
+import { StreamCallbacks } from '@/types/chat'
 import { messageCacheService, cacheSession, cacheMessage, getCachedSessions, getCachedSession, getCachedMessages, syncMessages } from '@/services/messageCacheService'
 
 // 聊天消息类型定义
@@ -30,6 +32,9 @@ export interface ChatSession {
   isActive: boolean
 }
 
+// 流式状态类型
+type StreamingStatus = 'idle' | 'streaming' | 'analyzing_sql' | 'generating_chart' | 'error' | 'done'
+
 // 聊天状态接口
 interface ChatState {
   // 状态
@@ -40,6 +45,11 @@ interface ChatState {
   error: string | null
   isOnline: boolean
   isSyncing: boolean
+  
+  // 流式响应状态
+  streamingStatus: StreamingStatus
+  currentAbortController: AbortController | null
+  streamingMessageId: string | null  // 当前正在流式更新的消息ID
 
   // 统计信息
   stats: {
@@ -60,11 +70,15 @@ interface ChatState {
   startNewConversation: () => Promise<string>
 
   // 消息操作
-  sendMessage: (content: string, dataSourceIds?: string | string[]) => Promise<void>
+  sendMessage: (content: string, dataSourceIds?: string | string[], useStream?: boolean) => Promise<void>
   addMessage: (message: Omit<ChatMessage, 'id'>) => void
   updateMessage: (messageId: string, updates: Partial<ChatMessage>) => void
   deleteMessage: (messageId: string) => void
   clearHistory: (sessionId: string) => void
+  
+  // 流式响应控制
+  stopStreaming: () => void
+  setStreamingStatus: (status: StreamingStatus) => void
 
   // 状态管理
   setLoading: (loading: boolean) => void
@@ -101,6 +115,9 @@ export const useChatStore = create<ChatState>()(
       error: null,
       isOnline: typeof window !== 'undefined' ? navigator.onLine : true,
       isSyncing: false,
+      streamingStatus: 'idle',
+      currentAbortController: null,
+      streamingMessageId: null,
       stats: {
         totalMessages: 0,
         totalSessions: 0,
@@ -268,7 +285,7 @@ export const useChatStore = create<ChatState>()(
       },
 
       // 发送消息
-      sendMessage: async (content: string, dataSourceIds?: string | string[]) => {
+      sendMessage: async (content: string, dataSourceIds?: string | string[], useStream: boolean = true) => {
         const state = get()
         console.log('[ChatStore] sendMessage 调用, currentSession:', state.currentSession?.id, 'isLoading:', state.isLoading, 'isOnline:', state.isOnline, 'dataSourceIds:', dataSourceIds)
 
@@ -339,12 +356,12 @@ export const useChatStore = create<ChatState>()(
         }
 
         // 在线时直接发送消息
-        console.log('[ChatStore] 在线模式，调用 _sendOnlineMessage')
-        await state._sendOnlineMessage(content, state.currentSession.id, dataSourceIds)
+        console.log('[ChatStore] 在线模式，调用 _sendOnlineMessage, useStream:', useStream)
+        await state._sendOnlineMessage(content, state.currentSession.id, dataSourceIds, useStream)
       },
 
       // 内部方法：在线发送消息
-      _sendOnlineMessage: async (content: string, sessionId: string, dataSourceIds?: string | string[]) => {
+      _sendOnlineMessage: async (content: string, sessionId: string, dataSourceIds?: string | string[], useStream: boolean = true) => {
         const state = get()
         console.log('[ChatStore] _sendOnlineMessage 开始, sessionId:', sessionId)
 
@@ -361,13 +378,15 @@ export const useChatStore = create<ChatState>()(
         try {
           // 获取当前会话的历史消息（不包含刚添加的用户消息，因为它已经被添加了）
           const currentSession = state.sessions.find(s => s.id === sessionId)
-          const historyMessages = currentSession?.messages
+          // 安全获取消息列表，防止 undefined 错误
+          const currentMessages = currentSession?.messages || []
+          const historyMessages = currentMessages
             .filter(m => m.role !== 'system' && m.status !== 'error')  // 排除系统消息和错误消息
             .slice(0, -1)  // 排除刚刚添加的当前消息（避免重复）
             .map(m => ({
               role: m.role as 'user' | 'assistant' | 'system',
               content: m.content
-            })) || []
+            }))
 
           console.log('[ChatStore] 历史消息数量:', historyMessages.length, '数据源ID:', normalizedDataSourceIds)
 
@@ -416,7 +435,7 @@ export const useChatStore = create<ChatState>()(
               const dataSourceStore = useDataSourceStore.getState()
               const tenantId = 'default_tenant'
               const allSources = await dataSourceStore.fetchDataSources(tenantId, { active_only: true })
-              const selectedSources = allSources.filter(ds => normalizedDataSourceIds.includes(ds.id))
+              const selectedSources = (allSources || []).filter(ds => normalizedDataSourceIds.includes(ds.id))
               console.log('  - 选中的数据源详情:')
               selectedSources.forEach((ds, idx) => {
                 console.log(`    [${idx+1}] ID: ${ds.id}, 名称: ${ds.name}, 类型: ${ds.db_type}, 状态: ${ds.status}`)
@@ -425,36 +444,257 @@ export const useChatStore = create<ChatState>()(
               console.warn('  - 无法获取数据源详情:', error)
             }
           }
-          console.log('[ChatStore] 准备调用 API, request:', queryRequest)
-          const response = await api.chat.sendQuery(queryRequest)
-          console.log('[ChatStore] API 响应:', response)
+          // 如果使用流式模式，使用流式API
+          if (useStream) {
+            // 创建 AbortController
+            const abortController = new AbortController()
+            set({ currentAbortController: abortController, streamingStatus: 'streaming' })
 
-          if (response.status === 'error' || !response.data) {
-            console.error('[ChatStore] API 返回错误:', response.error)
-            throw new Error(response.error || 'API Error: Unknown error')
-          }
-
-          const result = response.data
-          console.log('[ChatStore] API 返回成功, result:', result)
-
-          // 添加AI响应消息
-          const assistantMessage: Omit<ChatMessage, 'id'> = {
-            role: 'assistant',
-            content: result.answer || '抱歉，我现在无法回答这个问题。',
-            timestamp: new Date(),
-            status: 'sent',
-            metadata: {
-              sources: result.sources,
-              reasoning: result.reasoning,
-              confidence: result.confidence,
-              table: result.table,
-              chart: result.chart,
-              echarts_option: result.echarts_option,
+            // 构建 ChatCompletionRequest
+            const chatRequest: ChatCompletionRequest = {
+              messages: historyMessages.concat([{
+                role: 'user',
+                content: content
+              }]),
+              stream: true,
+              enable_thinking: false,
+              data_source_ids: normalizedDataSourceIds,
             }
-          }
 
-          state.addMessage(assistantMessage)
-          console.log('[ChatStore] AI 响应消息已添加')
+            // 创建初始的 assistant 消息
+            const assistantMessageId = generateId()
+            const initialMessage: Omit<ChatMessage, 'id'> = {
+              role: 'assistant',
+              content: '',
+              timestamp: new Date(),
+              status: 'sending',
+            }
+
+            // 添加初始消息
+            set((currentState) => {
+              const session = currentState.sessions.find(s => s.id === sessionId)
+              if (!session) return currentState
+
+              const newMessage: ChatMessage = {
+                ...initialMessage,
+                id: assistantMessageId,
+              }
+
+              return {
+                ...currentState,
+                streamingMessageId: assistantMessageId,
+                sessions: currentState.sessions.map(s =>
+                  s.id === sessionId
+                    ? {
+                        ...s,
+                        messages: [...s.messages, newMessage],
+                        updatedAt: new Date(),
+                      }
+                    : s
+                ),
+                currentSession: currentState.currentSession?.id === sessionId
+                  ? {
+                      ...currentState.currentSession,
+                      messages: [...currentState.currentSession.messages, newMessage],
+                      updatedAt: new Date(),
+                    }
+                  : currentState.currentSession,
+              }
+            })
+
+            // 流式内容累积
+            let accumulatedContent = ''
+            let accumulatedThinking = ''
+            let toolInput = ''
+            let toolOutput: any = null
+            let echartsOption: any = null
+
+            // 定义回调函数
+            const callbacks: StreamCallbacks = {
+              onContent: (delta: string) => {
+                accumulatedContent += delta
+                // 🔧 修复：如果当前状态是 analyzing_sql 或 generating_chart，收到 content 事件时切换回 streaming
+                const currentStatus = get().streamingStatus
+                if (currentStatus === 'analyzing_sql' || currentStatus === 'generating_chart') {
+                  set({ streamingStatus: 'streaming' })
+                }
+                // 增量更新消息内容
+                state.updateMessage(assistantMessageId, {
+                  content: accumulatedContent,
+                })
+              },
+              onThinking: (delta: string) => {
+                accumulatedThinking += delta
+                state.updateMessage(assistantMessageId, {
+                  metadata: {
+                    reasoning: accumulatedThinking,
+                  },
+                })
+              },
+              onToolInput: (toolName: string, args: string) => {
+                toolInput += args
+                set({ streamingStatus: 'analyzing_sql' })
+                // 将 SQL 代码追加到消息内容中，以便显示
+                const sqlBlock = `\n\`\`\`sql\n${toolInput}\n\`\`\`\n`
+                // 只在第一次收到 tool_input 时添加，避免重复
+                if (!accumulatedContent.includes('```sql')) {
+                  accumulatedContent += sqlBlock
+                } else {
+                  // 如果已经有 SQL 块，更新它
+                  const sqlMatch = accumulatedContent.match(/```sql\n([\s\S]*?)\n```/)
+                  if (sqlMatch) {
+                    accumulatedContent = accumulatedContent.replace(
+                      /```sql\n[\s\S]*?\n```/,
+                      sqlBlock.trim()
+                    )
+                  } else {
+                    accumulatedContent += args
+                  }
+                }
+                state.updateMessage(assistantMessageId, {
+                  content: accumulatedContent,
+                })
+                console.log('[ChatStore] Tool input:', toolName, args.substring(0, 100))
+              },
+              onToolResult: (data: any) => {
+                toolOutput = data
+                set({ streamingStatus: 'generating_chart' })
+                // 尝试提取 ECharts 配置
+                if (typeof toolOutput === 'object' && toolOutput.echarts_option) {
+                  echartsOption = toolOutput.echarts_option
+                }
+                console.log('[ChatStore] Tool result received:', data)
+              },
+              onChartConfig: (chartOption: any) => {
+                // 🔧 恢复图表功能：处理后端发送的 ECharts 配置
+                console.log('[ChatStore] 📊 收到图表配置:', chartOption)
+                echartsOption = chartOption
+                set({ streamingStatus: 'generating_chart' })
+                
+                // 立即更新消息的 metadata，以便前端可以渲染图表
+                state.updateMessage(assistantMessageId, {
+                  metadata: {
+                    echarts_option: chartOption,
+                  },
+                })
+              },
+              onError: (error: string) => {
+                set({ streamingStatus: 'error' })
+                state.updateMessage(assistantMessageId, {
+                  status: 'error',
+                  content: accumulatedContent || error || '生成失败',
+                })
+                state.setError(error || '流式响应错误')
+              },
+              onDone: () => {
+                set({ streamingStatus: 'done' })
+                // 流结束，更新最终消息状态（合并所有累积的内容）
+                const finalContent = accumulatedContent || '抱歉，我现在无法回答这个问题。'
+                
+                // 如果 toolInput 有内容但还没添加到 content 中，添加它
+                if (toolInput && !finalContent.includes('```sql')) {
+                  accumulatedContent += `\n\`\`\`sql\n${toolInput}\n\`\`\`\n`
+                }
+                
+                state.updateMessage(assistantMessageId, {
+                  status: 'sent',
+                  content: accumulatedContent || finalContent,
+                  metadata: {
+                    reasoning: accumulatedThinking || undefined,
+                    sources: [],
+                    confidence: 0.9,
+                    echarts_option: echartsOption,
+                  },
+                })
+
+                // 流结束后保存到存储和缓存（任务2.4）
+                setTimeout(() => {
+                  const finalState = get()
+                  const finalSession = finalState.sessions.find(s => s.id === sessionId)
+                  if (finalSession) {
+                    const finalMessage = finalSession.messages.find(m => m.id === assistantMessageId)
+                    if (finalMessage && finalMessage.status === 'sent') {
+                      // 保存到缓存
+                      cacheMessage(sessionId, {
+                        id: finalMessage.id,
+                        sessionId,
+                        role: finalMessage.role,
+                        content: finalMessage.content,
+                        timestamp: finalMessage.timestamp,
+                        status: 'sent',
+                      })
+                      // 保存到本地存储
+                      finalState.saveToStorage()
+                    }
+                  }
+                }, 100) // 延迟一点确保状态已更新
+              },
+            }
+
+            try {
+              // 使用新的回调方式调用流式API
+              const returnedController = await apiClient.streamChatCompletionWithCallbacks(
+                chatRequest,
+                callbacks,
+                abortController.signal
+              )
+              // 更新 AbortController（如果返回了新的）
+              if (returnedController !== abortController) {
+                set({ currentAbortController: returnedController })
+              }
+            } catch (error) {
+              if (error instanceof Error && error.name === 'AbortError') {
+                console.log('[ChatStore] 流式响应已取消')
+                set({ streamingStatus: 'idle' })
+                state.updateMessage(assistantMessageId, {
+                  status: 'error',
+                  content: accumulatedContent || '响应已中断',
+                })
+                return
+              }
+              throw error
+            } finally {
+              set({ 
+                currentAbortController: null, 
+                streamingMessageId: null, 
+                streamingStatus: 'idle',
+                isLoading: false,
+                isTyping: false,
+              })
+            }
+          } else {
+            // 非流式模式（原有逻辑）
+            console.log('[ChatStore] 准备调用 API, request:', queryRequest)
+            const response = await api.chat.sendQuery(queryRequest)
+            console.log('[ChatStore] API 响应:', response)
+
+            if (response.status === 'error' || !response.data) {
+              console.error('[ChatStore] API 返回错误:', response.error)
+              throw new Error(response.error || 'API Error: Unknown error')
+            }
+
+            const result = response.data
+            console.log('[ChatStore] API 返回成功, result:', result)
+
+            // 添加AI响应消息
+            const assistantMessage: Omit<ChatMessage, 'id'> = {
+              role: 'assistant',
+              content: result.answer || '抱歉，我现在无法回答这个问题。',
+              timestamp: new Date(),
+              status: 'sent',
+              metadata: {
+                sources: result.sources,
+                reasoning: result.reasoning,
+                confidence: result.confidence,
+                table: result.table,
+                chart: result.chart,
+                echarts_option: result.echarts_option,
+              }
+            }
+
+            state.addMessage(assistantMessage)
+            console.log('[ChatStore] AI 响应消息已添加')
+          }
 
         } catch (error) {
           console.error('[ChatStore] 发送消息失败:', error)
@@ -566,18 +806,36 @@ export const useChatStore = create<ChatState>()(
         get().saveToStorage()
       },
 
-      // 更新消息
+      // 更新消息（支持深度合并 metadata）
       updateMessage: (messageId: string, updates: Partial<ChatMessage>) => {
         set((state) => {
           if (!state.currentSession) return state
+
+          // 辅助函数：深度合并消息更新
+          const mergeMessage = (m: ChatMessage): ChatMessage => {
+            if (m.id !== messageId) return m
+            
+            // 如果更新包含 metadata，需要深度合并
+            if (updates.metadata && m.metadata) {
+              return {
+                ...m,
+                ...updates,
+                metadata: {
+                  ...m.metadata,
+                  ...updates.metadata,
+                }
+              }
+            }
+            
+            // 否则直接合并
+            return { ...m, ...updates }
+          }
 
           const updatedSessions = state.sessions.map(s =>
             s.id === state.currentSession?.id
               ? {
                   ...s,
-                  messages: s.messages.map(m =>
-                    m.id === messageId ? { ...m, ...updates } : m
-                  ),
+                  messages: s.messages.map(mergeMessage),
                   updatedAt: new Date()
                 }
               : s
@@ -585,9 +843,7 @@ export const useChatStore = create<ChatState>()(
 
           const updatedCurrentSession = {
             ...state.currentSession,
-            messages: state.currentSession.messages.map(m =>
-              m.id === messageId ? { ...m, ...updates } : m
-            ),
+            messages: state.currentSession.messages.map(mergeMessage),
             updatedAt: new Date()
           }
 
@@ -597,7 +853,8 @@ export const useChatStore = create<ChatState>()(
           }
         })
 
-        get().saveToStorage()
+        // 注意：流式更新时不立即保存，只在流结束时保存（在 onDone 回调中）
+        // get().saveToStorage()
       },
 
       // 删除消息
@@ -609,7 +866,7 @@ export const useChatStore = create<ChatState>()(
             s.id === state.currentSession?.id
               ? {
                   ...s,
-                  messages: s.messages.filter(m => m.id !== messageId),
+                  messages: (s.messages || []).filter(m => m.id !== messageId),
                   updatedAt: new Date()
                 }
               : s
@@ -617,7 +874,7 @@ export const useChatStore = create<ChatState>()(
 
           const updatedCurrentSession = {
             ...state.currentSession,
-            messages: state.currentSession.messages.filter(m => m.id !== messageId),
+            messages: (state.currentSession.messages || []).filter(m => m.id !== messageId),
             updatedAt: new Date()
           }
 
@@ -677,6 +934,24 @@ export const useChatStore = create<ChatState>()(
       // 设置错误状态
       setError: (error: string | null) => {
         set({ error })
+      },
+
+      // 停止流式响应
+      stopStreaming: () => {
+        const state = get()
+        if (state.currentAbortController) {
+          state.currentAbortController.abort()
+          set({
+            currentAbortController: null,
+            streamingStatus: 'idle',
+            streamingMessageId: null,
+          })
+        }
+      },
+
+      // 设置流式状态
+      setStreamingStatus: (status: StreamingStatus) => {
+        set({ streamingStatus: status })
       },
 
       // 从本地存储加载
@@ -811,12 +1086,14 @@ export const useChatStore = create<ChatState>()(
             if (currentState.currentSession?.id === sessionId) {
               // 获取历史消息用于上下文
               const currentSession = currentState.sessions.find(s => s.id === sessionId)
-              const historyMessages = currentSession?.messages
+              // 安全获取消息列表，防止 undefined 错误
+              const currentMessages = currentSession?.messages || []
+              const historyMessages = currentMessages
                 .filter(m => m.role !== 'system' && m.status !== 'error')
                 .map(m => ({
                   role: m.role as 'user' | 'assistant' | 'system',
                   content: m.content
-                })) || []
+                }))
 
               // 直接调用API而不是通过store的sendMessage
               const queryRequest: ChatQueryRequest = {

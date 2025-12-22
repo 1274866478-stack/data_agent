@@ -33,9 +33,11 @@ class LLMProvider(Enum):
 @dataclass
 class LLMMessage:
     """LLM消息结构"""
-    role: str  # "user", "assistant", "system"
+    role: str  # "user", "assistant", "system", "tool"
     content: Union[str, List[Dict[str, Any]]]  # 支持多模态内容
     thinking: Optional[str] = None  # 思考过程
+    tool_calls: Optional[List[Dict[str, Any]]] = None  # 工具调用（assistant角色）
+    tool_call_id: Optional[str] = None  # 工具调用ID（tool角色）
 
 
 @dataclass
@@ -315,6 +317,7 @@ class DeepSeekProvider(BaseLLMProvider):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         stream: bool = False,
+        tools: Optional[List[Dict[str, Any]]] = None,
         **kwargs
     ) -> Union[LLMResponse, AsyncGenerator[LLMStreamChunk, None]]:
         """DeepSeek聊天完成"""
@@ -329,13 +332,38 @@ class DeepSeekProvider(BaseLLMProvider):
                 # 兼容直接传入 dict 而不是 LLMMessage 的情况
                 if isinstance(msg, dict):
                     role = msg.get("role")
-                    content_raw = msg.get("content", "")
+                    # 🔧 修复：dict.get() 在键存在但值为 None 时会返回 None，需要额外处理
+                    content_raw = msg.get("content")
+                    if content_raw is None:
+                        content_raw = ""  # 强制转换 None 为空字符串
+                    # 处理工具调用消息
+                    tool_calls = msg.get("tool_calls")
+                    tool_call_id = msg.get("tool_call_id")
                 else:
                     role = getattr(msg, "role", None)
-                    content_raw = getattr(msg, "content", "")
+                    # 🔧 修复：getattr() 在属性值为 None 时也会返回 None
+                    content_raw = getattr(msg, "content", None)
+                    if content_raw is None:
+                        content_raw = ""  # 强制转换 None 为空字符串
+                    tool_calls = getattr(msg, "tool_calls", None)
+                    tool_call_id = getattr(msg, "tool_call_id", None)
 
-                if isinstance(content_raw, str):
-                    api_messages.append({"role": role, "content": content_raw})
+                message_dict = {"role": role}
+                
+                # 处理工具调用消息
+                if tool_calls:
+                    message_dict["tool_calls"] = tool_calls
+                if tool_call_id:
+                    message_dict["tool_call_id"] = tool_call_id
+                
+                # 🔧 修复：处理 content 为 None 的情况
+                # DeepSeek 有时会直接生成 tool_calls 而不生成文本，此时 content 为 None
+                # 但 DeepSeek API 要求 content 字段必须是字符串，不能是 null
+                if content_raw is None:
+                    # 如果是 assistant 角色且有 tool_calls，content 可以为空字符串
+                    message_dict["content"] = ""
+                elif isinstance(content_raw, str):
+                    message_dict["content"] = content_raw
                 elif isinstance(content_raw, list):
                     # 多模态内容处理
                     content = []
@@ -347,20 +375,37 @@ class DeepSeekProvider(BaseLLMProvider):
                                 "type": "image_url",
                                 "image_url": item.get("image_url", {})
                             })
-                    api_messages.append({"role": role, "content": content})
+                    message_dict["content"] = content
                 else:
-                    # 兜底：转成字符串
-                    api_messages.append({"role": role, "content": str(content_raw)})
+                    # 兜底：转成字符串（处理非 None 的其他类型）
+                    message_dict["content"] = str(content_raw) if content_raw is not None else ""
+                
+                api_messages.append(message_dict)
+
+            # 🔧 修复：在发送请求前再次清洗消息（终极保险）
+            # 确保所有 content 为 None 的消息都被转换为空字符串
+            for i, msg in enumerate(api_messages):
+                if msg.get("content") is None:
+                    logger.warning(f"[DeepSeek] 构建API消息时发现消息 {i} (role={msg.get('role')}) 的 content 为 None，强制转换为空字符串")
+                    msg["content"] = ""
+            
+            # 构建 API 调用参数
+            api_kwargs = {
+                "model": model,
+                "messages": api_messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            }
+            
+            # 如果提供了工具，添加到参数中
+            if tools:
+                api_kwargs["tools"] = tools
+                api_kwargs["tool_choice"] = "auto"  # 让模型自动决定是否调用工具
 
             if stream:
-                return self._stream_response(api_messages, model, max_tokens, temperature)
+                return self._stream_response(api_messages, model, max_tokens, temperature, tools=tools)
             else:
-                response = await self.client.chat.completions.create(
-                    model=model,
-                    messages=api_messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature
-                )
+                response = await self.client.chat.completions.create(**api_kwargs)
 
                 return LLMResponse(
                     content=response.choices[0].message.content or "",
@@ -393,35 +438,192 @@ class DeepSeekProvider(BaseLLMProvider):
         messages: List[Dict[str, Any]],
         model: str,
         max_tokens: int,
-        temperature: float
+        temperature: float,
+        tools: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[LLMStreamChunk, None]:
         """处理流式响应"""
         try:
-            stream = await self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                stream=True
-            )
+            logger.info(f"[DeepSeek] Starting stream request for model: {model}, tools: {bool(tools)}")
+            
+            # 🔧 终极修复：强制清洗消息中的所有 None 字段
+            # DeepSeek API 对消息格式非常严格：
+            # - content 字段必须是字符串（不能是 null）
+            # - tool_calls 中的 id、function.name、function.arguments 都不能是 null
+            import copy
+            sanitized_messages = []
+            for i, msg in enumerate(messages):
+                # 🔧 使用深拷贝避免任何引用问题
+                sanitized_msg = copy.deepcopy(msg)
+                
+                # 🔧 强制检查并修复 None content（不管原值是什么）
+                content = sanitized_msg.get("content")
+                if content is None:
+                    logger.warning(f"[DeepSeek] 消息 {i} (role={sanitized_msg.get('role')}) 的 content 为 None，强制转换为空字符串")
+                    sanitized_msg["content"] = ""
+                
+                # 🔧 清洗 tool_calls 中的 null 字段
+                if sanitized_msg.get("tool_calls"):
+                    cleaned_tool_calls = []
+                    for tc in sanitized_msg["tool_calls"]:
+                        cleaned_tc = {
+                            "id": tc.get("id") if tc.get("id") is not None else f"call_{i}_{len(cleaned_tool_calls)}",
+                            "type": tc.get("type", "function"),
+                            "function": {
+                                "name": tc.get("function", {}).get("name") if tc.get("function", {}).get("name") is not None else "",
+                                "arguments": tc.get("function", {}).get("arguments") if tc.get("function", {}).get("arguments") is not None else "{}"
+                            }
+                        }
+                        # 记录清洗情况
+                        if tc.get("id") is None or tc.get("function", {}).get("name") is None:
+                            logger.warning(f"[DeepSeek] 消息 {i} 的 tool_call 存在 null 字段，已清洗: id={cleaned_tc['id']}, name={cleaned_tc['function']['name']}")
+                        cleaned_tool_calls.append(cleaned_tc)
+                    sanitized_msg["tool_calls"] = cleaned_tool_calls
+                
+                # 🔧 额外验证：确保 content 真的是字符串或列表
+                final_content = sanitized_msg.get("content")
+                if final_content is None:
+                    logger.error(f"[DeepSeek] 严重错误：消息 {i} 的 content 在修复后仍然是 None！强制设为空字符串")
+                    sanitized_msg["content"] = ""
+                
+                sanitized_messages.append(sanitized_msg)
+            
+            # 🔧 最终验证：打印每条消息的 content 类型
+            for i, msg in enumerate(sanitized_messages):
+                content = msg.get("content")
+                content_type = type(content).__name__
+                content_preview = str(content)[:50] if content else "(empty)"
+                logger.info(f"[DeepSeek] 最终消息 {i}: role={msg.get('role')}, content_type={content_type}, preview={content_preview}")
+            
+            logger.info(f"[DeepSeek] 清洗后的消息数量: {len(sanitized_messages)}")
+            
+            # AsyncOpenAI 的 create 方法是异步的，必须 await 才能得到流对象
+            api_kwargs = {
+                "model": model,
+                "messages": sanitized_messages,  # 使用清洗后的消息
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": True
+            }
+            
+            # 如果提供了工具，添加到参数中
+            if tools:
+                api_kwargs["tools"] = tools
+                api_kwargs["tool_choice"] = "auto"
+            
+            stream = await self.client.chat.completions.create(**api_kwargs)
+            
+            # 检查 stream 对象的类型（用于调试）
+            logger.info(f"[DeepSeek] Stream object type: {type(stream)}, has __aiter__: {hasattr(stream, '__aiter__')}")
 
+            # 确保流对象存在
+            if stream is None:
+                logger.error("DeepSeek stream response is None")
+                yield LLMStreamChunk(
+                    type="error",
+                    content="DeepSeek API returned None stream",
+                    provider=LLMProvider.DEEPSEEK.value,
+                    finished=True
+                )
+                return
+
+            # 迭代流，确保等待每个 chunk
+            has_content = False
+            has_tool_calls = False
+            tool_calls_accumulator = {}  # 用于收集流式工具调用参数
+            chunk_count = 0  # 🔍 调试：计数
+            
             async for chunk in stream:
+                chunk_count += 1
                 if chunk.choices and len(chunk.choices) > 0:
                     delta = chunk.choices[0].delta
+                    finish_reason = chunk.choices[0].finish_reason
+                    
+                    # 🔍 调试：每 10 个 chunk 打印一次详情，或者遇到特殊情况时打印
+                    if chunk_count <= 3 or chunk_count % 50 == 0 or finish_reason:
+                        logger.info(f"[DeepSeek RAW] chunk #{chunk_count}: "
+                                   f"finish_reason={finish_reason}, "
+                                   f"has_tool_calls={hasattr(delta, 'tool_calls') and bool(delta.tool_calls)}, "
+                                   f"has_content={hasattr(delta, 'content') and bool(delta.content)}, "
+                                   f"content_preview={repr(delta.content[:50] if hasattr(delta, 'content') and delta.content else None)}")
+                    
+                    # 🔍 调试：如果检测到 tool_calls，详细打印
+                    if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                        logger.info(f"[DeepSeek RAW] 🎉 检测到 tool_calls! chunk #{chunk_count}: {delta.tool_calls}")
 
+                    # 处理工具调用
+                    if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                        has_tool_calls = True
+                        for tool_call_delta in delta.tool_calls:
+                            index = tool_call_delta.index
+                            if index not in tool_calls_accumulator:
+                                tool_calls_accumulator[index] = {
+                                    "id": tool_call_delta.id if hasattr(tool_call_delta, 'id') else None,
+                                    "type": "function",
+                                    "function": {
+                                        "name": "",
+                                        "arguments": ""
+                                    }
+                                }
+                            
+                            # 收集工具名称（只有非 None 时才更新）
+                            if hasattr(tool_call_delta, 'function') and hasattr(tool_call_delta.function, 'name'):
+                                if tool_call_delta.function.name is not None:
+                                    tool_calls_accumulator[index]["function"]["name"] = tool_call_delta.function.name
+                            
+                            # 收集工具参数（可能是分片的，只有非 None 时才追加）
+                            if hasattr(tool_call_delta, 'function') and hasattr(tool_call_delta.function, 'arguments'):
+                                if tool_call_delta.function.arguments is not None:
+                                    tool_calls_accumulator[index]["function"]["arguments"] += tool_call_delta.function.arguments
+                            
+                            # 收集工具 ID（只有非 None 时才更新）
+                            if hasattr(tool_call_delta, 'id') and tool_call_delta.id is not None:
+                                tool_calls_accumulator[index]["id"] = tool_call_delta.id
+
+                    # 处理普通内容
                     if hasattr(delta, 'content') and delta.content:
+                        has_content = True
                         yield LLMStreamChunk(
                             type="content",
                             content=delta.content,
-                            provider=LLMProvider.DEEPSEEK.value
+                            provider=LLMProvider.DEEPSEEK.value,
+                            finished=False
                         )
+            
+            # 如果有工具调用，发送工具调用事件
+            if has_tool_calls and tool_calls_accumulator:
+                tool_calls_list = [tool_calls_accumulator[i] for i in sorted(tool_calls_accumulator.keys())]
+                yield LLMStreamChunk(
+                    type="tool_input",
+                    content=json.dumps(tool_calls_list, ensure_ascii=False),
+                    provider=LLMProvider.DEEPSEEK.value,
+                    finished=False
+                )
+
+            # 如果没有任何内容，发送完成标记
+            if not has_content:
+                logger.warning("DeepSeek stream returned no content")
+                yield LLMStreamChunk(
+                    type="content",
+                    content="",
+                    provider=LLMProvider.DEEPSEEK.value,
+                    finished=True
+                )
+            else:
+                # 发送完成标记
+                yield LLMStreamChunk(
+                    type="done",
+                    content="",
+                    provider=LLMProvider.DEEPSEEK.value,
+                    finished=True
+                )
 
         except Exception as e:
-            logger.error(f"DeepSeek stream response failed: {e}")
+            logger.error(f"DeepSeek stream response failed: {e}", exc_info=True)
             yield LLMStreamChunk(
                 type="error",
                 content=f"DeepSeek stream error: {str(e)}",
-                provider=LLMProvider.DEEPSEEK.value
+                provider=LLMProvider.DEEPSEEK.value,
+                finished=True
             )
 
     async def validate_connection(self) -> bool:
@@ -690,16 +892,32 @@ class LLMService:
                 raise ValueError(f"Failed to initialize provider for tenant {tenant_id}: {e}")
 
         # 调用具体提供商
-        return await provider_instance.chat_completion(
-            messages=messages,
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            stream=stream,
-            enable_thinking=enable_thinking,
-            tenant_id=tenant_id,  # 传递租户ID用于多模态处理
-            **kwargs
-        )
+        # 注意：chat_completion 是异步函数，即使返回 AsyncGenerator 也需要 await
+        # await 一个返回生成器的异步函数会得到生成器对象
+        if stream:
+            # 流式模式：需要 await 异步函数来获取生成器对象
+            return await provider_instance.chat_completion(
+                messages=messages,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=stream,
+                enable_thinking=enable_thinking,
+                tenant_id=tenant_id,  # 传递租户ID用于多模态处理
+                **kwargs
+            )
+        else:
+            # 非流式模式：需要 await 等待结果
+            return await provider_instance.chat_completion(
+                messages=messages,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=stream,
+                enable_thinking=enable_thinking,
+                tenant_id=tenant_id,  # 传递租户ID用于多模态处理
+                **kwargs
+            )
 
     async def validate_providers(self, tenant_id: str) -> Dict[str, bool]:
         """验证所有提供商连接"""

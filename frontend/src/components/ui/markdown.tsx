@@ -11,7 +11,42 @@ interface MarkdownProps {
   className?: string
 }
 
+/**
+ * 修复流式传输中不完整的Markdown语法
+ * 例如：未闭合的代码块、未完成的列表等
+ */
+function fixIncompleteMarkdown(content: string): string {
+  let fixed = content
+
+  // 修复未闭合的代码块（```开头但没有闭合）
+  const codeBlockMatches = fixed.match(/```/g)
+  if (codeBlockMatches && codeBlockMatches.length % 2 !== 0) {
+    // 如果代码块数量是奇数，说明有未闭合的
+    // 检查最后是否有未闭合的代码块
+    const lastCodeBlockIndex = fixed.lastIndexOf('```')
+    const afterLastCodeBlock = fixed.substring(lastCodeBlockIndex + 3)
+    // 如果后面没有换行和语言标识，可能是未完成的代码块
+    if (!afterLastCodeBlock.trim().match(/^\n/)) {
+      // 不添加闭合，让用户看到正在输入的状态
+      // 或者可以添加一个占位符
+    }
+  }
+
+  // 修复未完成的列表项（以 - 或 * 开头但没有内容）
+  fixed = fixed.replace(/^[\s]*[-*]\s*$/gm, '')
+
+  // 修复未完成的链接 [text]( 但没有闭合
+  fixed = fixed.replace(/\[([^\]]*)\]\([^)]*$/g, (match, text) => {
+    return `[${text}](...)`
+  })
+
+  return fixed
+}
+
 export function Markdown({ content, className }: MarkdownProps) {
+  // 修复流式传输中不完整的Markdown
+  const fixedContent = fixIncompleteMarkdown(content)
+
   return (
     <div className={cn('prose prose-gray max-w-none dark:prose-invert prose-p:text-gray-700 prose-li:text-gray-700 prose-strong:text-gray-900', className)}>
       <ReactMarkdown

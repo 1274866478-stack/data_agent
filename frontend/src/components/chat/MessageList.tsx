@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useRef, useImperativeHandle, forwardRef, useState } from 'react'
-import { User, Bot, AlertTriangle } from 'lucide-react'
+import { User, Bot, AlertTriangle, Square } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Markdown } from '@/components/ui/markdown'
-import { ChatMessage } from '@/store/chatStore'
+import { Button } from '@/components/ui/button'
+import { ChatMessage, useChatStore } from '@/store/chatStore'
 import { cn } from '@/lib/utils'
 import { EChartsRenderer } from './EChartsRenderer'
 import { ChatQueryResultView } from './ChatQueryResultView'
@@ -25,6 +26,9 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const [localHighlightId, setLocalHighlightId] = useState<string | null>(null)
+  
+  // 获取流式状态
+  const { streamingStatus, streamingMessageId, stopStreaming } = useChatStore()
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -135,7 +139,13 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                     {message.role === 'user' ? (
                       <p className="text-base whitespace-pre-wrap">{textToRender}</p>
                     ) : (
-                      <Markdown content={textToRender} />
+                      <>
+                        <Markdown content={textToRender} />
+                        {/* 流式响应光标闪烁效果 */}
+                        {message.status === 'sending' && (
+                          <span className="inline-block w-2 h-5 ml-1 bg-gray-600 animate-pulse" />
+                        )}
+                      </>
                     )}
                     
                     {/* 2. 如果解析到了图表配置，渲染图表（仅对 assistant 消息显示） */}
@@ -184,14 +194,31 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                 })()
               )}
 
-              {/* 时间戳 */}
+              {/* 时间戳和停止按钮 */}
               <div className={cn(
-                'text-xs text-gray-500 mt-1',
-                message.role === 'user' ? 'text-right' : 'text-left'
+                'text-xs text-gray-500 mt-1 flex items-center gap-2',
+                message.role === 'user' ? 'justify-end' : 'justify-start'
               )}>
-                {formatTimestamp(message.timestamp)}
-                {message.status === 'sending' && ' • 发送中...'}
-                {message.status === 'error' && ' • 发送失败'}
+                <span>
+                  {formatTimestamp(message.timestamp)}
+                  {message.status === 'sending' && ' • 生成中...'}
+                  {message.status === 'error' && ' • 发送失败'}
+                </span>
+                {/* 停止生成按钮 */}
+                {message.role === 'assistant' && 
+                 message.status === 'sending' && 
+                 streamingMessageId === message.id && 
+                 streamingStatus !== 'idle' && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => stopStreaming()}
+                  >
+                    <Square className="w-3 h-3 mr-1" />
+                    停止生成
+                  </Button>
+                )}
               </div>
 
               {/* 🔴 第三道防线：默认展开显示推理过程和工具输出 */}

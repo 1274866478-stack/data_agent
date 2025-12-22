@@ -8,6 +8,7 @@ import asyncio
 import logging
 import io
 import os
+import sys
 import time
 from typing import Dict, Any, Optional, List, Union
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -36,6 +37,67 @@ import duckdb
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/llm", tags=["LLM"])
+
+# ============================================================
+# 工具定义 (Tool Definitions) - OpenAI Function Calling 格式
+# ============================================================
+
+# SQL 执行工具 Schema
+SQL_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "execute_sql",
+        "description": "执行 SQL SELECT 查询以获取数据库数据。只能执行 SELECT 查询，禁止执行 INSERT、UPDATE、DELETE 等修改操作。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sql_query": {
+                    "type": "string",
+                    "description": "要执行的 SQL SELECT 查询语句"
+                }
+            },
+            "required": ["sql_query"]
+        }
+    }
+}
+
+# 图表生成工具 Schema
+CHART_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "generate_chart",
+        "description": "根据数据生成 ECharts 图表配置。当数据包含数字、趋势或分类对比时必须调用此工具进行可视化。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "chart_type": {
+                    "type": "string",
+                    "enum": ["bar", "line", "pie", "scatter"],
+                    "description": "图表类型：bar(柱状图-分类对比), line(折线图-趋势变化), pie(饼图-占比分布), scatter(散点图-相关性)"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "图表标题"
+                },
+                "x_data": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "X轴数据（分类名称或时间）"
+                },
+                "y_data": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": "Y轴数据（数值）"
+                },
+                "series_name": {
+                    "type": "string",
+                    "description": "数据系列名称（可选）"
+                }
+            },
+            "required": ["chart_type", "title", "x_data", "y_data"]
+        }
+    }
+}
 
 
 class ChatMessage(BaseModel):
@@ -600,7 +662,7 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
 
 def _build_system_prompt_with_context(data_sources_context: str) -> str:
     """
-    构建包含数据源上下文的系统提示词（简洁版本）
+    构建包含数据源上下文的系统提示词（使用 SQL 代码块格式）
 
     Args:
         data_sources_context: 数据源上下文信息
@@ -609,50 +671,69 @@ def _build_system_prompt_with_context(data_sources_context: str) -> str:
         系统提示词
     """
     if data_sources_context:
-        # 有数据源时的简洁提示，强调必须使用schema中的实际表名和列名
-        return f"""你是一个SQL数据分析助手。
+        # 有数据源时的完整提示，要求使用 ```sql 代码块格式
+        return f"""你是一个专业的数据分析师。你的任务是根据用户的问题，查询数据库并给出分析结果。
 
-## 🔴🔴🔴 最重要的规则：必须使用下面提供的实际表名和列名 🔴🔴🔴
+## 🔴 重要规则 🔴
 
-你只能使用以下Schema中列出的表名和列名。**禁止**根据用户描述猜测或翻译表名。
+**你必须使用 SQL 代码块来查询数据，格式如下：**
+
+```sql
+SELECT * FROM 表名 WHERE 条件;
+```
+
+**禁止使用任何工具调用或函数调用格式！只需要在回答中直接写 SQL 代码块即可。**
+
+---
+
+## 工作流程
+
+### 步骤 1: 分析问题
+- 理解用户想要查询什么数据
+- 根据下方的数据库 Schema 确定需要查询的表和字段
+
+### 步骤 2: 生成 SQL
+- 在回答中使用 ```sql ... ``` 代码块格式输出 SQL 查询语句
+- 必须使用下方 Schema 中的**实际表名和列名**，禁止猜测
+- 系统会自动执行你的 SQL 并返回结果
+
+### 步骤 3: 分析结果（可选）
+- 如果你已经知道数据特征，可以简要说明预期的分析方向
+- 例如："让我查询一下各产品的销量数据..."
+
+---
+
+## 数据库 Schema
 
 {data_sources_context}
 
-## 核心规则
+---
 
-1. **必须使用上述Schema中的实际表名和列名**：
-   - ❌ 错误：用户问"客户消费"，你用 `SELECT * FROM 客户` （这是猜测的中文表名！）
-   - ✅ 正确：用户问"客户消费"，你查看Schema，发现实际表名是 `customers`，则用 `SELECT * FROM customers`
-   - ❌ 错误：用户问"订单金额"，你用 `SELECT 金额 FROM 订单` （这是猜测的中文列名！）
-   - ✅ 正确：用户问"订单金额"，你查看Schema，发现实际是 `orders` 表的 `amount` 列
+## SQL 格式示例
 
-2. **直接生成SQL**：当用户问数据相关问题时，立即生成SQL查询。
+用户问："列出所有用户"
+你的回答：
+让我帮你查询所有用户信息：
 
-3. **SQL代码块格式**：将SQL放在 ```sql 代码块中。
+```sql
+SELECT * FROM 用户表;
+```
 
-4. **系统自动执行**：系统会自动执行SQL并显示结果，**你不需要也不应该自己编写或猜测查询结果**。
+用户问："哪个产品卖得最好？"
+你的回答：
+让我查询各产品的销量排名：
 
-5. **🔴 极值查询必须使用 LIMIT 1**：当用户问"最大"、"最小"、"最长"、"最短"、"最高"、"最低"、"第一个"、"最早"、"最晚"等极值问题时，**必须只返回一条记录**：
-   - ❌ 错误：`SELECT name, hire_date FROM employees ORDER BY hire_date ASC` （可能返回多行！）
-   - ✅ 正确：`SELECT name, hire_date FROM employees ORDER BY hire_date ASC LIMIT 1` （只返回一行）
-   - 用户问"谁工作时间最长"→ 意思是"谁入职最早"→ 用 `ORDER BY hire_date ASC LIMIT 1`
-   - 用户问"谁薪资最高"→ 用 `ORDER BY salary DESC LIMIT 1`
+```sql
+SELECT 产品名称, SUM(销量) as 总销量 
+FROM 订单表 
+GROUP BY 产品名称 
+ORDER BY 总销量 DESC 
+LIMIT 10;
+```
 
-6. **只生成一个SQL查询**：每次回答只生成一个SQL语句，不要生成多个独立的查询。
+---
 
-## 回答流程
-
-1. 阅读用户问题，理解意图
-2. 查看上方的Schema信息，找到对应的**实际表名**和**实际列名**
-3. 使用Schema中的实际名称生成SQL
-4. **只提供SQL语句**，不要自己编造结果表格
-
-**重要提醒**：
-- 不要翻译表名！如果Schema中是 `customers`，就用 `customers`，不要用 `客户`
-- 不要翻译列名！如果Schema中是 `total_amount`，就用 `total_amount`，不要用 `总金额`
-- 系统会自动执行SQL并显示真实结果
-- **🚫 禁止自己生成或猜测查询结果表格！** 只需提供SQL语句，结果由系统自动执行后展示
-- **🔴 极值问题必须使用 LIMIT 1 确保只返回一条记录！**"""
+**记住：只需要在回答中写 SQL 代码块，系统会自动执行查询并返回结果！**"""
     else:
         # 没有数据源时的提示
         return """你是一个数据分析助手。
@@ -913,17 +994,51 @@ async def _execute_sql_on_file_datasource(
         else:
             storage_path = connection_string
 
-        # 从MinIO下载文件
-        logger.info(f"从MinIO下载文件用于SQL执行: {storage_path}")
-        file_data = minio_service.download_file(
-            bucket_name="data-sources",
-            object_name=storage_path
-        )
+        file_data = None
+        file_path = None
+
+        # 🔧 修复：优先使用本地文件，只有本地不存在时才从 MinIO 下载
+        # 检查是否是本地文件路径（通常在 /app/uploads/ 目录下）
+        if storage_path.startswith("/app/uploads/") or storage_path.startswith("/app/data/"):
+            file_path = storage_path
+            if os.path.exists(file_path):
+                logger.info(f"直接使用本地文件: {file_path}")
+                try:
+                    with open(file_path, 'rb') as f:
+                        file_data = f.read()
+                except Exception as e:
+                    logger.warning(f"读取本地文件失败: {e}，尝试从 MinIO 下载")
+                    file_data = None
+            else:
+                logger.info(f"本地文件不存在: {file_path}，尝试从 MinIO 下载")
+        
+        # 如果本地文件不存在或读取失败，从 MinIO 下载
+        if not file_data:
+            # 从路径中提取正确的 object_name（去掉 /app/uploads/ 前缀）
+            if storage_path.startswith("/app/uploads/"):
+                # 提取相对于 uploads 的路径作为 object_name
+                object_name = storage_path.replace("/app/uploads/", "", 1)
+            elif storage_path.startswith("/app/data/"):
+                # 提取相对于 data 的路径作为 object_name
+                object_name = storage_path.replace("/app/data/", "", 1)
+            else:
+                # 如果路径不包含 /app/uploads/ 或 /app/data/，直接使用原路径
+                object_name = storage_path.lstrip("/")
+            
+            logger.info(f"从MinIO下载文件用于SQL执行: bucket=data-sources, object_name={object_name}")
+            try:
+                file_data = minio_service.download_file(
+                    bucket_name="data-sources",
+                    object_name=object_name
+                )
+            except Exception as e:
+                logger.error(f"从MinIO下载文件失败: {e}")
+                file_data = None
 
         if not file_data:
             return {
                 "success": False,
-                "error": f"无法从MinIO获取文件: {storage_path}",
+                "error": f"无法获取文件: {storage_path} (本地路径: {file_path if file_path else 'N/A'})",
                 "data": [],
                 "columns": [],
                 "row_count": 0
@@ -1320,41 +1435,257 @@ def _convert_response(response: LLMResponse) -> ChatCompletionResponse:
     )
 
 
+async def _execute_tool_call(
+    tool_call: Dict[str, Any],
+    tenant_id: str,
+    db: Session,
+    data_source_ids: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    """
+    执行工具调用（目前只支持 execute_sql）
+    
+    Returns:
+        Dict with keys: success, result, error
+    """
+    try:
+        tool_name = tool_call.get("function", {}).get("name", "")
+        tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
+        
+        # 解析工具参数
+        try:
+            tool_args = json.loads(tool_args_str)
+        except json.JSONDecodeError:
+            return {
+                "success": False,
+                "result": None,
+                "error": f"无法解析工具参数: {tool_args_str}"
+            }
+        
+        if tool_name == "execute_sql":
+            sql_query = tool_args.get("sql_query", "")
+            if not sql_query:
+                return {
+                    "success": False,
+                    "result": None,
+                    "error": "SQL查询语句为空"
+                }
+            
+            # 安全检查：只允许SELECT查询
+            if not sql_query.strip().upper().startswith('SELECT'):
+                return {
+                    "success": False,
+                    "result": None,
+                    "error": "只允许执行 SELECT 查询，禁止执行修改操作"
+                }
+            
+            # 获取数据源
+            data_sources = await data_source_service.get_data_sources(
+                tenant_id=tenant_id,
+                db=db,
+                active_only=True
+            )
+            
+            if not data_sources:
+                return {
+                    "success": False,
+                    "result": None,
+                    "error": "未找到活跃的数据源"
+                }
+            
+            # 选择数据源
+            if data_source_ids:
+                matching_sources = [ds for ds in data_sources if ds.id in data_source_ids]
+                if matching_sources:
+                    data_source = matching_sources[0]
+                else:
+                    data_source = data_sources[0]
+            else:
+                data_source = data_sources[0]
+            
+            # 获取连接字符串
+            connection_string = await data_source_service.get_decrypted_connection_string(
+                data_source_id=data_source.id,
+                tenant_id=tenant_id,
+                db=db
+            )
+            
+            # 执行SQL
+            try:
+                if data_source.db_type in ["xlsx", "xls", "csv"]:
+                    # 文件类型数据源
+                    result = await _execute_sql_on_file_datasource(
+                        connection_string=connection_string,
+                        db_type=data_source.db_type,
+                        sql_query=sql_query,
+                        data_source_name=data_source.name
+                    )
+                    if not result.get("success", False):
+                        return {
+                            "success": False,
+                            "result": None,
+                            "error": result.get("error", "执行失败")
+                        }
+                else:
+                    # 数据库类型数据源
+                    adapter = PostgreSQLAdapter(connection_string)
+                    try:
+                        await adapter.connect()
+                        query_result = await adapter.execute_query(sql_query)
+                        result = {
+                            "data": query_result.data,
+                            "columns": query_result.columns,
+                            "row_count": query_result.row_count
+                        }
+                    finally:
+                        await adapter.disconnect()
+                
+                # 格式化结果为JSON字符串
+                result_json = json.dumps(result, ensure_ascii=False, default=str)
+                return {
+                    "success": True,
+                    "result": result_json,
+                    "error": None
+                }
+            except Exception as e:
+                logger.error(f"执行SQL失败: {e}", exc_info=True)
+                return {
+                    "success": False,
+                    "result": None,
+                    "error": str(e)
+                }
+        
+        elif tool_name == "generate_chart":
+            # 处理图表生成工具调用
+            try:
+                chart_type = tool_args.get("chart_type", "bar")
+                title = tool_args.get("title", "数据图表")
+                x_data = tool_args.get("x_data", [])
+                y_data = tool_args.get("y_data", [])
+                series_name = tool_args.get("series_name", "数据")
+                
+                logger.info(f"生成图表: type={chart_type}, title={title}, x_data_len={len(x_data)}, y_data_len={len(y_data)}")
+                
+                # 根据图表类型生成 ECharts 配置
+                if chart_type == "pie":
+                    # 饼图需要特殊的数据格式
+                    pie_data = [{"name": x, "value": y} for x, y in zip(x_data, y_data)]
+                    echarts_option = {
+                        "title": {"text": title, "left": "center"},
+                        "tooltip": {"trigger": "item", "formatter": "{b}: {c} ({d}%)"},
+                        "legend": {"orient": "vertical", "left": "left"},
+                        "series": [{
+                            "type": "pie",
+                            "radius": "50%",
+                            "data": pie_data,
+                            "emphasis": {
+                                "itemStyle": {
+                                    "shadowBlur": 10,
+                                    "shadowOffsetX": 0,
+                                    "shadowColor": "rgba(0, 0, 0, 0.5)"
+                                }
+                            }
+                        }]
+                    }
+                else:
+                    # 柱状图、折线图、散点图
+                    echarts_option = {
+                        "title": {"text": title, "left": "center"},
+                        "tooltip": {"trigger": "axis"},
+                        "xAxis": {"type": "category", "data": x_data},
+                        "yAxis": {"type": "value"},
+                        "series": [{
+                            "name": series_name,
+                            "type": chart_type,
+                            "data": y_data,
+                            "smooth": True if chart_type == "line" else False
+                        }]
+                    }
+                
+                # 返回 ECharts 配置
+                result = {
+                    "chart_generated": True,
+                    "echarts_option": echarts_option
+                }
+                
+                return {
+                    "success": True,
+                    "result": json.dumps(result, ensure_ascii=False),
+                    "error": None,
+                    "echarts_option": echarts_option  # 额外返回配置，方便直接使用
+                }
+            except Exception as e:
+                logger.error(f"生成图表失败: {e}", exc_info=True)
+                return {
+                    "success": False,
+                    "result": None,
+                    "error": f"图表生成失败: {str(e)}"
+                }
+        
+        else:
+            return {
+                "success": False,
+                "result": None,
+                "error": f"未知的工具: {tool_name}"
+            }
+    except Exception as e:
+        logger.error(f"执行工具调用失败: {e}", exc_info=True)
+        return {
+            "success": False,
+            "result": None,
+            "error": str(e)
+        }
+
+
 async def _stream_response_generator(
     stream_generator,
     tenant_id: str,
     db: Session,
     original_question: str = "",
-    data_source_ids: Optional[List[str]] = None
+    data_source_ids: Optional[List[str]] = None,
+    initial_messages: Optional[List[LLMMessage]] = None
 ):
     """
-    流式响应生成器
-    支持SQL查询自动执行（带智能重试）
+    流式响应生成器（方案B：SQL 代码块检测模式）
+    
+    不使用 Function Calling，而是检测 AI 输出中的 ```sql ... ``` 代码块，
+    自动执行 SQL 查询并进行第二次 LLM 调用。
     """
     try:
-        # 收集完整的响应内容用于SQL检测
+        # 收集完整的响应内容
         full_content = ""
         thinking_content = ""
+        
+        # 消息历史（用于二次调用）
+        messages = initial_messages or []
 
         async for chunk in stream_generator:
-            # 发送原始chunk
-            chunk_data = {
-                "type": chunk.type,
-                "content": chunk.content,
-                "provider": chunk.provider,
-                "finished": chunk.finished,
-                "tenant_id": tenant_id
-            }
-            yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
-
-            # 收集内容
+            # 处理普通内容
             if chunk.type == "content":
+                # 发送原始chunk
+                chunk_data = {
+                    "type": chunk.type,
+                    "content": chunk.content,
+                    "provider": chunk.provider,
+                    "finished": chunk.finished,
+                    "tenant_id": tenant_id
+                }
+                yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
                 full_content += chunk.content
+            
             elif chunk.type == "thinking":
                 thinking_content += chunk.content
-
-            # 如果流结束，检测并执行SQL
-            if chunk.finished and chunk.type == "content":
+                # 发送thinking chunk
+                chunk_data = {
+                    "type": chunk.type,
+                    "content": chunk.content,
+                    "provider": chunk.provider,
+                    "finished": chunk.finished,
+                    "tenant_id": tenant_id
+                }
+                yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+            
+            # 如果流结束，检测并执行 SQL（方案B）
+            if chunk.finished:
                 logger.info(f"流式响应完成，检测SQL查询。内容长度: {len(full_content)}")
 
                 # 检测SQL代码块
@@ -1497,6 +1828,111 @@ async def _stream_response_generator(
 
                                     logger.info(f"SQL查询执行成功，返回 {result.get('row_count', 0)} 行")
                                     execution_success = True
+                                    
+                                    # 🔧 方案B增强：二次LLM调用，分析数据并生成图表
+                                    if execution_success and result.get('data'):
+                                        logger.info("开始二次LLM调用：分析数据并生成图表")
+                                        
+                                        # 构建分析提示
+                                        data_for_analysis = result['data'][:20]  # 最多取20行用于分析
+                                        data_json = json.dumps(data_for_analysis, ensure_ascii=False, indent=2)
+                                        
+                                        analysis_prompt = f"""你刚刚查询了数据，结果如下：
+
+```json
+{data_json}
+```
+
+请完成以下任务：
+
+1. **数据分析**：简要分析这些数据的关键洞察（2-3句话）
+
+2. **生成图表**：如果数据适合可视化，请生成 ECharts 配置。
+   - 使用 `[CHART_START]` 和 `[CHART_END]` 标记包裹 JSON 配置
+   - 选择合适的图表类型：
+     - 销量/金额对比 → bar（柱状图）
+     - 时间趋势 → line（折线图）
+     - 占比分布 → pie（饼图）
+
+**图表配置示例**：
+[CHART_START]
+{{"title":{{"text":"产品销量排名"}},"xAxis":{{"type":"category","data":["产品A","产品B"]}},"yAxis":{{"type":"value"}},"series":[{{"type":"bar","data":[100,200]}}]}}
+[CHART_END]
+
+请直接输出分析和图表配置："""
+
+                                        # 构建消息历史
+                                        analysis_messages = [
+                                            LLMMessage(role="system", content="你是一个数据分析专家。请分析数据并生成可视化图表。"),
+                                            LLMMessage(role="user", content=original_question),
+                                            LLMMessage(role="assistant", content=f"让我查询各产品的销量数据：\n\n```sql\n{current_sql}\n```\n\n{result_text}"),
+                                            LLMMessage(role="user", content=analysis_prompt)
+                                        ]
+                                        
+                                        # 获取provider实例
+                                        provider_instance = llm_service.get_provider(tenant_id, LLMProvider.DEEPSEEK)
+                                        if provider_instance:
+                                            try:
+                                                # 发送分析状态
+                                                analysis_status = {
+                                                    "type": "content",
+                                                    "content": "\n\n📊 **数据分析中...**\n\n",
+                                                    "provider": chunk.provider,
+                                                    "finished": False,
+                                                    "tenant_id": tenant_id
+                                                }
+                                                yield f"data: {json.dumps(analysis_status, ensure_ascii=False)}\n\n"
+                                                
+                                                # 二次调用LLM（流式）
+                                                analysis_stream = await provider_instance.chat_completion(
+                                                    messages=analysis_messages,
+                                                    model=None,
+                                                    max_tokens=2000,
+                                                    temperature=0.7,
+                                                    stream=True,
+                                                    tools=None
+                                                )
+                                                
+                                                # 流式输出分析结果
+                                                analysis_content = ""
+                                                async for analysis_chunk in analysis_stream:
+                                                    if analysis_chunk.type == "content" and analysis_chunk.content:
+                                                        analysis_content += analysis_chunk.content
+                                                        analysis_data = {
+                                                            "type": "content",
+                                                            "content": analysis_chunk.content,
+                                                            "provider": analysis_chunk.provider,
+                                                            "finished": False,
+                                                            "tenant_id": tenant_id
+                                                        }
+                                                        yield f"data: {json.dumps(analysis_data, ensure_ascii=False)}\n\n"
+                                                
+                                                logger.info(f"二次LLM调用完成，分析内容长度: {len(analysis_content)}")
+                                                
+                                                # 检测并提取图表配置
+                                                chart_pattern = r'\[CHART_START\](.*?)\[CHART_END\]'
+                                                chart_match = re.search(chart_pattern, analysis_content, re.DOTALL)
+                                                
+                                                if chart_match:
+                                                    try:
+                                                        chart_json_str = chart_match.group(1).strip()
+                                                        echarts_option = json.loads(chart_json_str)
+                                                        logger.info(f"✅ 成功提取 ECharts 配置: {list(echarts_option.keys())}")
+                                                        
+                                                        # 发送图表配置事件
+                                                        chart_event = {
+                                                            "type": "chart_config",
+                                                            "data": {"echarts_option": echarts_option},
+                                                            "provider": "deepseek",
+                                                            "finished": False,
+                                                            "tenant_id": tenant_id
+                                                        }
+                                                        yield f"data: {json.dumps(chart_event, ensure_ascii=False)}\n\n"
+                                                    except json.JSONDecodeError as e:
+                                                        logger.warning(f"解析 ECharts JSON 失败: {e}")
+                                                
+                                            except Exception as e:
+                                                logger.error(f"二次LLM调用失败: {e}")
 
                                 except Exception as e:
                                     last_error = str(e)
@@ -1567,6 +2003,38 @@ async def _stream_response_generator(
                         }
                         yield f"data: {json.dumps(warning_chunk, ensure_ascii=False)}\n\n"
 
+        # 🔧 恢复图表生成功能：检测并提取 [CHART_START]...[CHART_END] 标记中的 ECharts 配置
+        chart_pattern = r'\[CHART_START\](.*?)\[CHART_END\]'
+        chart_match = re.search(chart_pattern, full_content, re.DOTALL)
+        
+        if chart_match:
+            try:
+                chart_json_str = chart_match.group(1).strip()
+                # 解析 JSON
+                echarts_option = json.loads(chart_json_str)
+                logger.info(f"✅ 成功提取 ECharts 配置: {list(echarts_option.keys())}")
+                
+                # 发送图表配置事件
+                chart_chunk = {
+                    "type": "chart_config",
+                    "data": {
+                        "echarts_option": echarts_option
+                    },
+                    "provider": "deepseek",
+                    "finished": False,
+                    "tenant_id": tenant_id
+                }
+                yield f"data: {json.dumps(chart_chunk, ensure_ascii=False)}\n\n"
+                
+                # 可选：从最终内容中移除图表标记（前端可能已经显示了）
+                # 这里我们保留标记，让前端自己决定是否显示
+                
+            except json.JSONDecodeError as e:
+                logger.warning(f"⚠️ 解析 ECharts JSON 失败: {e}")
+                logger.warning(f"原始内容: {chart_json_str[:200]}...")
+            except Exception as e:
+                logger.error(f"❌ 提取 ECharts 配置时发生错误: {e}")
+
         # 发送结束标记
         yield "data: [DONE]\n\n"
     except Exception as e:
@@ -1595,7 +2063,11 @@ async def chat_completion(
     try:
         # 获取tenant_id，支持开发环境下的默认租户
         tenant_id = getattr(current_user, 'tenant_id', None) or current_user.get('tenant_id', 'default_tenant')
-        logger.info(f"Chat completion request for tenant: {tenant_id}")
+        logger.info(f"Chat completion request for tenant: {tenant_id}, stream={request.stream}, data_source_ids={request.data_source_ids}")
+        print(f"[DEBUG] Chat completion request - stream={request.stream}, data_source_ids={request.data_source_ids}")
+        # 强制输出到日志文件
+        import sys
+        print(f"[DEBUG] Chat completion request - stream={request.stream}, data_source_ids={request.data_source_ids}", file=sys.stderr)
 
         # 转换提供商
         provider = None
@@ -1651,6 +2123,15 @@ async def chat_completion(
         # 调用LLM服务
         if request.stream:
             # 流式响应
+            # 注意：chat_completion 是异步函数，需要 await 来获取 AsyncGenerator
+            logger.info(f"[STREAM] Starting stream request for tenant {tenant_id}")
+            print(f"[STREAM] Starting stream request for tenant {tenant_id}", file=sys.stderr)
+            
+            # 方案 B: 不使用 Function Calling，改用 SQL 代码块检测
+            # DeepSeek 不支持标准的 OpenAI Function Calling 协议
+            # 所以我们让 AI 直接在回答中输出 ```sql ... ``` 代码块，然后自动检测并执行
+            logger.info(f"[STREAM] 使用 SQL 代码块检测模式（方案B）")
+            
             response_generator = await llm_service.chat_completion(
                 tenant_id=tenant_id,
                 messages=messages,
@@ -1659,11 +2140,20 @@ async def chat_completion(
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
                 stream=request.stream,
-                enable_thinking=request.enable_thinking
+                enable_thinking=request.enable_thinking,
+                tools=None  # 不传递工具定义，使用 SQL 代码块检测
             )
-
+            
+            logger.info(f"[STREAM] Stream generator created, starting response")
             return StreamingResponse(
-                _stream_response_generator(response_generator, tenant_id, db, original_question, request.data_source_ids),
+                _stream_response_generator(
+                    response_generator, 
+                    tenant_id, 
+                    db, 
+                    original_question, 
+                    request.data_source_ids,
+                    initial_messages=messages  # 传递初始消息历史
+                ),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -1892,12 +2382,15 @@ async def test_stream_thinking(
 
         async def stream_generator():
             try:
-                async for chunk in llm_service.chat_completion(
+                # 必须先 await 获取 AsyncGenerator 对象
+                response_generator = await llm_service.chat_completion(
                     tenant_id=current_user.id,
                     messages=messages,
                     stream=True,
                     enable_thinking=None  # 自动判断
-                ):
+                )
+                # 然后才能使用 async for 迭代生成器
+                async for chunk in response_generator:
                     yield f"data: {json.dumps(chunk.dict(), ensure_ascii=False)}\n\n"
 
                 yield "data: [DONE]\n\n"
