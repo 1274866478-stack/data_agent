@@ -17,7 +17,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { Send, Bot, User, Sparkles, Paperclip, X, FileText, CheckCircle, AlertCircle, Loader2, Plus, History, Search, MessageSquare, Trash2, ChevronLeft, CheckSquare, Database, ChevronDown, AlertTriangle } from 'lucide-react'
+import { Send, Bot, User, Sparkles, Paperclip, X, FileText, CheckCircle, AlertCircle, Loader2, Plus, History, Search, MessageSquare, Trash2, ChevronLeft, CheckSquare, Database, ChevronDown, AlertTriangle, Square } from 'lucide-react'
 import { Markdown } from '@/components/ui/markdown'
 import { useChatStore } from '@/store/chatStore'
 import { useDataSourceStore, DataSourceConnection } from '@/store/dataSourceStore'
@@ -56,7 +56,9 @@ export default function AIAssistantPage() {
     deleteSession,
     deleteSessions,
     searchSessions,
-    startNewConversation
+    startNewConversation,
+    stopStreaming,
+    streamingStatus
   } = useChatStore()
 
   // 数据源相关
@@ -515,7 +517,17 @@ export default function AIAssistantPage() {
                 {/* 数据源选择器 */}
                 <div className="flex items-center gap-2">
                   <Database className="w-4 h-4 text-muted-foreground" />
-                  <DropdownMenu>
+                  <DropdownMenu
+                    open={dataSourceMenuOpen}
+                    onOpenChange={(open) => {
+                      setDataSourceMenuOpen(open)
+                      if (open) {
+                        setPendingDataSourceIds(selectedDataSourceIds)
+                      } else {
+                        setPendingDataSourceIds(selectedDataSourceIds)
+                      }
+                    }}
+                  >
                     <DropdownMenuTrigger asChild>
                       <Button
                         variant="outline"
@@ -546,15 +558,6 @@ export default function AIAssistantPage() {
                       className="w-72"
                       sideOffset={6}
                       align="end"
-                      open={dataSourceMenuOpen}
-                      onOpenChange={(open) => {
-                        setDataSourceMenuOpen(open)
-                        if (open) {
-                          setPendingDataSourceIds(selectedDataSourceIds)
-                        } else {
-                          setPendingDataSourceIds(selectedDataSourceIds)
-                        }
-                      }}
                     >
                       <DropdownMenuLabel>选择数据源</DropdownMenuLabel>
                       <DropdownMenuCheckboxItem
@@ -962,17 +965,32 @@ export default function AIAssistantPage() {
                   className="flex-1 min-h-[48px] max-h-[120px] resize-none text-base"
                   rows={1}
                 />
-                <Button
-                  onClick={handleSend}
-                  disabled={isLoading || !input.trim()}
-                  size="lg"
-                  className="h-12 bg-gradient-to-br from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
-                >
-                  <Send className="w-5 h-5" />
-                </Button>
+                {isLoading ? (
+                  <Button
+                    onClick={stopStreaming}
+                    size="lg"
+                    className="h-12 bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700"
+                    title="停止生成"
+                  >
+                    <Square className="w-5 h-5 fill-current" />
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={handleSend}
+                    disabled={!input.trim()}
+                    size="lg"
+                    className="h-12 bg-gradient-to-br from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
+                  >
+                    <Send className="w-5 h-5" />
+                  </Button>
+                )}
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                按 Enter 发送，Shift+Enter 换行 • 支持上传 PDF、Word 文档
+                {isLoading ? (
+                  <span className="text-orange-600">AI 正在生成中... 点击红色按钮可停止生成</span>
+                ) : (
+                  <span>按 Enter 发送，Shift+Enter 换行 • 支持上传 PDF、Word 文档</span>
+                )}
               </div>
             </div>
           </CardContent>

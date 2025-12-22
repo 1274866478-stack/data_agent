@@ -501,10 +501,18 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
 
         # 如果指定了数据源ID，则只获取指定的数据源
         if data_source_ids:
+            original_count = len(data_sources)
             data_sources = [ds for ds in data_sources if ds.id in data_source_ids]
-            logger.info(f"筛选指定数据源: {data_source_ids}, 找到 {len(data_sources)} 个匹配的数据源")
+            logger.info(f"🎯 [数据源筛选] 指定数据源: {data_source_ids}, 从 {original_count} 个中筛选出 {len(data_sources)} 个匹配的数据源")
+            for ds in data_sources:
+                logger.info(f"  ✅ 使用数据源: {ds.name} (ID: {ds.id}, 类型: {ds.db_type})")
             if not data_sources:
+                logger.warning(f"⚠️ [数据源筛选] 未找到匹配的数据源！请求的ID: {data_source_ids}")
                 return ""
+        else:
+            logger.warning(f"⚠️ [数据源筛选] 未指定 data_source_ids，将使用所有 {len(data_sources)} 个活跃数据源:")
+            for ds in data_sources:
+                logger.info(f"  📦 活跃数据源: {ds.name} (ID: {ds.id}, 类型: {ds.db_type})")
 
         context_parts = []
         context_parts.append("## 可用数据源\n")
@@ -1833,8 +1841,62 @@ async def _stream_response_generator(
                                     if execution_success and result.get('data'):
                                         logger.info("开始二次LLM调用：分析数据并生成图表")
                                         
-                                        # 构建分析提示
+                                        # --- 🧠 数据特征分析与决策注入 ---
                                         data_for_analysis = result['data'][:20]  # 最多取20行用于分析
+                                        analysis_row_count = len(result['data'])
+                                        
+                                        # 获取列信息
+                                        columns = result.get('columns', [])
+                                        if not columns and data_for_analysis:
+                                            columns = list(data_for_analysis[0].keys())
+                                        col_count = len(columns)
+                                        
+                                        # 简单的类型推断：检查列名是否包含时间关键词
+                                        col_names_str = " ".join([str(c).lower() for c in columns])
+                                        has_time_col = any(k in col_names_str for k in ['date', 'time', 'year', 'month', 'day', 'quarter', 'week', '日期', '时间', '年', '月', '日'])
+                                        has_metric_col = col_count >= 2  # 假设除了维度还有指标
+                                        
+                                        analysis_directive = ""
+                                        
+                                        # 规则 1: 单行数据或纯文本 -> 禁止画图
+                                        if analysis_row_count <= 1:
+                                            analysis_directive = (
+                                                "🛑 **CONSTRAINT**: The result contains only 1 row.\n"
+                                                "- **DO NOT** call `generate_chart`. Visualization is useless for a single number.\n"
+                                                "- Focus on explaining the value directly."
+                                            )
+                                        elif not has_metric_col and analysis_row_count < 50:
+                                            analysis_directive = (
+                                                "🛑 **CONSTRAINT**: This appears to be a text list without numerical metrics.\n"
+                                                "- **DO NOT** call `generate_chart`.\n"
+                                                "- Summarize the list content (e.g., total count, examples)."
+                                            )
+                                        # 规则 2: 大数据量 -> 强制 Top N
+                                        elif analysis_row_count > 20 and not has_time_col:
+                                            analysis_directive = (
+                                                f"⚠️ **CONSTRAINT**: The result has {analysis_row_count} rows, which is too many for a clean chart.\n"
+                                                "- **ACTION**: Use `generate_chart` but ONLY include the **Top 10** data points in the `data` parameter.\n"
+                                                "- In your text analysis, mention that you are showing the top performers."
+                                            )
+                                        # 规则 3: 时间序列 -> 强制折线图
+                                        elif has_time_col and analysis_row_count > 1:
+                                            analysis_directive = (
+                                                "✅ **STRATEGY**: This is time-series data.\n"
+                                                "- **ACTION**: You MUST call `generate_chart` with `chart_type='line'`.\n"
+                                                "- **Analysis**: Focus on the trend (upward/downward), seasonality, or spikes."
+                                            )
+                                        # 规则 4: 分类对比 -> 建议柱状图或饼图
+                                        else:
+                                            chart_suggestion = "pie" if analysis_row_count <= 8 else "bar"
+                                            analysis_directive = (
+                                                f"✅ **STRATEGY**: This is categorical comparison data.\n"
+                                                f"- **ACTION**: You SHOULD call `generate_chart` with `chart_type='{chart_suggestion}'`.\n"
+                                                "- **Analysis**: Compare the magnitudes. Identify the leader and the laggard."
+                                            )
+                                        
+                                        logger.info(f"数据特征分析: rows={analysis_row_count}, cols={col_count}, has_time={has_time_col}, has_metric={has_metric_col}")
+                                        
+                                        # 构建分析提示（包含决策指令）
                                         data_json = json.dumps(data_for_analysis, ensure_ascii=False, indent=2)
                                         
                                         analysis_prompt = f"""你刚刚查询了数据，结果如下：
@@ -1843,29 +1905,53 @@ async def _stream_response_generator(
 {data_json}
 ```
 
+--- ANALYSIS INSTRUCTIONS ---
+{analysis_directive}
+
 请完成以下任务：
 
-1. **数据分析**：简要分析这些数据的关键洞察（2-3句话）
+1. **数据分析**：用 2-3 句话分析数据的关键洞察，解释数据的商业含义（不要只重复数字）
 
-2. **生成图表**：如果数据适合可视化，请生成 ECharts 配置。
-   - 使用 `[CHART_START]` 和 `[CHART_END]` 标记包裹 JSON 配置
-   - 选择合适的图表类型：
-     - 销量/金额对比 → bar（柱状图）
-     - 时间趋势 → line（折线图）
-     - 占比分布 → pie（饼图）
-
-**图表配置示例**：
+2. **生成 ECharts 图表配置**（如果上述指令允许）：
+   
+   ⚠️ **格式要求（必须严格遵守）**：
+   - 必须使用 `[CHART_START]` 开始，`[CHART_END]` 结束
+   - 中间是**标准 ECharts JSON 配置**（不是自定义格式！）
+   - 不要使用 markdown 代码块包裹 JSON
+   
+   ✅ **正确示例（柱状图）**：
 [CHART_START]
-{{"title":{{"text":"产品销量排名"}},"xAxis":{{"type":"category","data":["产品A","产品B"]}},"yAxis":{{"type":"value"}},"series":[{{"type":"bar","data":[100,200]}}]}}
+{{"title":{{"text":"商品库存排名"}},"tooltip":{{"trigger":"axis"}},"xAxis":{{"type":"category","data":["华为MateBook","iPhone 15","小米电视"]}},"yAxis":{{"type":"value","name":"库存数量"}},"series":[{{"name":"库存","type":"bar","data":[100,80,50]}}]}}
 [CHART_END]
 
-请直接输出分析和图表配置："""
+   ✅ **正确示例（饼图）**：
+[CHART_START]
+{{"title":{{"text":"销售占比"}},"tooltip":{{"trigger":"item"}},"series":[{{"name":"销售额","type":"pie","radius":"50%","data":[{{"value":1048,"name":"产品A"}},{{"value":735,"name":"产品B"}}]}}]}}
+[CHART_END]
 
+   ❌ **错误格式（不要这样写）**：
+   - {{"chartType": "bar", "xAxis": {{"field": "name"}}}} ← 这不是 ECharts 格式！
+
+请直接输出分析和图表："""
+
+                                        # 构建专家数据分析师的系统提示
+                                        expert_system_prompt = (
+                                            "你是一位专业的数据分析师。你的任务是从数据中提取洞察并有效地可视化它们。\n\n"
+                                            "**核心协议：**\n"
+                                            "1. **遵循指令**：系统会分析数据形态并给出具体约束（如'禁止画图'或'只画 Top 10'）。你必须严格遵守。\n"
+                                            "2. **数据分析**：不要只重复数字。解释数据的意义（例如，不要说'A是100，B是50'，而要说'A的表现是B的2倍'）。\n"
+                                            "3. **图表格式**：当需要生成图表时，必须使用标准的 ECharts JSON 配置格式，用 [CHART_START] 和 [CHART_END] 标记包裹。\n\n"
+                                            "**重要提醒：**\n"
+                                            "- 图表配置必须是标准 ECharts 格式，包含 title、xAxis、yAxis、series 等字段\n"
+                                            "- 不要使用自定义的简化格式如 {chartType: 'bar', xAxis: {field: 'name'}}\n"
+                                            "- 直接输出 JSON，不要用 markdown 代码块包裹"
+                                        )
+                                        
                                         # 构建消息历史
                                         analysis_messages = [
-                                            LLMMessage(role="system", content="你是一个数据分析专家。请分析数据并生成可视化图表。"),
+                                            LLMMessage(role="system", content=expert_system_prompt),
                                             LLMMessage(role="user", content=original_question),
-                                            LLMMessage(role="assistant", content=f"让我查询各产品的销量数据：\n\n```sql\n{current_sql}\n```\n\n{result_text}"),
+                                            LLMMessage(role="assistant", content=f"让我查询相关数据：\n\n```sql\n{current_sql}\n```\n\n{result_text}"),
                                             LLMMessage(role="user", content=analysis_prompt)
                                         ]
                                         
