@@ -10,6 +10,7 @@ import io
 import os
 import sys
 import time
+from decimal import Decimal
 from typing import Dict, Any, Optional, List, Union
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -37,6 +38,27 @@ import duckdb
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/llm", tags=["LLM"])
+
+
+def _convert_decimal_to_float(data: Any) -> Any:
+    """
+    递归地将数据中的 Decimal 类型转换为 float，确保 JSON 可序列化
+    
+    Args:
+        data: 需要转换的数据（可以是 dict, list, 或其他类型）
+    
+    Returns:
+        转换后的数据，其中所有 Decimal 都变成了 float
+    """
+    if isinstance(data, Decimal):
+        return float(data)
+    elif isinstance(data, dict):
+        return {k: _convert_decimal_to_float(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [_convert_decimal_to_float(item) for item in data]
+    else:
+        return data
+
 
 # ============================================================
 # 工具定义 (Tool Definitions) - OpenAI Function Calling 格式
@@ -717,6 +739,52 @@ SELECT * FROM 表名 WHERE 条件;
 
 ---
 
+## 🔥 日期处理重要说明（针对 Excel/CSV 文件数据源）
+
+**对于 Excel/CSV 文件数据源，日期字段通常存储为文本格式，请使用以下方式处理：**
+
+### 方式1：使用 CAST 转换后比较（推荐）
+```sql
+SELECT * FROM 订单表 
+WHERE CAST(created_at AS DATE) >= '2023-01-01' 
+  AND CAST(created_at AS DATE) < '2024-01-01';
+```
+
+### 方式2：使用 LIKE 进行文本匹配
+```sql
+-- 筛选2023年的数据
+SELECT * FROM 订单表 WHERE created_at LIKE '2023%';
+
+-- 筛选2023年某月的数据
+SELECT * FROM 订单表 WHERE created_at LIKE '2023-06%';
+```
+
+### 方式3：按年月分组统计
+```sql
+-- 使用 strftime 需要先转换为日期类型
+SELECT 
+    strftime(CAST(created_at AS DATE), '%Y-%m') as 月份,
+    COUNT(*) as 订单数量
+FROM 订单表 
+WHERE created_at LIKE '2023%'
+GROUP BY strftime(CAST(created_at AS DATE), '%Y-%m')
+ORDER BY 月份;
+```
+
+### 方式4：使用 SUBSTRING 提取年月（更通用）
+```sql
+SELECT 
+    SUBSTRING(created_at, 1, 7) as 月份,
+    COUNT(*) as 订单数量,
+    SUM(final_amount) as 总销售额
+FROM 订单表 
+WHERE SUBSTRING(created_at, 1, 4) = '2023'
+GROUP BY SUBSTRING(created_at, 1, 7)
+ORDER BY 月份;
+```
+
+---
+
 ## SQL 格式示例
 
 用户问："列出所有用户"
@@ -737,6 +805,21 @@ FROM 订单表
 GROUP BY 产品名称 
 ORDER BY 总销量 DESC 
 LIMIT 10;
+```
+
+用户问："2023年的销售趋势如何？"
+你的回答：
+让我查询2023年按月的销售趋势：
+
+```sql
+SELECT 
+    SUBSTRING(created_at, 1, 7) as 月份,
+    COUNT(*) as 订单数量,
+    SUM(final_amount) as 总销售额
+FROM 订单表 
+WHERE SUBSTRING(created_at, 1, 4) = '2023'
+GROUP BY SUBSTRING(created_at, 1, 7)
+ORDER BY 月份;
 ```
 
 ---
@@ -1286,8 +1369,9 @@ async def _execute_sql_if_needed(
 
             while retry_count <= max_retries and not execution_success:
                 try:
-                    # 安全检查：只允许SELECT查询
-                    if not current_sql.upper().startswith('SELECT'):
+                    # 安全检查：只允许SELECT查询（包括WITH...SELECT的CTE查询）
+                    sql_upper = current_sql.upper().strip()
+                    if not (sql_upper.startswith('SELECT') or sql_upper.startswith('WITH')):
                         logger.warning(f"跳过非SELECT查询: {current_sql[:50]}")
                         break
 
@@ -1755,8 +1839,9 @@ async def _stream_response_generator(
 
                             while retry_count <= max_retries and not execution_success:
                                 try:
-                                    # 安全检查：只允许SELECT查询
-                                    if not current_sql.upper().startswith('SELECT'):
+                                    # 安全检查：只允许SELECT查询（包括WITH...SELECT的CTE查询）
+                                    sql_upper = current_sql.upper().strip()
+                                    if not (sql_upper.startswith('SELECT') or sql_upper.startswith('WITH')):
                                         logger.warning(f"跳过非SELECT查询: {current_sql[:50]}")
                                         break
 
@@ -1897,7 +1982,9 @@ async def _stream_response_generator(
                                         logger.info(f"数据特征分析: rows={analysis_row_count}, cols={col_count}, has_time={has_time_col}, has_metric={has_metric_col}")
                                         
                                         # 构建分析提示（包含决策指令）
-                                        data_json = json.dumps(data_for_analysis, ensure_ascii=False, indent=2)
+                                        # 将 Decimal 类型转换为 float，避免 JSON 序列化失败
+                                        serializable_data = _convert_decimal_to_float(data_for_analysis)
+                                        data_json = json.dumps(serializable_data, ensure_ascii=False, indent=2)
                                         
                                         analysis_prompt = f"""你刚刚查询了数据，结果如下：
 
