@@ -722,7 +722,51 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
                     try:
                         await adapter.connect()
                         schema_result = await adapter.get_schema_info()
-                        # 将SchemaInfo对象转换为字典格式
+                        
+                        # 🔧 新增：自动检测枚举字段并获取其实际值
+                        # 常见的枚举字段名模式
+                        enum_field_patterns = [
+                            'status', 'state', 'type', 'category', 'level', 'role',
+                            'gender', 'priority', 'payment_method', 'payment_status',
+                            'order_status', 'shipping_status', 'user_type'
+                        ]
+                        
+                        # 用于存储每个表的枚举值
+                        enum_values_cache = {}
+                        
+                        for table in schema_result.tables.values():
+                            table_enum_values = {}
+                            for col in table.columns:
+                                col_lower = col.name.lower()
+                                # 检查是否是可能的枚举字段
+                                is_enum_field = any(pattern in col_lower for pattern in enum_field_patterns)
+                                # 也检查字符串类型的短字段（可能是枚举）
+                                is_short_varchar = (
+                                    col.data_type in ['character varying', 'varchar', 'text'] and
+                                    col.max_length and col.max_length <= 50
+                                )
+                                
+                                if is_enum_field or (is_short_varchar and col_lower.endswith(('_type', '_status', '_state'))):
+                                    try:
+                                        # 查询该字段的distinct值（限制10个，避免太多）
+                                        distinct_query = f"""
+                                            SELECT DISTINCT "{col.name}" 
+                                            FROM "{table.name}" 
+                                            WHERE "{col.name}" IS NOT NULL 
+                                            LIMIT 10
+                                        """
+                                        distinct_result = await adapter.execute_query(distinct_query)
+                                        if distinct_result and distinct_result.data:
+                                            values = [row[col.name] for row in distinct_result.data if row.get(col.name)]
+                                            if values and len(values) <= 10:  # 只保留合理数量的枚举值
+                                                table_enum_values[col.name] = values
+                                    except Exception as enum_err:
+                                        logger.debug(f"获取枚举值失败 {table.name}.{col.name}: {enum_err}")
+                            
+                            if table_enum_values:
+                                enum_values_cache[table.name] = table_enum_values
+                        
+                        # 将SchemaInfo对象转换为字典格式，并包含枚举值
                         schema_info = {
                             "database_type": schema_result.database_type.value if schema_result.database_type else "postgresql",
                             "tables": [
@@ -732,7 +776,9 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
                                         {
                                             "name": col.name,
                                             "type": col.data_type,
-                                            "nullable": col.is_nullable
+                                            "nullable": col.is_nullable,
+                                            # 添加枚举值（如果有）
+                                            "enum_values": enum_values_cache.get(table.name, {}).get(col.name)
                                         }
                                         for col in table.columns
                                     ]
@@ -785,7 +831,15 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
                                 col_name = col.get("name", "unknown")
                                 col_type = col.get("type", "unknown")
                                 nullable = "可空" if col.get("nullable") else "非空"
-                                col_info.append(f"  - {col_name} ({col_type}, {nullable})")
+                                # 🔧 新增：显示枚举值
+                                enum_values = col.get("enum_values")
+                                if enum_values:
+                                    enum_str = ", ".join([f"'{v}'" for v in enum_values[:8]])  # 最多显示8个
+                                    if len(enum_values) > 8:
+                                        enum_str += ", ..."
+                                    col_info.append(f"  - {col_name} ({col_type}, {nullable}) **可选值: [{enum_str}]**")
+                                else:
+                                    col_info.append(f"  - {col_name} ({col_type}, {nullable})")
                             context_parts.append("\n".join(col_info))
 
                         # 添加主键信息
@@ -891,6 +945,21 @@ SELECT * FROM 表名 WHERE 条件;
 ## 数据库 Schema
 
 {data_sources_context}
+
+---
+
+## 🔴 查询表列表的正确方式（重要！）
+
+**如果用户问"有哪些表"、"数据库里有什么表"等问题：**
+
+1. **优先使用上方 Schema 信息回答**：上方已经列出了所有可用的表和列信息，直接根据这些信息回答用户
+2. **对于 Excel/CSV 文件数据源**：表名就是 Excel 的 Sheet 名称或 CSV 文件名，已经在上方 Schema 中列出
+3. **如果需要执行 SQL 查询表列表**：
+   - ✅ 正确语法：`SHOW TABLES;`
+   - ❌ 错误语法：`SELECT name FROM sqlite_master WHERE type='table'`（这是 SQLite 语法，不适用于本系统）
+   - ❌ 错误语法：`SELECT table_name FROM information_schema.tables`（PostgreSQL 语法，对于文件数据源不适用）
+
+**注意**：本系统的文件数据源使用 DuckDB 引擎执行 SQL，请确保使用兼容的语法。
 
 ---
 
@@ -2024,10 +2093,10 @@ async def _stream_response_generator(
 
         # ========== Step 3: 构建AI Prompt ==========
         prompt_start_time = time.time()
-        system_msg_preview = ""
+        system_msg_content = ""
         for msg in messages:
             if msg.role == "system":
-                system_msg_preview = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
+                system_msg_content = msg.content  # 显示完整内容，不截断
                 break
         
         yield _create_processing_step(
@@ -2036,7 +2105,7 @@ async def _stream_response_generator(
             description="将Schema注入系统提示词",
             status="completed",
             duration=int((time.time() - prompt_start_time) * 1000),
-            details=f"System Prompt预览:\n{system_msg_preview}",
+            details=f"System Prompt:\n{system_msg_content}",
             tenant_id=tenant_id
         )
         # 确保事件被刷新到客户端
@@ -2327,41 +2396,167 @@ async def _stream_response_generator(
                                         has_time_col = any(k in col_names_str for k in ['date', 'time', 'year', 'month', 'day', 'quarter', 'week', '日期', '时间', '年', '月', '日'])
                                         has_metric_col = col_count >= 2  # 假设除了维度还有指标
                                         
-                                        analysis_directive = ""
+                                        # 检测层级结构数据：parent_id, 一级/二级分类, level等关键词
+                                        has_hierarchy_col = any(k in col_names_str for k in [
+                                            'parent', 'child', 'level', 'depth', 'hierarchy', 
+                                            '一级', '二级', '三级', '父', '子', '层级', '分类', 'category',
+                                            'parent_id', 'parent_name', 'subcategory', '子类', '结构'
+                                        ])
                                         
-                                        # 规则 1: 单行数据或纯文本 -> 禁止画图
+                                        # 检测排名类数据：Top N、最高/最低 N 个、排名等
+                                        original_question_lower = original_question.lower() if original_question else ""
+                                        sql_lower = current_sql.lower() if current_sql else ""
+                                        is_ranking_query = any(k in original_question_lower for k in [
+                                            'top', '最高', '最低', '最多', '最少', '排名', '前几', '前5', '前10',
+                                            '评分最高', '评分最低', '销量最高', '销量最低', '排行', '排序'
+                                        ]) or ('order by' in sql_lower and 'limit' in sql_lower)
+                                        
+                                        analysis_directive = ""
+                                        supplementary_stats = ""
+                                        
+                                        # 规则 1: 单行数据（聚合结果）-> 禁止画图，但要展示计算过程
                                         if analysis_row_count <= 1:
+                                            # 🔧 执行补充查询获取统计信息
+                                            try:
+                                                # 从SQL中提取表名
+                                                table_match = re.search(r'\bFROM\s+([a-zA-Z_][a-zA-Z0-9_]*)', current_sql, re.IGNORECASE)
+                                                if table_match:
+                                                    table_name = table_match.group(1)
+                                                    # 构建统计查询
+                                                    stats_sql = f"SELECT COUNT(*) as 总记录数 FROM {table_name}"
+                                                    
+                                                    # 检测原SQL中使用的金额/数量字段
+                                                    amount_match = re.search(r'SUM\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\)', current_sql, re.IGNORECASE)
+                                                    if amount_match:
+                                                        amount_field = amount_match.group(1)
+                                                        stats_sql = f"""SELECT 
+                                                            COUNT(*) as 总记录数, 
+                                                            MIN({amount_field}) as 最小值, 
+                                                            MAX({amount_field}) as 最大值, 
+                                                            ROUND(AVG({amount_field})::numeric, 2) as 平均值
+                                                        FROM {table_name}"""
+                                                    
+                                                    logger.info(f"执行补充统计查询: {stats_sql}")
+                                                    
+                                                    # 执行统计查询
+                                                    if data_source.db_type in ["xlsx", "xls", "csv"]:
+                                                        stats_result = await _execute_sql_on_file_datasource(
+                                                            connection_string=connection_string,
+                                                            db_type=data_source.db_type,
+                                                            sql_query=stats_sql,
+                                                            data_source_name=data_source.name
+                                                        )
+                                                    else:
+                                                        stats_adapter = PostgreSQLAdapter(connection_string)
+                                                        try:
+                                                            await stats_adapter.connect()
+                                                            stats_query_result = await stats_adapter.execute_query(stats_sql)
+                                                            stats_result = {
+                                                                "data": stats_query_result.data,
+                                                                "columns": stats_query_result.columns
+                                                            }
+                                                        finally:
+                                                            await stats_adapter.disconnect()
+                                                    
+                                                    # 格式化统计信息
+                                                    if stats_result.get('data') and len(stats_result['data']) > 0:
+                                                        stats_data = stats_result['data'][0]
+                                                        stats_parts = []
+                                                        for key, value in stats_data.items():
+                                                            if value is not None:
+                                                                # 格式化数字
+                                                                if isinstance(value, (int, float)):
+                                                                    formatted_value = f"{value:,.2f}" if isinstance(value, float) else f"{value:,}"
+                                                                else:
+                                                                    formatted_value = str(value)
+                                                                stats_parts.append(f"{key}: {formatted_value}")
+                                                        supplementary_stats = " | ".join(stats_parts)
+                                                        logger.info(f"补充统计信息: {supplementary_stats}")
+                                            except Exception as stats_error:
+                                                logger.warning(f"获取补充统计信息失败: {stats_error}")
+                                            
+                                            # 构建带有统计信息的分析指令
+                                            stats_context = ""
+                                            if supplementary_stats:
+                                                stats_context = f"\n\n📊 **补充统计数据**（已自动查询）:\n{supplementary_stats}\n请在回答中引用这些数据来展示计算过程。"
+                                            
                                             analysis_directive = (
-                                                "🛑 **CONSTRAINT**: The result contains only 1 row.\n"
-                                                "- **DO NOT** call `generate_chart`. Visualization is useless for a single number.\n"
-                                                "- Focus on explaining the value directly."
+                                                "🛑 **CONSTRAINT**: The result contains only 1 row (aggregated result like SUM, COUNT, AVG).\n"
+                                                "- **DO NOT** generate any chart.\n"
+                                                "- **DO NOT** explain why you are not generating a chart. Just skip it silently.\n\n"
+                                                "📊 **IMPORTANT - 展示计算过程**:\n"
+                                                "- 在给出最终结果之前，先用补充统计数据说明计算依据\n"
+                                                "- 格式要求：\n"
+                                                "  📋 **计算依据**：共 X 条记录\n"
+                                                "  💰 **数据范围**：最小值 ¥X ~ 最大值 ¥X（平均 ¥X）\n"
+                                                "  📈 **最终结果**：¥X,XXX,XXX"
+                                                f"{stats_context}"
                                             )
                                         elif not has_metric_col and analysis_row_count < 50:
                                             analysis_directive = (
                                                 "🛑 **CONSTRAINT**: This appears to be a text list without numerical metrics.\n"
-                                                "- **DO NOT** call `generate_chart`.\n"
+                                                "- **DO NOT** generate any chart.\n"
+                                                "- **DO NOT** explain why you are not generating a chart. Just skip it silently.\n"
                                                 "- Summarize the list content (e.g., total count, examples)."
                                             )
-                                        # 规则 2: 大数据量 -> 强制 Top N
+                                        # 规则 2: 层级结构数据 -> 使用树状图
+                                        elif has_hierarchy_col:
+                                            analysis_directive = (
+                                                "✅ **STRATEGY**: This is hierarchical/tree-structured data (parent-child relationship).\n"
+                                                "- **ACTION**: You MUST call `generate_chart` with `chart_type='tree'`.\n"
+                                                "- The tree chart is perfect for showing category structures, organizational hierarchies, etc.\n"
+                                                "- **Analysis**: Describe the hierarchy structure, levels, and distribution."
+                                            )
+                                        # 规则 2.5: 排名类数据 -> 强制使用柱状图（不用饼图）
+                                        elif is_ranking_query and analysis_row_count > 1:
+                                            # 找到最可能的名称列和数值列
+                                            name_col = None
+                                            value_col = None
+                                            for col in columns:
+                                                col_lower = str(col).lower()
+                                                if col_lower in ['name', 'product_name', '名称', '产品名', '商品名', 'title']:
+                                                    name_col = col
+                                                elif col_lower in ['count', 'total', 'sum', 'amount', 'quantity', 'review_count', 'sales', '数量', '金额', '销量', '评价数']:
+                                                    value_col = col
+                                            
+                                            chart_hint = ""
+                                            if name_col and value_col:
+                                                chart_hint = f"\n- **Hint**: Use '{name_col}' for X-axis labels and '{value_col}' for Y-axis values."
+                                            elif name_col:
+                                                chart_hint = f"\n- **Hint**: Use '{name_col}' for X-axis labels. Find a numeric column for Y-axis."
+                                            
+                                            analysis_directive = (
+                                                "✅ **STRATEGY**: This is RANKING data (Top N, highest/lowest).\n"
+                                                "- **ACTION**: You MUST generate a bar chart using [CHART_START]...[CHART_END] format.\n"
+                                                "- ⚠️ DO NOT skip chart generation! This ranking data NEEDS visualization.\n"
+                                                "- ⚠️ DO NOT use pie chart! Ranking data shows absolute values, not proportions.\n"
+                                                f"{chart_hint}\n"
+                                                "- **Analysis**: Compare the values, highlight the leader and gaps between ranks."
+                                            )
+                                        # 规则 3: 大数据量 -> 强制 Top N 柱状图
                                         elif analysis_row_count > 20 and not has_time_col:
                                             analysis_directive = (
                                                 f"⚠️ **CONSTRAINT**: The result has {analysis_row_count} rows, which is too many for a clean chart.\n"
-                                                "- **ACTION**: Use `generate_chart` but ONLY include the **Top 10** data points in the `data` parameter.\n"
+                                                "- **ACTION**: You MUST generate a bar chart using [CHART_START]...[CHART_END] format.\n"
+                                                "- ⚠️ DO NOT skip chart generation! Only include the **Top 10** data points.\n"
                                                 "- In your text analysis, mention that you are showing the top performers."
                                             )
-                                        # 规则 3: 时间序列 -> 强制折线图
+                                        # 规则 4: 时间序列 -> 强制折线图
                                         elif has_time_col and analysis_row_count > 1:
                                             analysis_directive = (
-                                                "✅ **STRATEGY**: This is time-series data.\n"
-                                                "- **ACTION**: You MUST call `generate_chart` with `chart_type='line'`.\n"
+                                                "✅ **STRATEGY**: This is time-series data (trend analysis).\n"
+                                                "- **ACTION**: You MUST generate a line chart using [CHART_START]...[CHART_END] format.\n"
+                                                "- ⚠️ DO NOT skip chart generation! Time-series data ALWAYS needs a trend chart.\n"
+                                                "- Use 'line' chart type to show the trend over time.\n"
                                                 "- **Analysis**: Focus on the trend (upward/downward), seasonality, or spikes."
                                             )
-                                        # 规则 4: 分类对比 -> 建议柱状图或饼图
+                                        # 规则 5: 分类对比或其他多行数据 -> 默认生成图表
                                         else:
-                                            chart_suggestion = "pie" if analysis_row_count <= 8 else "bar"
+                                            chart_suggestion = "pie" if analysis_row_count <= 5 else "bar"
                                             analysis_directive = (
-                                                f"✅ **STRATEGY**: This is categorical comparison data.\n"
-                                                f"- **ACTION**: You SHOULD call `generate_chart` with `chart_type='{chart_suggestion}'`.\n"
+                                                f"✅ **STRATEGY**: This data has {analysis_row_count} rows and can be visualized.\n"
+                                                f"- **ACTION**: You MUST generate a chart using [CHART_START]...[CHART_END] format.\n"
+                                                f"- ⚠️ DO NOT skip chart generation! Use '{chart_suggestion}' chart type.\n"
                                                 "- **Analysis**: Compare the magnitudes. Identify the leader and the laggard."
                                             )
                                         
@@ -2403,6 +2598,11 @@ async def _stream_response_generator(
 {{"title":{{"text":"商品库存排名"}},"tooltip":{{"trigger":"axis"}},"xAxis":{{"type":"category","data":["华为MateBook","iPhone 15","小米电视"]}},"yAxis":{{"type":"value","name":"库存数量"}},"series":[{{"name":"库存","type":"bar","data":[100,80,50]}}]}}
 [CHART_END]
 
+   ✅ **正确示例（树状图 - 适用于层级/分类结构数据）**：
+[CHART_START]
+{{"title":{{"text":"产品类别结构","left":"center"}},"tooltip":{{"trigger":"item"}},"series":[{{"type":"tree","data":[{{"name":"全部类别","children":[{{"name":"电子产品","children":[{{"name":"手机通讯","value":3}},{{"name":"电脑办公","value":2}},{{"name":"数码配件","value":5}}]}},{{"name":"服装鞋包","children":[{{"name":"男装","value":4}},{{"name":"女装","value":6}}]}},{{"name":"家居生活","value":8}}]}}],"top":"5%","left":"10%","bottom":"5%","right":"10%","symbol":"circle","symbolSize":10,"orient":"TB","label":{{"position":"top","fontSize":12}},"leaves":{{"label":{{"position":"bottom"}}}},"expandAndCollapse":false,"animationDuration":550}}]}}
+[CHART_END]
+
    ❌ **错误格式（绝对禁止）**：
    - "formatter": function(params) {{...}} ← **禁止使用JavaScript函数！**
    - {{"chartType": "bar"}} ← 这不是 ECharts 格式！
@@ -2412,10 +2612,20 @@ async def _stream_response_generator(
                                         # 构建专家数据分析师的系统提示
                                         expert_system_prompt = (
                                             "你是一位专业的数据分析师。你的任务是从数据中提取洞察并有效地可视化它们。\n\n"
+                                            "**核心原则 - 默认生成图表：**\n"
+                                            "⚠️ 除非明确被告知'禁止画图'，否则你必须生成图表！数据可视化对用户理解数据非常重要。\n\n"
                                             "**核心协议：**\n"
-                                            "1. **遵循指令**：系统会分析数据形态并给出具体约束（如'禁止画图'或'只画 Top 10'）。你必须严格遵守。\n"
-                                            "2. **数据分析**：不要只重复数字。解释数据的意义（例如，不要说'A是100，B是50'，而要说'A的表现是B的2倍'）。\n"
-                                            "3. **图表格式**：当需要生成图表时，必须使用标准的 ECharts JSON 配置格式，用 [CHART_START] 和 [CHART_END] 标记包裹。\n\n"
+                                            "1. **积极可视化**：只要数据有多行，就应该生成图表。图表是数据分析的核心产出！\n"
+                                            "2. **遵循指令**：系统给出的约束（如'禁止画图'或'使用柱状图'）必须严格遵守。\n"
+                                            "3. **数据分析**：不要只重复数字。解释数据的意义（例如，不要说'A是100，B是50'，而要说'A的表现是B的2倍'）。\n"
+                                            "4. **图表格式**：必须使用标准的 ECharts JSON 配置格式，用 [CHART_START] 和 [CHART_END] 标记包裹。\n"
+                                            "5. **不解释跳过图表的原因**：当不需要生成图表时，直接不生成，不要解释为什么不生成图表。\n"
+                                            "6. **层级结构用树状图**：当数据包含层级/分类结构（如一级分类→二级分类）时，使用 type='tree' 的树状图展示。\n\n"
+                                            "**图表类型选择：**\n"
+                                            "- 时间序列/趋势数据 → 折线图 (line)\n"
+                                            "- 排名/对比数据 → 柱状图 (bar)\n"
+                                            "- 占比/分布数据 → 饼图 (pie)\n"
+                                            "- 层级/分类结构 → 树状图 (tree)\n\n"
                                             "**重要提醒（必须严格遵守）：**\n"
                                             "- 图表配置必须是**纯JSON格式**，包含 title、xAxis、yAxis、series 等字段\n"
                                             "- **绝对禁止使用JavaScript函数！** 例如禁止: \"formatter\": function(params){...}\n"

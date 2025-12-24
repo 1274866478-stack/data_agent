@@ -34,6 +34,10 @@ module.exports = {
           DEFAULT: '#FFFFFF',
           foreground: '#000000',
         },
+        popover: {
+          DEFAULT: 'hsl(var(--popover))',
+          foreground: 'hsl(var(--popover-foreground))',
+        },
         // 扩展的灰色系统
         gray: {
           50: '#F9FAFB',

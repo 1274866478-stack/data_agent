@@ -197,7 +197,7 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
                       <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
                         查看详情
                       </summary>
-                      <pre className="mt-1 p-2 bg-white/50 rounded text-xs overflow-x-auto max-h-32 overflow-y-auto">
+                      <pre className="mt-1 p-2 bg-white/50 rounded text-xs overflow-x-auto max-h-96 overflow-y-auto">
                         <code>{step.details}</code>
                       </pre>
                     </details>
