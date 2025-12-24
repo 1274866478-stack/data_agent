@@ -64,6 +64,8 @@ export async function parseStreamResponse(
           try {
             // 4. 解析 JSON 数据
             const event: StreamEvent = JSON.parse(dataStr);
+            // 添加调试日志
+            console.log('[StreamParser] 收到事件:', event.type, event);
             dispatchStreamEvent(event, callbacks);
           } catch (e) {
             console.warn('[StreamParser] Failed to parse stream event JSON:', dataStr, e);
@@ -151,6 +153,14 @@ function dispatchStreamEvent(event: StreamEvent, callbacks: StreamCallbacks) {
       }
       break;
 
+    case 'processing_step':
+      // 处理AI推理步骤事件
+      if (event.step) {
+        console.log('[StreamParser] Received processing step:', event.step);
+        callbacks.onProcessingStep(event.step);
+      }
+      break;
+
     case 'error':
       const errorMsg = event.message || event.error || 'Unknown stream error';
       callbacks.onError(errorMsg);
@@ -159,6 +169,11 @@ function dispatchStreamEvent(event: StreamEvent, callbacks: StreamCallbacks) {
     case 'done':
       // 通常由外层循环处理，但防止后端显式发送 done 事件
       callbacks.onDone();
+      break;
+
+    case 'connection_init':
+      // 连接初始化事件，仅用于确保 SSE 连接建立，不需要处理
+      console.log('[StreamParser] Connection initialized');
       break;
 
     default:

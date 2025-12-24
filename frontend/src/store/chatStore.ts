@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { devtools, subscribeWithSelector } from 'zustand/middleware'
 import { api, ChatQueryRequest, ChatCompletionRequest, StreamEvent } from '@/lib/api-client'
 import { apiClient } from '@/lib/api-client'
-import { StreamCallbacks } from '@/types/chat'
+import { StreamCallbacks, ProcessingStep } from '@/types/chat'
 import { messageCacheService, cacheSession, cacheMessage, getCachedSessions, getCachedSession, getCachedMessages, syncMessages } from '@/services/messageCacheService'
 
 // 聊天消息类型定义
@@ -19,6 +19,7 @@ export interface ChatMessage {
     table?: import('@/lib/api-client').ChatQueryResultTable
     chart?: import('@/lib/api-client').ChatQueryChart
     echarts_option?: Record<string, any>
+    processing_steps?: ProcessingStep[]  // AI推理步骤
   }
 }
 
@@ -508,6 +509,7 @@ export const useChatStore = create<ChatState>()(
             let toolInput = ''
             let toolOutput: any = null
             let echartsOption: any = null
+            let processingSteps: ProcessingStep[] = []
 
             // 定义回调函数
             const callbacks: StreamCallbacks = {
@@ -578,6 +580,30 @@ export const useChatStore = create<ChatState>()(
                   },
                 })
               },
+              onProcessingStep: (step: ProcessingStep) => {
+                // 处理AI推理步骤事件
+                console.log('[ChatStore] 🔄 收到处理步骤:', step)
+                
+                // 查找是否已存在相同步骤号的步骤
+                const existingIndex = processingSteps.findIndex(s => s.step === step.step)
+                if (existingIndex >= 0) {
+                  // 更新已有步骤（例如从running变为completed）
+                  processingSteps[existingIndex] = step
+                } else {
+                  // 添加新步骤
+                  processingSteps.push(step)
+                }
+                
+                // 按步骤号排序
+                processingSteps.sort((a, b) => a.step - b.step)
+                
+                // 更新消息的metadata
+                state.updateMessage(assistantMessageId, {
+                  metadata: {
+                    processing_steps: [...processingSteps],
+                  },
+                })
+              },
               onError: (error: string) => {
                 set({ streamingStatus: 'error' })
                 state.updateMessage(assistantMessageId, {
@@ -604,6 +630,7 @@ export const useChatStore = create<ChatState>()(
                     sources: [],
                     confidence: 0.9,
                     echarts_option: echartsOption,
+                    processing_steps: processingSteps.length > 0 ? [...processingSteps] : undefined,
                   },
                 })
 

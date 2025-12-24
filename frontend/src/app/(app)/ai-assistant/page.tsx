@@ -25,6 +25,7 @@ import { uploadFile, UploadProgress, fileUploadService } from '@/services/fileUp
 import { cn } from '@/lib/utils'
 import { ChatQueryResultView } from '@/components/chat/ChatQueryResultView'
 import { EChartsRenderer } from '@/components/chat/EChartsRenderer'
+import { ProcessingSteps } from '@/components/chat/ProcessingSteps'
 import { extractEChartsOption, removeChartMarkers } from '@/utils/chartParser'
 
 interface UploadedFile {
@@ -796,6 +797,14 @@ export default function AIAssistantPage() {
                                 }
                                 return null
                               })()}
+                              
+                              {/* 显示AI推理步骤 */}
+                              {message.metadata?.processing_steps && message.metadata.processing_steps.length > 0 && (
+                                <ProcessingSteps
+                                  steps={message.metadata.processing_steps}
+                                  defaultExpanded={true}
+                                />
+                              )}
                             </div>
                           )}
                         </div>

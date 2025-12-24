@@ -93,6 +93,7 @@ _cached_agent = None
 _cached_mcp_client = None
 _cached_tools: List[BaseTool] = []
 _cached_checkpointer = None
+_cached_database_url: Optional[str] = None  # 记录当前缓存Agent使用的数据库URL
 
 
 class MCPClientWrapper:
@@ -745,12 +746,20 @@ async def build_agent(
     Returns:
         Tuple of (compiled_agent, mcp_client)
     """
-    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer
+    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer, _cached_database_url
 
-    # Return cached if available
+    # 🔥 关键修复：检查数据库URL是否变化
+    # 如果用户切换了数据源，需要重新创建Agent以连接新的数据库
     if _cached_agent is not None and _cached_mcp_client is not None:
-        logger.info("Using cached agent instance")
-        return _cached_agent, _cached_mcp_client
+        if _cached_database_url == database_url:
+            logger.info("Using cached agent instance (same database)")
+            return _cached_agent, _cached_mcp_client
+        else:
+            logger.info(f"🔄 Database URL changed, rebuilding agent...")
+            logger.info(f"   Old: {_cached_database_url[:50] if _cached_database_url else 'None'}...")
+            logger.info(f"   New: {database_url[:50] if database_url else 'None'}...")
+            # 清除缓存，强制重新创建
+            await reset_agent()
 
     logger.info("Building new agent instance...")
 
@@ -1096,8 +1105,11 @@ async def build_agent(
     # Compile with checkpointer and recursion limit
     _cached_checkpointer = MemorySaver()
     _cached_agent = builder.compile(checkpointer=_cached_checkpointer)
+    
+    # 🔥 保存当前使用的数据库URL，用于后续检测数据源切换
+    _cached_database_url = database_url
 
-    logger.info("Agent built successfully")
+    logger.info(f"Agent built successfully (database: {database_url[:50] if database_url else 'None'}...)")
     return _cached_agent, _cached_mcp_client
 
 
@@ -1109,12 +1121,13 @@ async def reset_agent():
     - Configuration updates
     - Error recovery needed
     """
-    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer
+    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer, _cached_database_url
 
     _cached_agent = None
     _cached_mcp_client = None
     _cached_tools = []
     _cached_checkpointer = None
+    _cached_database_url = None
 
     logger.info("Agent cache reset")
 

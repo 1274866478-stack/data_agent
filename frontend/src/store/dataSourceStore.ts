@@ -41,6 +41,7 @@ export interface CreateDataSourceRequest {
   connection_string: string
   db_type?: string
   file?: File  // 用于文件上传
+  create_db_if_not_exists?: boolean  // 如果数据库不存在则自动创建
 }
 
 export interface UpdateDataSourceRequest {
@@ -220,6 +221,7 @@ class ApiClient {
       name: data.name,
       connection_string: data.connection_string,
       db_type: data.db_type || 'postgresql',
+      create_db_if_not_exists: data.create_db_if_not_exists || false,
     }
 
     console.log('发送到API的数据:', cleanData)

@@ -10,6 +10,7 @@ import io
 import os
 import sys
 import time
+from datetime import datetime, date
 from decimal import Decimal
 from typing import Dict, Any, Optional, List, Union
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -40,18 +41,172 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/llm", tags=["LLM"])
 
 
+def _strip_sql_comments_and_check_select(sql: str) -> tuple[str, bool, str]:
+    """
+    去除SQL开头的注释，并检查是否是SELECT/WITH查询
+    
+    Args:
+        sql: 原始SQL查询
+    
+    Returns:
+        tuple: (去除注释后的SQL, 是否为SELECT查询, 调试信息)
+    """
+    sql_for_check = sql.strip()
+    original_len = len(sql_for_check)
+    debug_info = []
+    
+    # 循环去除开头的注释（单行和多行都要处理）
+    max_iterations = 100  # 防止无限循环
+    iteration = 0
+    
+    while iteration < max_iterations:
+        iteration += 1
+        made_change = False
+        
+        # 去除单行注释 (-- ...)
+        while sql_for_check.startswith('--'):
+            newline_pos = sql_for_check.find('\n')
+            if newline_pos != -1:
+                removed = sql_for_check[:newline_pos + 1]
+                sql_for_check = sql_for_check[newline_pos + 1:].strip()
+                debug_info.append(f"去除单行注释: {repr(removed[:30])}")
+                made_change = True
+            else:
+                # 整行都是注释，没有换行符，说明SQL只是一个注释
+                debug_info.append(f"SQL只是注释: {repr(sql_for_check[:50])}")
+                break
+        
+        # 去除多行注释 (/* ... */)
+        while sql_for_check.startswith('/*'):
+            end_pos = sql_for_check.find('*/')
+            if end_pos != -1:
+                removed = sql_for_check[:end_pos + 2]
+                sql_for_check = sql_for_check[end_pos + 2:].strip()
+                debug_info.append(f"去除多行注释: {repr(removed[:30])}")
+                made_change = True
+            else:
+                debug_info.append("未闭合的多行注释")
+                break
+        
+        # 如果这次循环没有变化，退出
+        if not made_change:
+            break
+    
+    # 检查是否是SELECT查询
+    sql_upper = sql_for_check.upper().strip()
+    is_select = sql_upper.startswith('SELECT') or sql_upper.startswith('WITH')
+    
+    debug_msg = f"原始长度={original_len}, 处理后长度={len(sql_for_check)}, " \
+                f"迭代次数={iteration}, 是SELECT={is_select}"
+    if debug_info:
+        debug_msg += f", 处理过程: {'; '.join(debug_info)}"
+    debug_msg += f", 处理后前50字符: {repr(sql_for_check[:50])}"
+    
+    return sql_for_check, is_select, debug_msg
+
+
+def _split_multiple_sql_statements(sql_block: str) -> List[str]:
+    """
+    拆分一个SQL代码块中可能包含的多个SQL语句
+    
+    AI有时会在一个代码块中返回多个用分号分隔的SQL语句，
+    PostgreSQL的prepared statement不支持同时执行多个命令，
+    因此需要拆分后逐个执行。
+    
+    Args:
+        sql_block: 可能包含多个SQL语句的代码块内容
+        
+    Returns:
+        List[str]: 拆分后的SQL语句列表（过滤掉空语句和纯注释）
+    """
+    # 按分号拆分，但要注意分号可能出现在字符串内部
+    # 使用简单策略：按分号拆分，然后过滤空语句
+    statements = []
+    
+    # 首先尝试按分号分隔
+    raw_statements = sql_block.split(';')
+    
+    for stmt in raw_statements:
+        stmt = stmt.strip()
+        if not stmt:
+            continue
+            
+        # 检查是否只是注释（去除注释后是否还有内容）
+        sql_cleaned, is_select, _ = _strip_sql_comments_and_check_select(stmt)
+        
+        # 如果去除注释后还有内容，且是SELECT/WITH查询，保留它
+        if sql_cleaned and is_select:
+            statements.append(stmt)
+    
+    # 如果没有拆分出任何有效语句，但原始块非空，可能是没有分号的单个查询
+    if not statements and sql_block.strip():
+        sql_cleaned, is_select, _ = _strip_sql_comments_and_check_select(sql_block)
+        if sql_cleaned and is_select:
+            statements.append(sql_block.strip())
+    
+    return statements
+
+
+def _remove_database_name_prefix(sql: str, database_name: str) -> str:
+    """
+    去除SQL中多余的数据库名前缀
+    
+    PostgreSQL不支持跨数据库引用，当已连接到数据库时，
+    SQL中不应该包含 "数据库名.schema.表名" 这样的格式。
+    AI有时会错误地生成这种格式，需要自动修正。
+    
+    例如：
+    - "test_ecommerce_100k.information_schema.tables" -> "information_schema.tables"
+    - "test_ecommerce_100k.public.users" -> "public.users"
+    
+    Args:
+        sql: 原始SQL语句
+        database_name: 当前连接的数据库名
+        
+    Returns:
+        str: 去除数据库名前缀后的SQL
+    """
+    if not database_name:
+        return sql
+    
+    # 构建要替换的模式：数据库名后跟一个点
+    # 需要处理大小写不敏感的情况
+    import re
+    
+    # 匹配 数据库名. 的模式（后面必须跟着有效的标识符）
+    # 使用单词边界确保精确匹配
+    pattern = re.compile(
+        r'\b' + re.escape(database_name) + r'\.',
+        re.IGNORECASE
+    )
+    
+    original_sql = sql
+    sql = pattern.sub('', sql)
+    
+    if sql != original_sql:
+        logger.info(f"[SQL预处理] 去除数据库名前缀 '{database_name}.': {original_sql[:100]}... -> {sql[:100]}...")
+    
+    return sql
+
+
 def _convert_decimal_to_float(data: Any) -> Any:
     """
-    递归地将数据中的 Decimal 类型转换为 float，确保 JSON 可序列化
+    递归地将数据中的 Decimal 和 datetime 类型转换为 JSON 可序列化的格式
     
     Args:
         data: 需要转换的数据（可以是 dict, list, 或其他类型）
     
     Returns:
-        转换后的数据，其中所有 Decimal 都变成了 float
+        转换后的数据，其中：
+        - Decimal -> float
+        - datetime/date -> ISO 格式字符串
     """
     if isinstance(data, Decimal):
         return float(data)
+    elif isinstance(data, datetime):
+        return data.isoformat()
+    elif isinstance(data, date):
+        return data.isoformat()
     elif isinstance(data, dict):
         return {k: _convert_decimal_to_float(v) for k, v in data.items()}
     elif isinstance(data, list):
@@ -1311,16 +1466,21 @@ async def _execute_sql_if_needed(
         if not sql_matches:
             return content
 
-        # 去重：如果有多个相同的SQL，只保留第一个
+        # 拆分每个代码块中可能包含的多个SQL语句，并去重
         seen_sqls = set()
         unique_sql_matches = []
-        for sql in sql_matches:
-            normalized_sql = sql.strip().upper()  # 标准化比较
-            if normalized_sql not in seen_sqls:
-                seen_sqls.add(normalized_sql)
-                unique_sql_matches.append(sql)
-            else:
-                logger.warning(f"检测到重复SQL，已跳过: {sql[:50]}...")
+        for sql_block in sql_matches:
+            # 拆分一个代码块中的多个SQL语句
+            individual_statements = _split_multiple_sql_statements(sql_block)
+            logger.info(f"从代码块中拆分出 {len(individual_statements)} 个SQL语句")
+            
+            for sql in individual_statements:
+                normalized_sql = sql.strip().upper()  # 标准化比较
+                if normalized_sql not in seen_sqls:
+                    seen_sqls.add(normalized_sql)
+                    unique_sql_matches.append(sql)
+                else:
+                    logger.warning(f"检测到重复SQL，已跳过: {sql[:50]}...")
 
         sql_matches = unique_sql_matches
         logger.info(f"检测到 {len(sql_matches)} 个唯一SQL查询，准备执行")
@@ -1370,9 +1530,13 @@ async def _execute_sql_if_needed(
             while retry_count <= max_retries and not execution_success:
                 try:
                     # 安全检查：只允许SELECT查询（包括WITH...SELECT的CTE查询）
-                    sql_upper = current_sql.upper().strip()
-                    if not (sql_upper.startswith('SELECT') or sql_upper.startswith('WITH')):
-                        logger.warning(f"跳过非SELECT查询: {current_sql[:50]}")
+                    # 使用统一的注释去除和检查函数
+                    sql_for_check, is_select, debug_msg = _strip_sql_comments_and_check_select(current_sql)
+                    logger.debug(f"SQL检测结果: {debug_msg}")
+                    
+                    if not is_select:
+                        logger.warning(f"跳过非SELECT查询: {current_sql[:100]}")
+                        logger.warning(f"检测详情: {debug_msg}")
                         break
 
                     # 根据数据源类型选择执行方式
@@ -1389,6 +1553,10 @@ async def _execute_sql_if_needed(
                             raise Exception(result["error"])
                     else:
                         # 数据库类型数据源：使用PostgreSQLAdapter
+                        # 预处理：去除AI可能错误添加的数据库名前缀
+                        if data_source.database_name:
+                            current_sql = _remove_database_name_prefix(current_sql, data_source.database_name)
+                        
                         adapter = PostgreSQLAdapter(connection_string)
                         try:
                             await adapter.connect()
@@ -1562,8 +1730,10 @@ async def _execute_tool_call(
                     "error": "SQL查询语句为空"
                 }
             
-            # 安全检查：只允许SELECT查询
-            if not sql_query.strip().upper().startswith('SELECT'):
+            # 安全检查：只允许SELECT查询（使用统一的检测函数处理注释）
+            _, is_select, debug_msg = _strip_sql_comments_and_check_select(sql_query)
+            logger.debug(f"execute_sql SQL检测: {debug_msg}")
+            if not is_select:
                 return {
                     "success": False,
                     "result": None,
@@ -1619,10 +1789,15 @@ async def _execute_tool_call(
                         }
                 else:
                     # 数据库类型数据源
+                    # 预处理：去除AI可能错误添加的数据库名前缀
+                    processed_sql = sql_query
+                    if data_source.database_name:
+                        processed_sql = _remove_database_name_prefix(sql_query, data_source.database_name)
+                    
                     adapter = PostgreSQLAdapter(connection_string)
                     try:
                         await adapter.connect()
-                        query_result = await adapter.execute_query(sql_query)
+                        query_result = await adapter.execute_query(processed_sql)
                         result = {
                             "data": query_result.data,
                             "columns": query_result.columns,
@@ -1728,19 +1903,59 @@ async def _execute_tool_call(
         }
 
 
+def _create_processing_step(
+    step: int,
+    title: str,
+    description: str,
+    status: str = "running",
+    duration: int = None,
+    details: str = None,
+    tenant_id: str = None
+) -> str:
+    """创建处理步骤事件的JSON字符串"""
+    step_data = {
+        "type": "processing_step",
+        "step": {
+            "step": step,
+            "title": title,
+            "description": description,
+            "status": status,
+            "timestamp": datetime.now().isoformat(),
+        },
+        "tenant_id": tenant_id
+    }
+    if duration is not None:
+        step_data["step"]["duration"] = duration
+    if details:
+        step_data["step"]["details"] = details
+    
+    # 添加日志确认步骤发送
+    logger.info(f"📤 发送处理步骤 {step}: {title} [{status}]")
+    return f"data: {json.dumps(step_data, ensure_ascii=False)}\n\n"
+
+
 async def _stream_response_generator(
     stream_generator,
     tenant_id: str,
     db: Session,
     original_question: str = "",
     data_source_ids: Optional[List[str]] = None,
-    initial_messages: Optional[List[LLMMessage]] = None
+    initial_messages: Optional[List[LLMMessage]] = None,
+    schema_info: Optional[dict] = None  # 新增：Schema获取信息
 ):
     """
     流式响应生成器（方案B：SQL 代码块检测模式）
     
     不使用 Function Calling，而是检测 AI 输出中的 ```sql ... ``` 代码块，
     自动执行 SQL 查询并进行第二次 LLM 调用。
+    
+    完整的6个步骤：
+    1. 理解用户问题
+    2. 获取数据库Schema
+    3. 构建AI Prompt
+    4. AI生成SQL
+    5. 提取SQL语句
+    6. 执行SQL查询
     """
     try:
         # 收集完整的响应内容
@@ -1749,6 +1964,95 @@ async def _stream_response_generator(
         
         # 消息历史（用于二次调用）
         messages = initial_messages or []
+        
+        # ========== 首先发送连接初始化事件 ==========
+        # 这个事件确保 SSE 连接完全建立后再发送重要数据
+        init_event = {
+            "type": "connection_init",
+            "message": "Stream connection established",
+            "tenant_id": tenant_id
+        }
+        yield f"data: {json.dumps(init_event, ensure_ascii=False)}\n\n"
+        # 给前端足够时间处理连接建立
+        await asyncio.sleep(0.05)
+        
+        # ========== Step 1: 理解用户问题 ==========
+        logger.info(f"🚀 开始发送步骤1-4，original_question={original_question[:30] if original_question else 'None'}")
+        step_start_time = time.time()
+        yield _create_processing_step(
+            step=1,
+            title="理解用户问题",
+            description=f"分析问题: {original_question[:50]}..." if len(original_question) > 50 else f"分析问题: {original_question}",
+            status="completed",
+            duration=int((time.time() - step_start_time) * 1000),
+            details=f"用户问题: {original_question}",
+            tenant_id=tenant_id
+        )
+        # 确保事件被刷新到客户端
+        await asyncio.sleep(0.05)
+
+        # ========== Step 2: 获取数据库Schema ==========
+        if schema_info:
+            schema_duration = schema_info.get("duration_ms", 0)
+            schema_length = schema_info.get("length", 0)
+            schema_tables = schema_info.get("tables", [])
+            data_source_name = schema_info.get("data_source_name", "未知")
+            
+            tables_preview = ", ".join(schema_tables[:5])
+            if len(schema_tables) > 5:
+                tables_preview += f" 等{len(schema_tables)}个表"
+            
+            yield _create_processing_step(
+                step=2,
+                title="获取数据库Schema",
+                description=f"从 {data_source_name} 获取到 {len(schema_tables)} 个表结构",
+                status="completed",
+                duration=schema_duration,
+                details=f"数据源: {data_source_name}\n表: {tables_preview}\nSchema大小: {schema_length} 字符",
+                tenant_id=tenant_id
+            )
+        else:
+            yield _create_processing_step(
+                step=2,
+                title="获取数据库Schema",
+                description="已获取数据库结构信息",
+                status="completed",
+                tenant_id=tenant_id
+            )
+        # 确保事件被刷新到客户端
+        await asyncio.sleep(0.05)
+
+        # ========== Step 3: 构建AI Prompt ==========
+        prompt_start_time = time.time()
+        system_msg_preview = ""
+        for msg in messages:
+            if msg.role == "system":
+                system_msg_preview = msg.content[:200] + "..." if len(msg.content) > 200 else msg.content
+                break
+        
+        yield _create_processing_step(
+            step=3,
+            title="构建AI Prompt",
+            description="将Schema注入系统提示词",
+            status="completed",
+            duration=int((time.time() - prompt_start_time) * 1000),
+            details=f"System Prompt预览:\n{system_msg_preview}",
+            tenant_id=tenant_id
+        )
+        # 确保事件被刷新到客户端
+        await asyncio.sleep(0.05)
+
+        # ========== Step 4: AI生成SQL ==========
+        ai_start_time = time.time()
+        yield _create_processing_step(
+            step=4,
+            title="AI生成SQL",
+            description="正在根据数据库Schema生成SQL查询...",
+            status="running",
+            tenant_id=tenant_id
+        )
+        # 确保事件被刷新到客户端
+        await asyncio.sleep(0.05)
 
         async for chunk in stream_generator:
             # 处理普通内容
@@ -1778,6 +2082,17 @@ async def _stream_response_generator(
             
             # 如果流结束，检测并执行 SQL（方案B）
             if chunk.finished:
+                # ========== Step 4完成: AI生成SQL ==========
+                yield _create_processing_step(
+                    step=4,
+                    title="AI生成SQL",
+                    description="SQL查询已生成",
+                    status="completed",
+                    duration=int((time.time() - ai_start_time) * 1000),
+                    details=f"AI回复长度: {len(full_content)} 字符",
+                    tenant_id=tenant_id
+                )
+                
                 logger.info(f"流式响应完成，检测SQL查询。内容长度: {len(full_content)}")
 
                 # 检测SQL代码块
@@ -1785,20 +2100,59 @@ async def _stream_response_generator(
                 sql_matches = re.findall(sql_pattern, full_content, re.DOTALL | re.IGNORECASE)
 
                 if sql_matches:
-                    # 去重：如果有多个相同的SQL，只保留第一个
+                    # ========== Step 5: 提取SQL语句 ==========
+                    yield _create_processing_step(
+                        step=5,
+                        title="提取SQL语句",
+                        description=f"正在从AI回复中提取SQL代码块...",
+                        status="running",
+                        tenant_id=tenant_id
+                    )
+                    
+                    # 拆分每个代码块中可能包含的多个SQL语句，并去重
                     seen_sqls = set()
                     unique_sql_matches = []
-                    for sql in sql_matches:
-                        normalized_sql = sql.strip().upper()  # 标准化比较
-                        if normalized_sql not in seen_sqls:
-                            seen_sqls.add(normalized_sql)
-                            unique_sql_matches.append(sql)
-                        else:
-                            logger.warning(f"流式响应：检测到重复SQL，已跳过: {sql[:50]}...")
+                    for sql_block in sql_matches:
+                        # 拆分一个代码块中的多个SQL语句
+                        individual_statements = _split_multiple_sql_statements(sql_block)
+                        logger.info(f"流式响应：从代码块中拆分出 {len(individual_statements)} 个SQL语句")
+                        
+                        for sql in individual_statements:
+                            normalized_sql = sql.strip().upper()  # 标准化比较
+                            if normalized_sql not in seen_sqls:
+                                seen_sqls.add(normalized_sql)
+                                unique_sql_matches.append(sql)
+                            else:
+                                logger.warning(f"流式响应：检测到重复SQL，已跳过: {sql[:50]}...")
 
                     sql_matches = unique_sql_matches
                     logger.info(f"检测到 {len(sql_matches)} 个唯一SQL查询，准备执行")
+                    
+                    # ========== Step 5完成: 提取SQL语句 ==========
+                    # 格式化SQL预览
+                    sql_preview = sql_matches[0].strip()
+                    if len(sql_preview) > 300:
+                        sql_preview = sql_preview[:300] + "\n..."
+                    
+                    yield _create_processing_step(
+                        step=5,
+                        title="提取SQL语句",
+                        description=f"成功提取 {len(sql_matches)} 个SQL查询",
+                        status="completed",
+                        details=f"SQL语句:\n{sql_preview}",
+                        tenant_id=tenant_id
+                    )
 
+                    # ========== Step 6: 执行SQL查询 ==========
+                    ds_start_time = time.time()
+                    yield _create_processing_step(
+                        step=6,
+                        title="执行SQL查询",
+                        description="正在连接数据源并执行查询...",
+                        status="running",
+                        tenant_id=tenant_id
+                    )
+                    
                     # 获取租户的活跃数据源
                     data_sources = await data_source_service.get_data_sources(
                         tenant_id=tenant_id,
@@ -1818,7 +2172,7 @@ async def _stream_response_generator(
                                 logger.warning(f"流式响应：未找到指定的数据源，使用第一个活跃数据源: {data_source.name}")
                         else:
                             data_source = data_sources[0]
-
+                        
                         # 获取解密的连接字符串
                         connection_string = await data_source_service.get_decrypted_connection_string(
                             data_source_id=data_source.id,
@@ -1829,7 +2183,19 @@ async def _stream_response_generator(
                         # 获取schema上下文（用于SQL修复）
                         schema_context = await _get_data_sources_context(tenant_id, db, data_source_ids)
 
+                        # 更新Step 6进度
+                        exec_start_time = time.time()
+                        yield _create_processing_step(
+                            step=6,
+                            title="执行SQL查询",
+                            description=f"已连接 {data_source.name}，正在执行 {len(sql_matches)} 个查询...",
+                            status="running",
+                            details=f"数据源: {data_source.name}\n类型: {data_source.db_type}",
+                            tenant_id=tenant_id
+                        )
+
                         # 执行每个SQL查询（带智能重试）
+                        total_rows = 0
                         for sql_query in sql_matches:
                             current_sql = sql_query.strip()
                             retry_count = 0
@@ -1840,9 +2206,13 @@ async def _stream_response_generator(
                             while retry_count <= max_retries and not execution_success:
                                 try:
                                     # 安全检查：只允许SELECT查询（包括WITH...SELECT的CTE查询）
-                                    sql_upper = current_sql.upper().strip()
-                                    if not (sql_upper.startswith('SELECT') or sql_upper.startswith('WITH')):
-                                        logger.warning(f"跳过非SELECT查询: {current_sql[:50]}")
+                                    # 使用统一的注释去除和检查函数
+                                    sql_for_check, is_select, debug_msg = _strip_sql_comments_and_check_select(current_sql)
+                                    logger.info(f"[流式SQL检测] {debug_msg}")
+                                    
+                                    if not is_select:
+                                        logger.warning(f"跳过非SELECT查询: {current_sql[:100]}")
+                                        logger.warning(f"检测详情: {debug_msg}")
                                         break
 
                                     # 根据数据源类型选择执行方式
@@ -1859,6 +2229,10 @@ async def _stream_response_generator(
                                             raise Exception(result["error"])
                                     else:
                                         # 数据库类型数据源：使用PostgreSQLAdapter
+                                        # 预处理：去除AI可能错误添加的数据库名前缀
+                                        if data_source.database_name:
+                                            current_sql = _remove_database_name_prefix(current_sql, data_source.database_name)
+                                        
                                         adapter = PostgreSQLAdapter(connection_string)
                                         try:
                                             await adapter.connect()
@@ -1920,7 +2294,19 @@ async def _stream_response_generator(
                                     yield f"data: {json.dumps(result_chunk, ensure_ascii=False)}\n\n"
 
                                     logger.info(f"SQL查询执行成功，返回 {result.get('row_count', 0)} 行")
+                                    total_rows += row_count
                                     execution_success = True
+                                    
+                                    # ========== Step 6完成: 执行SQL查询 ==========
+                                    yield _create_processing_step(
+                                        step=6,
+                                        title="执行SQL查询",
+                                        description=f"✅ 查询成功，返回 {row_count} 行数据",
+                                        status="completed",
+                                        duration=int((time.time() - exec_start_time) * 1000),
+                                        details=f"数据源: {data_source.name}\n返回行数: {row_count}\n执行耗时: {int((time.time() - exec_start_time) * 1000)}ms",
+                                        tenant_id=tenant_id
+                                    )
                                     
                                     # 🔧 方案B增强：二次LLM调用，分析数据并生成图表
                                     if execution_success and result.get('data'):
@@ -2003,21 +2389,23 @@ async def _stream_response_generator(
    
    ⚠️ **格式要求（必须严格遵守）**：
    - 必须使用 `[CHART_START]` 开始，`[CHART_END]` 结束
-   - 中间是**标准 ECharts JSON 配置**（不是自定义格式！）
+   - 中间是**纯JSON格式的ECharts配置**
    - 不要使用 markdown 代码块包裹 JSON
+   - **禁止使用JavaScript函数**！formatter只能用字符串模板，如 "{{b}}: {{c}}"
    
+   ✅ **正确示例（折线图）**：
+[CHART_START]
+{{"title":{{"text":"月度销售趋势","left":"center"}},"tooltip":{{"trigger":"axis","formatter":"{{b}}: {{c}}元"}},"xAxis":{{"type":"category","data":["1月","2月","3月"]}},"yAxis":{{"type":"value","name":"销售额"}},"series":[{{"name":"销售额","type":"line","data":[12000,15000,18000]}}]}}
+[CHART_END]
+
    ✅ **正确示例（柱状图）**：
 [CHART_START]
 {{"title":{{"text":"商品库存排名"}},"tooltip":{{"trigger":"axis"}},"xAxis":{{"type":"category","data":["华为MateBook","iPhone 15","小米电视"]}},"yAxis":{{"type":"value","name":"库存数量"}},"series":[{{"name":"库存","type":"bar","data":[100,80,50]}}]}}
 [CHART_END]
 
-   ✅ **正确示例（饼图）**：
-[CHART_START]
-{{"title":{{"text":"销售占比"}},"tooltip":{{"trigger":"item"}},"series":[{{"name":"销售额","type":"pie","radius":"50%","data":[{{"value":1048,"name":"产品A"}},{{"value":735,"name":"产品B"}}]}}]}}
-[CHART_END]
-
-   ❌ **错误格式（不要这样写）**：
-   - {{"chartType": "bar", "xAxis": {{"field": "name"}}}} ← 这不是 ECharts 格式！
+   ❌ **错误格式（绝对禁止）**：
+   - "formatter": function(params) {{...}} ← **禁止使用JavaScript函数！**
+   - {{"chartType": "bar"}} ← 这不是 ECharts 格式！
 
 请直接输出分析和图表："""
 
@@ -2028,8 +2416,10 @@ async def _stream_response_generator(
                                             "1. **遵循指令**：系统会分析数据形态并给出具体约束（如'禁止画图'或'只画 Top 10'）。你必须严格遵守。\n"
                                             "2. **数据分析**：不要只重复数字。解释数据的意义（例如，不要说'A是100，B是50'，而要说'A的表现是B的2倍'）。\n"
                                             "3. **图表格式**：当需要生成图表时，必须使用标准的 ECharts JSON 配置格式，用 [CHART_START] 和 [CHART_END] 标记包裹。\n\n"
-                                            "**重要提醒：**\n"
-                                            "- 图表配置必须是标准 ECharts 格式，包含 title、xAxis、yAxis、series 等字段\n"
+                                            "**重要提醒（必须严格遵守）：**\n"
+                                            "- 图表配置必须是**纯JSON格式**，包含 title、xAxis、yAxis、series 等字段\n"
+                                            "- **绝对禁止使用JavaScript函数！** 例如禁止: \"formatter\": function(params){...}\n"
+                                            "- tooltip的formatter只能用字符串模板，如: \"formatter\": \"{b}: {c}元\"\n"
                                             "- 不要使用自定义的简化格式如 {chartType: 'bar', xAxis: {field: 'name'}}\n"
                                             "- 直接输出 JSON，不要用 markdown 代码块包裹"
                                         )
@@ -2089,6 +2479,32 @@ async def _stream_response_generator(
                                                 if chart_match:
                                                     try:
                                                         chart_json_str = chart_match.group(1).strip()
+                                                        logger.info(f"📊 提取到的ECharts JSON (前500字符): {chart_json_str[:500]}")
+                                                        
+                                                        # 尝试修复常见的JSON格式问题
+                                                        # 1. 移除可能的markdown代码块标记
+                                                        if chart_json_str.startswith('```'):
+                                                            lines = chart_json_str.split('\n')
+                                                            # 移除第一行(```json)和最后一行(```)
+                                                            if lines[0].startswith('```'):
+                                                                lines = lines[1:]
+                                                            if lines and lines[-1].strip() == '```':
+                                                                lines = lines[:-1]
+                                                            chart_json_str = '\n'.join(lines)
+                                                        
+                                                        # 2. 移除JavaScript函数（AI有时仍会生成）
+                                                        # 匹配 "formatter": function(...){...} 等模式
+                                                        import re as regex_module
+                                                        # 简单的函数替换：将 function(...){...} 替换为字符串
+                                                        chart_json_str = regex_module.sub(
+                                                            r'"formatter":\s*function\s*\([^)]*\)\s*\{[^}]*(?:\{[^}]*\}[^}]*)*\}',
+                                                            '"formatter": "{b}: {c}"',
+                                                            chart_json_str
+                                                        )
+                                                        
+                                                        # 3. 确保JSON字符串是完整的
+                                                        chart_json_str = chart_json_str.strip()
+                                                        
                                                         echarts_option = json.loads(chart_json_str)
                                                         logger.info(f"✅ 成功提取 ECharts 配置: {list(echarts_option.keys())}")
                                                         
@@ -2103,6 +2519,7 @@ async def _stream_response_generator(
                                                         yield f"data: {json.dumps(chart_event, ensure_ascii=False)}\n\n"
                                                     except json.JSONDecodeError as e:
                                                         logger.warning(f"解析 ECharts JSON 失败: {e}")
+                                                        logger.warning(f"失败的JSON内容 (前300字符): {chart_json_str[:300] if chart_json_str else 'None'}")
                                                 
                                             except Exception as e:
                                                 logger.error(f"二次LLM调用失败: {e}")
@@ -2258,11 +2675,35 @@ async def chat_completion(
         import time as _time
         _ctx_start = _time.time()
         data_sources_context = await _get_data_sources_context(tenant_id, db, request.data_source_ids)
+        schema_duration_ms = int((_time.time() - _ctx_start) * 1000)
         print(f"[DEBUG] _get_data_sources_context took {_time.time() - _ctx_start:.2f}s")
+        
+        # 收集Schema信息用于前端展示
+        schema_info = None
         if data_sources_context:
             logger.info(f"Data sources context retrieved for tenant {tenant_id}, length: {len(data_sources_context)}")
             # 调试日志：打印数据源上下文的前1000个字符
             logger.debug(f"Data sources context content (first 1000 chars): {data_sources_context[:1000]}")
+            
+            # 解析Schema信息
+            tables = []
+            data_source_name = "未知"
+            # 简单提取表名（从Schema文本中解析）
+            import re as _re
+            table_matches = _re.findall(r'表:\s*(\w+)', data_sources_context)
+            if table_matches:
+                tables = table_matches
+            # 提取数据源名
+            ds_name_match = _re.search(r'数据源:\s*(\S+)', data_sources_context)
+            if ds_name_match:
+                data_source_name = ds_name_match.group(1)
+            
+            schema_info = {
+                "duration_ms": schema_duration_ms,
+                "length": len(data_sources_context),
+                "tables": tables,
+                "data_source_name": data_source_name
+            }
         else:
             logger.info(f"No data sources found for tenant {tenant_id}")
 
@@ -2325,7 +2766,8 @@ async def chat_completion(
                     db, 
                     original_question, 
                     request.data_source_ids,
-                    initial_messages=messages  # 传递初始消息历史
+                    initial_messages=messages,  # 传递初始消息历史
+                    schema_info=schema_info  # 传递Schema获取信息
                 ),
                 media_type="text/event-stream",
                 headers={

@@ -2035,5 +2035,193 @@ json.dumps(data, cls=DecimalEncoder)
 
 ---
 
+### BUG-035: AI生成多条SQL语句时执行失败 - "cannot insert multiple commands into a prepared statement"
+
+**发现时间**: 2025-12-23
+**严重程度**: 🔴 高 (功能阻塞)
+**状态**: ✅ 已修复
+
+#### 问题描述
+用户请求AI生成数据报告时，AI返回了包含10个SQL查询的综合报告（总体业务概览、用户分析、产品排名等）。但系统显示错误：
+```
+查询执行失败: cannot insert multiple commands into a prepared statement
+```
+
+前端只显示SQL代码，没有执行结果。
+
+#### 根本原因
+
+**问题1: AI将多个SQL查询放在一个代码块中**
+- AI生成的回复中，所有10个SQL查询都在**一个** `\`\`\`sql...\`\`\`` 代码块中
+- 各查询之间用分号和注释分隔
+- 日志显示："检测到 1 个唯一SQL查询，准备执行"
+
+**问题2: 后端SQL检测逻辑不支持拆分**
+- **位置**: `backend/src/app/api/v1/endpoints/llm.py`
+- **原因**: SQL检测模式 `sql_pattern = r'\`\`\`sql\s*(.*?)\s*\`\`\`'` 只按代码块分割
+- 整个代码块（包含多个SQL语句）被当作一个SQL执行
+
+**问题3: PostgreSQL prepared statement 限制**
+- PostgreSQL 的 prepared statement 不允许同时执行多个命令
+- 尝试执行 `SELECT ...; SELECT ...; SELECT ...` 会报错
+
+**后端日志证据**:
+```
+流式响应完成，检测SQL查询。内容长度: 2642
+检测到 1 个唯一SQL查询，准备执行
+[流式SQL检测] 原始长度=2606, 处理后长度=2593, 迭代次数=2, 是SELECT=True
+PostgreSQL查询执行失败: cannot insert multiple commands into a prepared statement
+```
+
+#### 解决方法
+
+**修复1: 添加SQL语句拆分函数**
+
+文件: `backend/src/app/api/v1/endpoints/llm.py` 第105-145行（新增）
+
+```python
+def _split_multiple_sql_statements(sql_block: str) -> List[str]:
+    """
+    拆分一个SQL代码块中可能包含的多个SQL语句
+    
+    AI有时会在一个代码块中返回多个用分号分隔的SQL语句，
+    PostgreSQL的prepared statement不支持同时执行多个命令，
+    因此需要拆分后逐个执行。
+    
+    Args:
+        sql_block: 可能包含多个SQL语句的代码块内容
+        
+    Returns:
+        List[str]: 拆分后的SQL语句列表（过滤掉空语句和纯注释）
+    """
+    statements = []
+    
+    # 按分号拆分
+    raw_statements = sql_block.split(';')
+    
+    for stmt in raw_statements:
+        stmt = stmt.strip()
+        if not stmt:
+            continue
+            
+        # 检查是否只是注释（去除注释后是否还有内容）
+        sql_cleaned, is_select, _ = _strip_sql_comments_and_check_select(stmt)
+        
+        # 如果去除注释后还有内容，且是SELECT/WITH查询，保留它
+        if sql_cleaned and is_select:
+            statements.append(stmt)
+    
+    # 如果没有拆分出任何有效语句，但原始块非空，可能是没有分号的单个查询
+    if not statements and sql_block.strip():
+        sql_cleaned, is_select, _ = _strip_sql_comments_and_check_select(sql_block)
+        if sql_cleaned and is_select:
+            statements.append(sql_block.strip())
+    
+    return statements
+```
+
+**修复2: 修改非流式SQL执行逻辑**
+
+文件: `backend/src/app/api/v1/endpoints/llm.py` - `_execute_sql_if_needed()` 函数
+
+```python
+# ❌ 修复前
+for sql in sql_matches:
+    normalized_sql = sql.strip().upper()
+    if normalized_sql not in seen_sqls:
+        seen_sqls.add(normalized_sql)
+        unique_sql_matches.append(sql)
+
+# ✅ 修复后
+for sql_block in sql_matches:
+    # 拆分一个代码块中的多个SQL语句
+    individual_statements = _split_multiple_sql_statements(sql_block)
+    logger.info(f"从代码块中拆分出 {len(individual_statements)} 个SQL语句")
+    
+    for sql in individual_statements:
+        normalized_sql = sql.strip().upper()
+        if normalized_sql not in seen_sqls:
+            seen_sqls.add(normalized_sql)
+            unique_sql_matches.append(sql)
+```
+
+**修复3: 修改流式响应SQL执行逻辑**
+
+文件: `backend/src/app/api/v1/endpoints/llm.py` - `_stream_response_generator()` 函数
+
+同样的修改应用于流式响应中的SQL处理逻辑。
+
+#### 修改后的效果
+
+**修复前**:
+```
+用户: 生成数据报告
+
+AI: [10个SQL查询在一个代码块中]
+
+❌ 查询执行失败: cannot insert multiple commands into a prepared statement
+建议: 请检查表名和列名是否正确...
+```
+
+**修复后**:
+```
+用户: 生成数据报告
+
+AI: [10个SQL查询在一个代码块中]
+
+日志: 从代码块中拆分出 10 个SQL语句
+日志: 检测到 10 个唯一SQL查询，准备执行
+
+📊 查询结果 1/10: 总体业务概览
+| 总订单数 | 下单用户数 | 总销售额 | ... |
+|---------|-----------|---------|-----|
+| 52847   | 9982      | 2.3亿   | ... |
+
+📊 查询结果 2/10: 用户分析
+...
+
+（10个查询结果依次显示）
+```
+
+#### 修改的文件
+1. `backend/src/app/api/v1/endpoints/llm.py`
+   - 新增 `_split_multiple_sql_statements()` 函数
+   - 修改 `_execute_sql_if_needed()` 中的SQL处理逻辑
+   - 修改 `_stream_response_generator()` 中的SQL处理逻辑
+
+#### 部署步骤
+```powershell
+# 重建并重启后端容器
+docker-compose build backend
+docker-compose up -d backend
+```
+
+#### 预防措施
+
+**SQL执行开发规范**:
+1. ✅ **按分号拆分SQL代码块** - 不要假设一个代码块只有一条SQL
+2. ✅ **逐条执行SQL语句** - PostgreSQL prepared statement 限制
+3. ✅ **过滤空语句和纯注释** - 拆分后可能产生空字符串
+4. ✅ **保留单条查询兼容性** - 没有分号的单条SQL仍能正常处理
+
+**AI提示词建议** (可选优化):
+可以在系统提示词中建议AI将多个查询放在不同的代码块中：
+```
+如果需要执行多个SQL查询，请将每个查询放在独立的 ```sql 代码块中，不要合并到一个代码块。
+```
+
+#### 相关问题
+- **BUG-024**: SQL注释去除逻辑 - 本次复用了 `_strip_sql_comments_and_check_select()` 函数
+- **BUG-034**: Decimal类型序列化问题 - 与本bug同时存在但独立修复
+
+#### 验证
+- ✅ 后端容器重建并重启成功
+- ✅ 多SQL语句代码块正确拆分
+- ✅ 每个SQL语句独立执行
+- ✅ 单条SQL查询仍正常工作
+- ✅ 日志显示正确的拆分数量
+
+---
+
 **注意**: 本日志记录了项目开发过程中遇到的关键问题和解决方案，请开发人员参考并避免重复出现类似问题。
 

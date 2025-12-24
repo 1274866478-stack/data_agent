@@ -9,6 +9,7 @@ import { ChatMessage, useChatStore } from '@/store/chatStore'
 import { cn } from '@/lib/utils'
 import { EChartsRenderer } from './EChartsRenderer'
 import { ChatQueryResultView } from './ChatQueryResultView'
+import { ProcessingSteps } from './ProcessingSteps'
 
 interface MessageListProps {
   className?: string
@@ -171,6 +172,18 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                 <ChatQueryResultView
                   table={message.metadata.table}
                   chart={message.metadata.chart}
+                />
+              )}
+
+              {/* 显示AI推理步骤（仅对 assistant 消息显示） */}
+              {message.role === 'assistant' && (() => {
+                // 调试日志
+                console.log('[MessageList] 检查processing_steps:', message.id, message.metadata?.processing_steps)
+                return message.metadata?.processing_steps && message.metadata.processing_steps.length > 0
+              })() && (
+                <ProcessingSteps
+                  steps={message.metadata.processing_steps}
+                  defaultExpanded={true}
                 />
               )}
 

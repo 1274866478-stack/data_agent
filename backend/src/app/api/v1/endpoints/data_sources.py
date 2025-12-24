@@ -30,6 +30,7 @@ class DataSourceCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="数据源名称")
     connection_string: str = Field(..., min_length=1, description="数据库连接字符串")
     db_type: str = Field(default="postgresql", description="数据库类型")
+    create_db_if_not_exists: bool = Field(default=False, description="如果数据库不存在则自动创建")
 
 
 class DataSourceUpdateRequest(BaseModel):
@@ -588,6 +589,57 @@ async def get_supported_data_source_types_route():
 # 固定路径 POST 端点（必须在动态路径端点之前定义）
 # ============================================================================
 
+async def _create_database_if_not_exists(connection_string: str, db_type: str) -> tuple[bool, str]:
+    """
+    如果数据库不存在则创建它
+    返回 (是否成功, 消息)
+    """
+    if db_type != "postgresql":
+        return False, "仅支持 PostgreSQL 数据库自动创建"
+    
+    import re
+    from sqlalchemy import create_engine, text
+    
+    # 解析连接字符串获取数据库名
+    # 格式: postgresql://user:password@host:port/database_name
+    pattern = r"postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/([^/?]+)"
+    match = re.match(pattern, connection_string)
+    
+    if not match:
+        return False, "无法解析连接字符串"
+    
+    user, password, host, port, database_name = match.groups()
+    
+    # 连接到 postgres 默认数据库来创建新数据库
+    master_connection_string = f"postgresql://{user}:{password}@{host}:{port}/postgres"
+    
+    try:
+        engine = create_engine(master_connection_string)
+        with engine.connect() as conn:
+            conn.execution_options(isolation_level="AUTOCOMMIT")
+            
+            # 检查数据库是否存在
+            result = conn.execute(
+                text("SELECT 1 FROM pg_database WHERE datname = :dbname"),
+                {"dbname": database_name}
+            )
+            
+            if result.fetchone():
+                logger.info(f"数据库 '{database_name}' 已存在")
+                return True, f"数据库 '{database_name}' 已存在"
+            
+            # 创建数据库
+            # 注意：数据库名不能使用参数化查询，需要手动转义
+            safe_db_name = database_name.replace('"', '""')
+            conn.execute(text(f'CREATE DATABASE "{safe_db_name}"'))
+            logger.info(f"成功创建数据库 '{database_name}'")
+            return True, f"成功创建数据库 '{database_name}'"
+            
+    except Exception as e:
+        logger.error(f"创建数据库失败: {e}")
+        return False, f"创建数据库失败: {str(e)}"
+
+
 @router.post("/", summary="创建数据源连接", status_code=status.HTTP_201_CREATED, response_model=DataSourceResponse)
 async def create_data_source(
     request: DataSourceCreateRequest,
@@ -597,12 +649,13 @@ async def create_data_source(
     """
     创建新的数据源连接
     自动加密连接字符串并解析连接信息
+    如果 create_db_if_not_exists=True，会自动创建不存在的数据库
     """
     logger.info(f"收到创建数据源请求: tenant_id={tenant_id}")
     logger.info(f"  - name: '{request.name}'")
     logger.info(f"  - db_type: '{request.db_type}'")
     logger.info(f"  - connection_string: '{request.connection_string}'")
-    logger.info(f"  - connection_string长度: {len(request.connection_string) if request.connection_string else 0}")
+    logger.info(f"  - create_db_if_not_exists: {request.create_db_if_not_exists}")
     logger.info(f"  - request对象: {request.model_dump()}")
 
     if not tenant_id:
@@ -612,6 +665,19 @@ async def create_data_source(
         )
 
     try:
+        # 如果需要自动创建数据库
+        if request.create_db_if_not_exists and request.db_type == "postgresql":
+            success, message = await _create_database_if_not_exists(
+                request.connection_string, 
+                request.db_type
+            )
+            logger.info(f"自动创建数据库结果: success={success}, message={message}")
+            if not success:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=message
+                )
+
         # 先加密连接字符串
         encrypted_string = data_source_service.encryption_service.encrypt_connection_string(
             request.connection_string
