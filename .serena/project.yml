@@ -15,6 +15,8 @@
 # Note that when using the JetBrains backend, language servers are not used and this list is correspondingly ignored.
 languages:
 - python
+- typescript
+- javascript
 
 # the encoding used by text files in the project
 # For a list of possible encodings, see https://docs.python.org/3.11/library/codecs.html#standard-encodings
@@ -28,7 +30,17 @@ ignore_all_files_in_gitignore: true
 # same syntax as gitignore, so you can use * and **
 # Was previously called `ignored_dirs`, please update your config if you are using that.
 # Added (renamed) on 2025-04-07
-ignored_paths: []
+ignored_paths:
+- "node_modules/"
+- ".venv/"
+- "__pycache__/"
+- ".next/"
+- "dist/"
+- "build/"
+- "*.egg-info/"
+- ".pytest_cache/"
+- ".coverage/"
+- "data_storage/"
 
 # whether the project is in read-only mode
 # If set to true, all editing tools will be disabled and attempts to use them will result in an error
@@ -78,7 +90,42 @@ excluded_tools: []
 
 # initial prompt for the project. It will always be given to the LLM upon activating the project
 # (contrary to the memories, which are loaded on demand).
-initial_prompt: ""
+initial_prompt: |
+  你正在工作在 Data Agent V4 项目上，这是一个多租户 SaaS 数据智能分析平台。
+
+  ## 项目架构
+  - **后端**: FastAPI + Python 3.8+ (backend/ 目录)
+  - **前端**: Next.js 14 + TypeScript (frontend/ 目录)
+  - **AI Agent**: LangGraph SQL 智能代理 (Agent/ 目录)
+  - **数据库**: PostgreSQL + ChromaDB (向量数据库)
+  - **存储**: MinIO (对象存储)
+
+  ## 关键技术栈
+  - 后端框架: FastAPI, SQLAlchemy, Alembic
+  - 前端框架: Next.js 14, React, Tailwind CSS
+  - AI 服务: 智谱 GLM-4, DeepSeek API
+  - 容器化: Docker, docker-compose
+
+  ## 开发规范
+  1. **多租户隔离**: 所有数据操作必须包含 tenant_id 过滤
+  2. **异步模式**: 后端服务必须使用 async/await
+  3. **类型安全**: TypeScript 严格模式，Python 类型注解
+  4. **API 端点**: 前端调用必须使用完整 URL (http://localhost:8004)
+  5. **测试覆盖**: 新功能必须包含单元测试
+
+  ## 常见规避
+  - 前端 API 调用禁止使用相对路径
+  - FastAPI 路由顺序: 固定路径在动态路径之前
+  - 避免变量遮蔽 (如参数名 status 与 status 模块冲突)
+
+  ## 服务端口
+  - 前端: 3000
+  - 后端 API: 8004
+  - PostgreSQL: 5432
+  - MinIO API: 9000, Console: 9001
+  - ChromaDB: 8001
+
+  参考文档: CLAUDE.md 包含完整的项目指南和常见问题解决。
 
 project_name: "data_agent"
 included_optional_tools: []

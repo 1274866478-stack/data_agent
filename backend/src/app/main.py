@@ -1,6 +1,52 @@
 """
-FastAPI 应用入口文件
-应用初始化、中间件配置、路由注册
+# [MAIN] FastAPI 应用入口
+
+## [HEADER]
+**文件名**: main.py
+**职责**: FastAPI应用主入口，负责应用初始化、中间件配置、路由注册、生命周期管理
+**作者**: Data Agent Team
+**版本**: 1.0.1
+**变更记录**:
+- v1.0.1 (2025-12-28): 添加启动时的 print 日志输出，便于调试和监控应用初始化流程
+- v1.0.0: 初始版本，完整的应用生命周期管理
+
+## [INPUT]
+- 环境变量 (.env) - DATABASE_URL, ZHIPUAI_API_KEY, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
+- 配置对象 (settings: Settings) - 从 core/config.py 导入
+- HTTP请求上下文 (Request: FastAPI Request)
+- 服务健康检查信号 (Startup/Shutdown events)
+
+## [OUTPUT]
+- FastAPI应用实例 (app: FastAPI)
+- HTTP响应 (JSONResponse)
+- 结构化日志事件 (structlog)
+- 监控指标 (Sentry/Performance)
+- 启动日志输出 (print: "🚀 System Initializing: Data Agent Backend v1.0.0")
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [./core/config.py](./core/config.py) - Settings类，环境变量解析与验证 ✅
+- [./core/auth.py](./core/auth.py) - JWT认证与API Key验证逻辑
+- [./core/logging.py](./core/logging.py) - structlog日志配置
+- [./core/monitoring.py](./core/monitoring.py) - Sentry错误监控
+- [./core/config_validator.py](./core/config_validator.py) - 配置安全验证
+- [./core/key_rotation.py](./core/key_rotation.py) - 密钥轮换机制
+
+**下游依赖** (已读取源码):
+- [./data/database.py](./data/database.py) - engine, Base, get_db ✅
+- [./services/minio_client.py](./services/minio_client.py) - MinIO服务实例
+- [./services/chromadb_client.py](./services/chromadb_client.py) - ChromaDB服务实例
+- [./services/zhipu_client.py](./services/zhipu_client.py) - 智谱AI客户端
+- [./api/v1/__init__.py](./api/v1/__init__.py) - api_router聚合路由 ✅
+
+**调用方**:
+- [../../uvicorn](../../) - ASGI服务器启动命令: `uvicorn src.app.main:app --reload --port 8004`
+- Docker容器 - [../../docker-compose.yml](../../docker-compose.yml) 中的backend服务
+
+## [POS]
+**路径**: backend/src/app/main.py
+**模块层级**: Level 1 (Root) - 应用主入口
+**依赖深度**: 直接依赖 core/*, data/*, services/*, api/*
 """
 
 from fastapi import FastAPI, Request, status
@@ -26,6 +72,7 @@ from .services.query_performance_monitor import query_perf_monitor
 from .api.v1 import api_router
 
 # 设置结构化日志
+print("🚀 System Initializing: Data Agent Backend v1.0.0")
 setup_logging()
 logger = get_logger(__name__)
 

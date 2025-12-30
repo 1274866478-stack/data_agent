@@ -1,6 +1,38 @@
 """
-应用配置管理模块
-处理环境变量读取、配置验证和应用设置
+# [CONFIG] 应用配置管理模块
+
+## [MODULE]
+Pydantic Settings配置类，处理环境变量读取、配置验证和应用设置
+
+## [INPUT]
+- 环境变量 (.env)
+- .env.example (模板)
+- 系统环境
+
+## [OUTPUT]
+- Settings 实例 (单例)
+- 配置验证结果
+- 配置审计日志
+
+## [LINK]
+**上游依赖**:
+- [.env](../../../.env) - 环境变量配置
+- [../../../.env.example](../../../.env.example) - 配置模板
+
+**下游依赖**:
+- [../main.py](../main.py) - 应用入口使用配置
+- [./auth.py](./auth.py) - 认证配置
+- [../data/database.py](../data/database.py) - 数据库连接配置
+- [../services/](../services/_folder.md) - 各服务使用配置
+
+**调用方**:
+- 全项目所有模块
+
+## [STATE]
+- settings: Settings 单例实例
+
+## [THREAD-SAFE]
+是 - 只读配置，不可变对象
 """
 
 from typing import Optional

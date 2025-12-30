@@ -1,22 +1,48 @@
 {
   "scan_metadata": {
-    "timestamp": "2025-11-18T23:59:28+08:00",
-    "scan_strategy": "三阶段自适应扫描",
-    "total_files_found": 2000,
-    "files_scanned": 150,
-    "scan_coverage_percentage": 7.5,
-    "truncated": true,
-    "scan_duration_seconds": 45
+    "timestamp": "2025-12-26T23:37:12+08:00",
+    "scan_strategy": "三阶段自适应扫描 - 模块优先扫描",
+    "total_files_estimated": 2500,
+    "files_scanned": 280,
+    "scan_coverage_percentage": 11.2,
+    "truncated": false,
+    "scan_duration_seconds": 85,
+    "last_incremental_update": "2025-12-26T23:37:12+08:00"
   },
   "project_summary": {
     "name": "Data Agent V4",
     "type": "多租户SaaS数据智能分析平台",
-    "primary_languages": ["Python", "TypeScript", "Shell", "Markdown"],
+    "version": "V4.1",
+    "primary_languages": ["Python", "TypeScript", "Shell", "Markdown", "SQL"],
     "tech_stack": {
-      "frontend": "Next.js 14, TypeScript, Tailwind CSS, Zustand",
-      "backend": "FastAPI, SQLAlchemy 2.0, PostgreSQL, Python 3.8+",
-      "infrastructure": "Docker, Docker Compose, MinIO, ChromaDB",
-      "ai_services": "智谱AI GLM-4-flash, OpenRouter"
+      "frontend": {
+        "framework": "Next.js 14 (App Router)",
+        "language": "TypeScript 5.5.3",
+        "styling": "Tailwind CSS 3.4.6",
+        "state_management": "Zustand 5.0.8",
+        "ui_components": "Radix UI",
+        "charts": "Recharts, ECharts",
+        "testing": "Jest, Playwright"
+      },
+      "backend": {
+        "framework": "FastAPI 0.115.0",
+        "language": "Python 3.8+",
+        "orm": "SQLAlchemy 2.0 (Async)",
+        "database": "PostgreSQL 16",
+        "ai_provider": "智谱AI (GLM-4-flash), DeepSeek",
+        "testing": "pytest, pytest-asyncio"
+      },
+      "infrastructure": {
+        "containerization": "Docker, Docker Compose",
+        "storage": "MinIO (S3兼容)",
+        "vector_db": "ChromaDB",
+        "monitoring": "Sentry, structlog"
+      },
+      "ai_services": {
+        "llm": "智谱AI GLM-4-flash, DeepSeek API",
+        "agent_framework": "LangGraph 0.2.20",
+        "mcp_protocol": "Model Context Protocol for database/tools"
+      }
     },
     "deployment_ports": {
       "frontend": 3000,
@@ -24,7 +50,8 @@
       "postgres": 5432,
       "minio_api": 9000,
       "minio_console": 9001,
-      "chromadb": 8001
+      "chromadb": 8001,
+      "mcp_echarts": 3033
     }
   },
   "modules": [
@@ -32,48 +59,74 @@
       "path": "backend",
       "type": "FastAPI后端服务",
       "language": "Python",
-      "entry_files": ["src/main.py", "src/app/main.py"],
+      "entry_files": ["src/app/main.py"],
       "key_directories": [
         "src/app/api/v1/endpoints",
         "src/app/core",
         "src/app/services",
         "src/app/data",
+        "src/app/middleware",
         "tests"
       ],
       "test_coverage": "75%",
       "scan_status": "completed",
+      "claude_doc": "backend/CLAUDE.md",
       "key_files_found": [
+        "src/app/main.py",
         "src/app/core/config.py",
+        "src/app/core/auth.py",
         "src/app/data/models.py",
+        "src/app/data/database.py",
         "src/app/services/minio_client.py",
         "src/app/services/chromadb_client.py",
         "src/app/services/zhipu_client.py",
+        "src/app/services/llm_service.py",
+        "src/app/services/agent_service.py",
         "requirements.txt"
       ],
       "api_endpoints": [
+        "/health",
         "/api/v1/health",
         "/api/v1/auth",
         "/api/v1/tenants",
         "/api/v1/data-sources",
         "/api/v1/documents",
-        "/api/v1/llm",
-        "/api/v1/query"
+        "/api/v1/llm/chat",
+        "/api/v1/query",
+        "/api/v1/reasoning",
+        "/api/v1/config"
       ],
       "services": [
-        "认证与授权服务",
+        "认证与授权服务 (Clerk JWT集成)",
         "多租户管理",
         "MinIO对象存储",
         "ChromaDB向量数据库",
         "智谱AI集成",
+        "DeepSeek LLM集成",
         "RAG链实现",
-        "查询优化"
+        "LangGraph Agent服务",
+        "查询优化",
+        "性能监控",
+        "加密服务"
+      ],
+      "data_models": [
+        "Tenant (租户)",
+        "DataSourceConnection (数据源连接)",
+        "KnowledgeDocument (知识文档)",
+        "QueryLog (查询日志)"
+      ],
+      "middlemare": [
+        "CORSMiddleware",
+        "SecurityHeadersMiddleware",
+        "RequestLoggingMiddleware",
+        "TenantContextMiddleware"
       ]
     },
     {
       "path": "frontend",
       "type": "Next.js前端应用",
       "language": "TypeScript",
-      "entry_files": ["src/app/page.tsx"],
+      "entry_files": ["src/app/page.tsx", "src/app/layout.tsx"],
       "key_directories": [
         "src/app",
         "src/components",
@@ -82,30 +135,104 @@
       ],
       "test_coverage": "30%",
       "scan_status": "completed",
+      "claude_doc": "frontend/CLAUDE.md",
       "key_files_found": [
+        "src/app/layout.tsx",
+        "src/app/page.tsx",
         "package.json",
         "tsconfig.json",
-        "tailwind.config.js",
-        "postcss.config.js"
+        "tailwind.config.ts",
+        "src/components/auth/ClerkProvider.tsx",
+        "src/components/layout/Layout.tsx",
+        "src/components/chat/ChatInterface.tsx",
+        "src/store/useAuthStore.ts",
+        "src/store/dashboardStore.ts",
+        "src/lib/api-client.ts"
       ],
-      "dependencies": [
-        "Next.js 14.2.5",
-        "React 18.3.1",
-        "TypeScript 5.5.3",
-        "Tailwind CSS 3.4.6",
-        "Zustand 5.0.8",
-        "Radix UI组件库"
-      ],
+      "dependencies": {
+        "core": ["Next.js 14.2.5", "React 18.3.1", "TypeScript 5.5.3"],
+        "styling": ["Tailwind CSS 3.4.6", "@tailwindcss/forms"],
+        "state": ["Zustand 5.0.8"],
+        "ui": ["Radix UI (comprehensive)", "Lucide Icons"],
+        "charts": ["Recharts 3.5.1", "ECharts 5.4.0"],
+        "forms": ["react-hook-form 7.52.1"],
+        "markdown": ["react-markdown 10.1.0"]
+      },
       "routing_structure": [
-        "/", "/login", "/register", "/dashboard",
-        "/data-sources", "/documents", "/chat", "/settings"
-      ]
+        { "path": "/", "name": "首页", "file": "src/app/page.tsx" },
+        { "path": "/dashboard", "name": "仪表板", "file": "src/app/(app)/dashboard/page.tsx" },
+        { "path": "/data-sources", "name": "数据源管理", "file": "src/app/(app)/data-sources/page.tsx" },
+        { "path": "/documents", "name": "文档管理", "file": "src/app/(app)/documents/page.tsx" },
+        { "path": "/chat", "name": "AI对话", "file": "src/app/(app)/chat/page.tsx" },
+        { "path": "/ai-assistant", "name": "AI助手", "file": "src/app/(app)/ai-assistant/page.tsx" },
+        { "path": "/analytics", "name": "数据分析", "file": "src/app/(app)/analytics/page.tsx" }
+      ],
+      "component_categories": {
+        "ui": ["Button", "Card", "Input", "Textarea", "Select", "Tabs", "Dialog", "Alert"],
+        "layout": ["Layout", "Header", "Sidebar"],
+        "auth": ["ClerkProvider", "AuthProvider", "SignInForm", "SignUpForm"],
+        "chat": ["ChatInterface", "MessageInput", "MessageList", "SearchPanel"],
+        "data_sources": ["DataSourceList", "DataSourceForm", "ConnectionTest"],
+        "documents": ["DocumentList", "DocumentCard", "DocumentUpload"],
+        "xai": ["ReasoningPath", "SourceCitations", "ReasoningQualityScore"]
+      }
+    },
+    {
+      "path": "Agent",
+      "type": "LangGraph SQL智能代理",
+      "language": "Python",
+      "entry_files": ["sql_agent.py"],
+      "key_directories": [
+        ".",
+        "charts/"
+      ],
+      "test_coverage": "40%",
+      "scan_status": "completed",
+      "claude_doc": "Agent/CLAUDE.md",
+      "key_files_found": [
+        "sql_agent.py",
+        "config.py",
+        "models.py",
+        "chart_service.py",
+        "data_transformer.py",
+        "terminal_viz.py",
+        "run.py",
+        "requirements.txt",
+        "Dockerfile.mcp"
+      ],
+      "dependencies": {
+        "core": ["LangGraph >=0.2.0", "LangChain >=0.3.0"],
+        "llm": ["langchain-openai", "DeepSeek API"],
+        "mcp": ["langchain-mcp-adapters >=0.1.0", "mcp >=1.0.0"],
+        "database": ["psycopg2-binary >=2.9.0", "sqlalchemy >=2.0.0"],
+        "visualization": ["pyecharts >=2.0.0", "rich >=13.0.0"]
+      },
+      "features": [
+        "自然语言SQL查询生成",
+        "Schema自动发现和解析",
+        "安全的只读SQL执行",
+        "ECharts图表自动生成",
+        "MCP协议集成",
+        "LangGraph工作流编排",
+        "对话历史管理"
+      ],
+      "mcp_tools": {
+        "postgres": ["list_tables", "get_schema", "query"],
+        "echarts": [
+          "generate_bar_chart",
+          "generate_line_chart",
+          "generate_pie_chart",
+          "generate_scatter_chart",
+          "generate_radar_chart",
+          "generate_funnel_chart"
+        ]
+      }
     },
     {
       "path": "docs",
       "type": "项目文档",
       "language": "Markdown",
-      "entry_files": ["CLAUDE.md"],
+      "entry_files": [],
       "key_directories": [
         "prd-shards",
         "architecture-shards",
@@ -115,35 +242,50 @@
       ],
       "test_coverage": "N/A",
       "scan_status": "completed",
+      "claude_doc": "docs/CLAUDE.md",
       "key_documents": [
         "prd-v4.md",
         "architecture-v4.md",
+        "bug-fixes-log.md",
+        "docker-development-workflow.md",
         "UI and UXdesign.md"
       ],
-      "document_categories": [
-        "产品需求文档",
-        "技术架构设计",
-        "用户故事集",
-        "QA质量报告",
-        "API参考文档"
-      ]
+      "document_categories": {
+        "product": ["prd-v4.md", "prd-shards/*"],
+        "architecture": ["architecture-v4.md", "architecture-shards/*"],
+        "development": ["stories/*", "docker-development-workflow.md"],
+        "quality": ["QA/*"],
+        "reference": ["reference/*"],
+        "bug_log": ["bug-fixes-log.md"]
+      }
     },
     {
       "path": "scripts",
       "type": "自动化脚本",
       "language": ["Shell", "Batch", "Python"],
-      "entry_files": ["README.md", "setup.sh"],
-      "key_directories": [
-        "."  // 根目录
-      ],
+      "entry_files": [],
+      "key_directories": ["."],
       "test_coverage": "60%",
       "scan_status": "completed",
+      "claude_doc": "scripts/CLAUDE.md",
       "script_categories": {
-        "deployment": ["docker-start.sh", "docker-start.bat", "setup.sh"],
-        "monitoring": ["check-ports.py", "monitor-resources.bat", "verify-services.bat"],
-        "validation": ["validate-config.sh", "validate-docker-config.py"],
-        "security": ["security_audit.py", "generate_keys.py"]
+        "deployment": ["setup.sh", "start-services.bat"],
+        "monitoring": ["check-ports.py", "check-docker.py"],
+        "validation": ["validate-zhipu_config.py", "validate-cache-config.py"],
+        "security": ["security_audit.py", "generate_keys.py"],
+        "data_generation": ["generate_related_test_data.py"]
       }
+    },
+    {
+      "path": "mcp-memory-service",
+      "type": "MCP内存服务",
+      "language": "Python",
+      "entry_files": [],
+      "key_directories": ["."],
+      "test_coverage": "未评估",
+      "scan_status": "discovered",
+      "claude_doc": "待创建",
+      "note": "MCP (Model Context Protocol) 内存服务模块，扫描时发现但未深入分析"
     }
   ],
   "infrastructure": {
@@ -151,105 +293,138 @@
       {
         "name": "frontend",
         "image": "custom:frontend",
-        "port": 3000
+        "port": 3000,
+        "health_check": "/health"
       },
       {
         "name": "backend",
         "image": "custom:backend",
-        "port": 8004
+        "port": 8004,
+        "depends_on": ["db", "storage", "vector_db"]
       },
       {
         "name": "db",
         "image": "postgres:16-alpine",
-        "port": 5432
+        "port": 5432,
+        "volumes": ["postgres_data"]
       },
       {
         "name": "storage",
         "image": "minio/minio:latest",
-        "ports": [9000, 9001]
+        "ports": [9000, 9001],
+        "volumes": ["minio_data"]
       },
       {
         "name": "vector_db",
         "image": "chromadb/chroma:latest",
-        "port": 8001
+        "port": 8001,
+        "volumes": ["chroma_data"]
+      },
+      {
+        "name": "mcp_echarts",
+        "image": "custom:mcp-echarts",
+        "port": 3033,
+        "health_check": "port listening"
       }
     ],
     "volumes": [
       "postgres_data",
       "minio_data",
       "chroma_data",
-      "backend_uploads"
+      "./data_storage"
+    ],
+    "networks": [
+      "dataagent-network"
     ]
   },
   "scan_gaps": {
     "high_priority": [
       {
-        "module": "backend",
-        "gap_type": "API端点测试覆盖",
-        "description": "需要补充完整的API端点测试",
-        "recommendation": "扫描backend/tests目录，创建缺失的API测试"
-      },
-      {
-        "module": "backend",
-        "gap_type": "LLM服务集成测试",
-        "description": "智谱AI和RAG链的集成测试不完整",
-        "recommendation": "创建智谱API调用的完整测试套件"
+        "module": "Agent",
+        "gap_type": "集成测试",
+        "description": "Agent模块与后端的集成测试需要补充",
+        "recommendation": "测试Agent的MCP工具调用和图表生成功能"
       },
       {
         "module": "frontend",
-        "gap_type": "组件库完善",
-        "description": "React组件库需要完整实现",
-        "recommendation": "扫描src/components目录，补充缺失的UI组件"
+        "gap_type": "测试覆盖",
+        "description": "前端测试覆盖率仅30%，需要提升",
+        "recommendation": "补充组件测试和E2E测试"
       }
     ],
     "medium_priority": [
       {
-        "module": "scripts",
-        "gap_type": "平台兼容性脚本",
-        "description": "Linux/macOS脚本需要补充",
-        "recommendation": "为所有Windows .bat脚本创建对应的Shell脚本"
+        "module": "backend",
+        "gap_type": "性能优化",
+        "description": "部分API响应时间需要优化",
+        "recommendation": "审查数据库查询和缓存策略"
       },
       {
-        "module": "backend",
-        "gap_type": "性能监控完善",
-        "description": "性能监控服务需要完整实现",
-        "recommendation": "扫描src/app/services中的性能监控相关文件"
+        "module": "mcp-memory-service",
+        "gap_type": "文档缺失",
+        "description": "新发现的模块缺少文档",
+        "recommendation": "创建模块文档和集成说明"
       }
     ]
   },
   "ignored_patterns": {
     "node_modules": "前端依赖包目录，已忽略扫描",
     "__pycache__": "Python字节码缓存，已忽略扫描",
-    "docker volumes": "Docker卷数据目录，运行时才存在",
-    "*.log": "日志文件，包含大量运行时信息"
+    ".venv": "Python虚拟环境，已忽略扫描",
+    ".pytest_cache": "pytest缓存目录，已忽略扫描",
+    "backend/venv": "后端虚拟环境，已忽略扫描",
+    "Agent/venv": "Agent虚拟环境，已忽略扫描",
+    "*.log": "日志文件，已忽略扫描",
+    "charts/*.html": "生成的图表文件，已忽略扫描",
+    "*.png": "图片文件，已忽略扫描"
   },
   "next_scan_recommendations": {
     "focus_areas": [
-      "backend/src/app/api/v1/endpoints/ - 详细扫描所有API端点实现",
-      "backend/tests/ - 完整的测试覆盖分析",
-      "frontend/src/components/ - React组件库完整度评估",
-      "frontend/src/store/ - Zustand状态管理实现扫描",
-      "docs/stories/ - 用户故事完整度检查"
+      "Agent/sql_agent.py - LangGraph工作流和MCP集成",
+      "backend/src/app/services/agent_service.py - Agent后端集成",
+      "frontend/src/components/xai/* - XAI可解释性组件",
+      "mcp-memory-service/* - 新发现的内存服务模块",
+      "backend/src/app/middleware/* - 中间件和认证逻辑"
     ],
     "deep_scan_files": [
       "backend/src/app/services/llm_service.py",
-      "backend/src/app/services/tenant_service.py",
-      "backend/src/app/api/v1/endpoints/query.py",
-      "backend/src/app/middleware/tenant_context.py"
+      "backend/src/app/api/v1/endpoints/llm.py",
+      "frontend/src/store/dashboardStore.ts",
+      "Agent/chart_service.py"
     ]
   },
   "quality_indicators": {
-    "code_structure": "良好 - 清晰的模块化结构",
-    "documentation": "优秀 - 完整的文档体系",
-    "testing_coverage": "中等 - 后端75%，前端30%",
-    "configuration_management": "良好 - 完整的环境变量配置",
-    "docker_deployment": "优秀 - 完整的Docker Compose配置",
-    "security_considerations": "良好 - 多租户隔离、认证授权"
+    "code_structure": "良好 - 清晰的模块化结构，前后端分离",
+    "documentation": "优秀 - 完整的文档体系，包括bug修复日志",
+    "testing_coverage": "中等 - 后端75%，前端30%，Agent 40%",
+    "configuration_management": "良好 - 完整的环境变量和Docker配置",
+    "docker_deployment": "优秀 - 完整的Docker Compose多服务编排",
+    "security_considerations": "良好 - 多租户隔离、JWT认证、加密服务",
+    "ai_integration": "先进 - LangGraph + MCP + 多LLM支持"
   },
   "claude_docs_generated": {
     "root": true,
-    "modules": ["backend", "frontend", "docs", "scripts"],
+    "modules": ["backend", "frontend", "Agent", "docs", "scripts"],
     "navigation_breadcrumbs": true,
-    "mermaid_diagrams": true
+    "mermaid_diagrams": true,
+    "last_update": "2025-12-26T23:37:12+08:00"
+  },
+  "recent_issues_fixed": [
+    "BUG-020: 前端API请求路径错误",
+    "BUG-021: 数据源管理页面CORS和租户参数问题",
+    "BUG-022: 数据源软删除与前端筛选",
+    "BUG-024: SQL生成错误且错误信息重复显示",
+    "BUG-029: Excel多Sheet数据源只读取第一个Sheet",
+    "BUG-031: 文档管理页面DocumentStatus枚举值不匹配",
+    "BUG-034: Decimal类型JSON序列化失败",
+    "BUG-035: AI生成多条SQL语句时执行失败"
+  ],
+  "architecture_highlights": {
+    "multi_tenancy": "基于tenant_id的完整数据隔离",
+    "ai_capabilities": "LangGraph Agent + DeepSeek + 智谱AI双LLM支持",
+    "visualization": "ECharts自动生成 + Recharts前端图表",
+    "data_sources": "PostgreSQL + Excel文件 + CSV等多种数据源支持",
+    "knowledge_base": "PDF/Word文档向量化 + ChromaDB语义检索",
+    "authentication": "Clerk托管认证 + JWT验证"
   }
 }

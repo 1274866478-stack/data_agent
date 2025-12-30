@@ -6,7 +6,7 @@
     "rotation_interval_days": 90,
     "is_rotated": false,
     "rotation_notes": "系统自动注册的默认密钥",
-    "created_at": "2025-12-19T19:25:50.915208",
+    "created_at": "2025-12-27T00:47:54.829928",
     "next_rotation_date": null
   },
   "minio_secret_key": {
@@ -16,7 +16,7 @@
     "rotation_interval_days": 90,
     "is_rotated": false,
     "rotation_notes": "系统自动注册的默认密钥",
-    "created_at": "2025-12-19T19:25:50.918814",
+    "created_at": "2025-12-27T00:47:54.833985",
     "next_rotation_date": null
   },
   "zhipu_api_key": {
@@ -26,7 +26,7 @@
     "rotation_interval_days": 180,
     "is_rotated": false,
     "rotation_notes": "系统自动注册的默认密钥",
-    "created_at": "2025-12-19T19:25:50.940670",
+    "created_at": "2025-12-27T00:47:54.850405",
     "next_rotation_date": null
   },
   "database_password": {
@@ -36,7 +36,7 @@
     "rotation_interval_days": 120,
     "is_rotated": false,
     "rotation_notes": "系统自动注册的默认密钥",
-    "created_at": "2025-12-19T19:25:50.962887",
+    "created_at": "2025-12-27T00:47:54.862616",
     "next_rotation_date": null
   }
 }
