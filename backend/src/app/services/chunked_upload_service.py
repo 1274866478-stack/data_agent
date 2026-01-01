@@ -1,6 +1,91 @@
 """
-分块上传服务 - Story 2.4性能优化
-支持大文件分块上传、断点续传、并发上传
+# [CHUNKED_UPLOAD_SERVICE] 分块上传服务
+
+## [HEADER]
+**文件名**: chunked_upload_service.py
+**职责**: Story 2.4性能优化 - 支持大文件分块上传、断点续传、并发上传、完整性校验
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 分块上传服务（Story 2.4）
+
+## [INPUT]
+- **tenant_id: str** - 租户ID
+- **file_name: str** - 文件名
+- **file_size: int** - 文件大小
+- **mime_type: str** - MIME类型
+- **file_data: bytes** - 文件数据
+- **session_id: str** - 上传会话ID
+- **chunk_number: int** - 分块编号
+- **chunk_data: bytes** - 分块数据
+- **db: AsyncSession** - 数据库会话
+- **document_service** - 文档服务实例
+
+## [OUTPUT]
+- **Dict[str, Any]**: 初始化结果（initialize_upload_session）
+  - session_id, total_chunks, chunk_size, file_checksum
+- **Dict[str, Any]**: 上传结果（upload_chunk）
+  - chunk_number, status, completed_chunks, total_chunks
+- **Dict[str, Any]**: 状态查询结果（get_upload_status）
+  - status, completed_chunks, failed_chunks, progress_percentage
+- **Dict[str, Any]**: 完成结果（complete_upload）
+  - document, message
+- **Dict[str, Any]**: 中止结果（abort_upload）
+  - message
+
+**上游依赖** (已读取源码):
+- 项目服务: minio_client（minio_service）
+- 项目工具: logging（get_logger）
+
+**下游依赖** (需要反向索引分析):
+- [document_service.py](./document_service.py) - 文档服务上传完整文件
+
+**调用方**:
+- 大文件上传API初始化上传会话
+- 分块上传API逐个上传分块
+- 完成上传API合并分块
+
+## [STATE]
+- **分块状态**: ChunkStatus枚举（PENDING, UPLOADING, COMPLETED, FAILED）
+- **会话状态**: UploadSessionStatus枚举（INITIALIZED, UPLOADING, COMPLETED, FAILED, ABORTED）
+- **数据类**: ChunkInfo, UploadSession
+- **默认配置**:
+  - DEFAULT_CHUNK_SIZE: 5MB
+  - MAX_CHUNK_SIZE: 50MB
+  - MAX_CONCURRENT_CHUNKS: 3
+  - MAX_RETRY_ATTEMPTS: 3
+  - SESSION_TIMEOUT: 24小时
+- **分块大小计算**: calculate_chunk_size（<10MB不分块, 10-100MB分5MB, 100MB-1GB分10MB, >1GB分20MB）
+- **校验和算法**: 文件SHA256, 分块MD5
+- **存储**: active_sessions字典, chunk_data字典（生产环境应使用Redis）
+- **MinIO存储**: upload-chunks桶，路径chunks/{session_id}/chunk_####.dat
+- **验证**: 分块大小验证、校验和验证
+- **合并**: 完成时从MinIO下载所有分块并合并
+- **清理**: cleanup_session删除MinIO分块文件和会话数据
+- **过期清理**: cleanup_expired_sessions清理24小时前的会话
+
+## [SIDE-EFFECTS]
+- **校验和计算**: hashlib.sha256(file_data).hexdigest()计算文件校验和，hashlib.md5计算分块校验和
+- **分块计算**: (file_size + chunk_size - 1) // chunk_size计算分块数量
+- **UUID生成**: str(uuid.uuid4())生成会话ID
+- **字典操作**: self.active_sessions[session_id] = session保存会话，self.chunk_data[session_id] = chunks保存分块
+- **时间戳**: datetime.utcnow()记录created_at和updated_at
+- **对象创建**: UploadSession和ChunkInfo创建
+- **循环切片**: for i in range(total_chunks): file_data[start_byte:end_byte]分割文件
+- **MinIO上传**: minio_service.upload_file上传分块到upload-chunks桶
+- **状态更新**: chunk.status = ChunkStatus.UPLOADING/COMPLETED/FAILED
+- **计数器更新**: session.completed_chunks += 1, session.failed_chunks += 1
+- **MinIO下载**: minio_service.download_file下载分块
+- **文件合并**: complete_file_data += chunk_data合并分块
+- **DocumentService调用**: document_service.upload_document保存完整文件
+- **字典删除**: self.active_sessions.pop(session_id)删除会话
+- **异常处理**: try-except捕获所有异常，返回错误信息
+- **全局单例**: chunked_upload_service全局实例
+
+## [POS]
+**路径**: backend/src/app/services/chunked_upload_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 依赖minio_client和document_service
 """
 
 import asyncio

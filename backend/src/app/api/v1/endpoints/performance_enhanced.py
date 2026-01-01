@@ -1,6 +1,49 @@
 """
-增强版性能监控API端点
-提供查询性能分析、监控统计和优化建议的RESTful API
+# 增强版性能监控API端点
+
+## [HEADER]
+**文件名**: performance_enhanced.py
+**职责**: 提供全面的查询性能分析、监控统计、优化建议和性能仪表板的RESTful API
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本
+
+## [INPUT]
+- time_range: str - 时间范围（1h, 24h, 7d, 30d）
+- limit: int - 返回数量限制
+- query_id: str - 查询ID
+- current_user: User - 当前用户（通过依赖注入）
+- tenant_id: str - 租户ID（通过依赖注入）
+
+## [OUTPUT]
+- 性能汇总统计: Dict[str, Any]
+- 慢查询列表: List[Dict[str, Any]]
+- 错误分析报告: Dict[str, Any]
+- 优化建议列表: List[Dict[str, Any]]
+- 查询详细指标: Dict[str, Any]
+- 监控系统统计: Dict[str, Any]
+- 性能仪表板数据: Dict[str, Any]
+- 性能警报列表: List[Dict[str, Any]]
+
+## [LINK]
+**上游依赖**:
+- [../../core/dependencies.py](../../core/dependencies.py) - get_current_user, tenant_required依赖注入
+- [../../services/performance_monitor.py](../../services/performance_monitor.py) - PerformanceMonitor核心服务
+- [../../data/models.py](../../data/models.py) - User模型
+
+**下游依赖**:
+- 无（API端点为最外层）
+
+**调用方**:
+- 前端性能监控仪表板
+- 运维监控平台
+- 性能优化工具
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/performance_enhanced.py
+**模块层级**: Level 3（API端点层）
+**依赖深度**: 2 层（依赖于services和core层）
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query

@@ -1,6 +1,42 @@
 """
-性能优化模块
-提供连接池、批处理、缓存和资源管理功能
+# Core 性能优化器 - 连接池与缓存管理
+
+## [HEADER]
+**文件名**: performance_optimizer.py
+**职责**: 提供通用连接池、智能缓存、批处理器和资源监控功能
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本，完整性能优化工具集
+
+## [INPUT]
+- 连接创建函数: Callable - 工厂函数创建新连接
+- 缓存键: List[Any] - 缓存键值列表
+- 批处理项: Any - 待处理的项目
+
+## [OUTPUT]
+- 连接对象: T - 从连接池获取的连接
+- 缓存值: Any - 从缓存中获取的值
+- 批处理结果: List[Any] - 批处理后的结果列表
+- 性能指标: Dict[str, Any] - 性能统计数据
+
+## [LINK]
+**上游依赖**:
+- Python标准库 - asyncio, threading, functools
+- 第三方库 - dataclasses
+
+**下游依赖**:
+- 数据库连接管理 - 可用于database.py
+- API缓存 - 可用于endpoint层
+
+**调用方**:
+- 数据库服务 - 连接复用
+- API服务 - 响应缓存
+
+## [POS]
+**路径**: backend/src/app/core/performance_optimizer.py
+**模块层级**: Level 2 (Core → Performance)
+**依赖深度**: 1 层
 """
 
 import asyncio

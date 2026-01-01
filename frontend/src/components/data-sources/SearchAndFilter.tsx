@@ -1,3 +1,45 @@
+/**
+ * # SearchAndFilter 搜索和过滤组件
+ *
+ * ## [MODULE]
+ * **文件名**: SearchAndFilter.tsx
+ * **职责**: 提供数据源的搜索、类型筛选、状态筛选和日期范围筛选功能
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - 无直接 Props（通过 store 获取和更新数据）
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 搜索和筛选界面，包含搜索框、类型选择器和高级筛选面板
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [@/store/dashboardStore](../../store/dashboardStore.ts) - 管理搜索查询、筛选条件和活动标签页
+ * - [@/components/ui/input](../ui/input.tsx) - 输入框组件
+ * - [@/components/ui/button](../ui/button.tsx) - 按钮组件
+ * - [@/components/ui/select](../ui/select.tsx) - 下拉选择组件
+ * - [@/components/ui/popover](../ui/popover.tsx) - 弹出面板组件
+ * - [@/components/ui/calendar](../ui/calendar.tsx) - 日历选择组件
+ * - [lucide-react](https://lucide.dev) - 图标库
+ * - [@/lib/utils](../../lib/utils.ts) - cn() 工具函数
+ *
+ * **下游依赖**:
+ * - [DataSourceList.tsx](./DataSourceList.tsx) - 筛选后的数据列表展示
+ * - [../../app/(app)/data-sources/page.tsx](../../app/(app)/data-sources/page.tsx) - 在数据源页面中使用
+ *
+ * ## [STATE]
+ * - **searchQuery: string** - 当前搜索关键词（从 store 获取）
+ * - **filters: DataSourceFilters** - 当前筛选条件，包括类型、状态列表和日期范围（从 store 获取）
+ * - **activeTab: 'databases' | 'documents'** - 当前活动标签页（影响可用筛选选项）
+ * - **isFilterOpen: boolean** - 高级筛选面板是否展开
+ *
+ * ## [SIDE-EFFECTS]
+ * - **搜索更新**: 调用 setSearchQuery() 更新搜索关键词
+ * - **筛选更新**: 调用 updateFilters() 更新筛选条件
+ * - **筛选清除**: 调用 clearFilters() 清除所有筛选条件
+ * - **状态同步**: 筛选条件变化实时同步到 store，触发数据列表重新过滤
+ */
 'use client'
 
 import { useState } from 'react'

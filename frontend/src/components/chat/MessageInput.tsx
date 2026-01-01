@@ -1,3 +1,56 @@
+/**
+ * # [MESSAGE_INPUT] 聊天消息输入组件
+ *
+ * ## [MODULE]
+ * **文件名**: MessageInput.tsx
+ * **职责**: 提供聊天消息输入界面 - 文本输入、文件上传、拖拽支持、发送控制
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * Props:
+ * - **placeholder?: string** - 输入框占位符文本（默认'输入您的问题...'）
+ * - **maxLength?: number** - 最大字符长度（默认2000）
+ * - **disabled?: boolean** - 是否禁用输入
+ * - **onFileAttach?: (files: File[]) => void** - 文件附加回调
+ * - **onDocumentUploaded?: (document: any) => void** - 文档上传完成回调
+ *
+ * ## [OUTPUT]
+ * UI组件:
+ * - **文本输入框**: 自动调整高度的多行文本输入（最大120px）
+ * - **文件上传区**: 支持点击和拖拽上传
+ * - **已上传文件列表**: 显示上传进度和状态
+ * - **发送/停止按钮**: 根据状态切换发送或停止生成
+ * - **快捷键**: Enter发送，Shift+Enter换行，Escape清空
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [../../store/chatStore.ts](../../store/chatStore.ts) - 聊天状态管理
+ * - [../../services/fileUploadService.ts](../../services/fileUploadService.ts) - 文件上传服务
+ * - [../ui/button.tsx](../ui/button.tsx) - 按钮组件
+ * - [../ui/textarea.tsx](../ui/textarea.tsx) - 文本域组件
+ * - lucide-react - 图标库
+ *
+ * **下游依赖**:
+ * - [./ChatInterface.tsx](./ChatInterface.tsx) - 父组件调用
+ *
+ * **调用方**:
+ * - ChatInterface聊天界面
+ *
+ * ## [STATE]
+ * - **input: string** - 输入的文本内容
+ * - **uploadProgress: UploadProgress | null** - 文件上传进度
+ * - **uploadedFiles: UploadedFile[]** - 已上传的文件列表
+ * - **isDragOver: boolean** - 拖拽悬停状态
+ *
+ * ## [SIDE-EFFECTS]
+ * - **副作用1**: 调用chatStore.sendMessage发送消息
+ * - **副作用2**: 调用fileUploadService上传文件
+ * - **副作用3**: 触发onFileAttach和onDocumentUploaded回调
+ * - **副作用4**: 自动调整文本域高度
+ * - **副作用5**: 聚焦和清空输入框
+ */
+
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'

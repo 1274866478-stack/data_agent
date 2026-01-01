@@ -1,4 +1,49 @@
 /**
+ * # DocumentsPage 文档管理页面
+ *
+ * ## [MODULE]
+ * **文件名**: app/(app)/documents/page.tsx
+ * **职责**: 提供文档的完整管理界面，包括文档列表、上传、预览和统计信息
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ * **备注**: Story 2.4规范实现
+ *
+ * ## [INPUT]
+ * - 无直接 Props（页面组件）
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 文档管理页面，包含统计卡片、文档列表、上传和预览功能
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [@/store/documentStore](../../../store/documentStore.ts) - 提供文档状态管理
+ * - [DocumentList](../../components/documents/DocumentList.tsx) - 文档列表组件
+ * - [DocumentUpload](../../components/documents/DocumentUpload.tsx) - 文档上传组件
+ * - [DocumentPreview](../../components/documents/DocumentPreview.tsx) - 文档预览组件
+ * - [@/components/ui/button](../../components/ui/button.tsx) - 按钮组件
+ * - [@/components/ui/alert](../../components/ui/alert.tsx) - 提示组件
+ *
+ * **下游依赖**:
+ * - 无（页面是用户交互入口点）
+ *
+ * ## [STATE]
+ * - **documents: Document[]** - 文档列表（从 documentStore 获取）
+ * - **isLoading: boolean** - 加载状态
+ * - **error: string | null** - 错误信息
+ * - **showUploadModal: boolean** - 是否显示上传模态框
+ * - **showPreviewModal: boolean** - 是否显示预览模态框
+ * - **previewDocument: Document | null** - 预览的文档对象
+ * - **selectedDocuments: string[]** - 已选中的文档ID列表
+ * - **stats: DocumentStats | null** - 文档统计信息
+ *
+ * ## [SIDE-EFFECTS]
+ * - **数据获取**: 组件挂载时自动调用 fetchDocuments() 获取文档列表
+ * - **统计展示**: 计算并展示文档统计信息（总数、已完成、处理中、存储使用）
+ * - **上传处理**: 处理文档上传成功和错误回调，成功后刷新列表
+ * - **模态框管理**: 控制上传和预览模态框的显示/隐藏
+ * - **错误处理**: 显示和清除错误信息
+ */
+/**
  * 文档管理页面 - Story 2.4规范实现
  * 整合所有文档管理组件，提供完整的用户界面
  */

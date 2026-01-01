@@ -1,0 +1,34 @@
+"""
+# [MODULE_NAME] 简短描述
+
+## [HEADER]
+**文件名**: filename.py
+**职责**: 核心职责描述
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (YYYY-MM-DD): 初始版本
+
+## [INPUT]
+- **参数1**: 类型 - 描述
+- **参数2**: 类型 - 描述
+
+## [OUTPUT]
+- **返回值1**: 类型 - 描述
+- **返回值2**: 类型 - 描述
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [./relative/path.py](./relative/path.py) - 依赖说明
+
+**下游依赖**:
+- [./relative/path.py](./relative/path.py) - 被依赖说明
+
+**调用方**:
+- [../path/to/caller.py](../path/to/caller.py) - 调用方说明
+
+## [POS]
+**路径**: backend/src/app/...
+**模块层级**: Level X (描述)
+**依赖深度**: 直接/间接依赖 X 层
+"""

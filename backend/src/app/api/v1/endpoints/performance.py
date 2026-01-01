@@ -1,6 +1,47 @@
 """
-性能监控API端点
-提供查询性能指标和监控数据
+# 性能监控API端点
+
+## [HEADER]
+**文件名**: performance.py
+**职责**: 提供查询性能指标、慢查询分析和缓存状态监控的RESTful API
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本
+
+## [INPUT]
+- tenant_id: str - 租户ID（用于数据隔离）
+- start_time: Optional[datetime] - 查询起始时间
+- end_time: Optional[datetime] - 查询结束时间
+- limit: int - 返回记录数限制（最大1000）
+- threshold_ms: float - 慢查询阈值（毫秒）
+- days: int - 统计天数（1-90天）
+
+## [OUTPUT]
+- 查询性能指标列表: Dict[str, Any]
+- 性能摘要统计: Dict[str, Any]
+- 慢查询列表: List[Dict[str, Any]]
+- 缓存状态信息: Dict[str, Any]
+- 支持的数据库类型信息: Dict[str, Any]
+
+## [LINK]
+**上游依赖**:
+- [../../core/auth.py](../../core/auth.py) - get_current_user依赖注入
+- [../../services/rag_sql_service.py](../../services/rag_sql_service.py) - RAGSQLService性能指标获取
+- [../../data/models.py](../../data/models.py) - User模型
+
+**下游依赖**:
+- 无（API端点为最外层）
+
+**调用方**:
+- 前端性能监控仪表板
+- 管理员监控界面
+- 性能分析工具
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/performance.py
+**模块层级**: Level 3（API端点层）
+**依赖深度**: 2 层（依赖于services和core层）
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query

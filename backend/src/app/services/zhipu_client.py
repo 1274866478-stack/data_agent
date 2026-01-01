@@ -1,4 +1,92 @@
 """
+# [ZHIPU_CLIENT] 智谱AI客户端服务
+
+## [HEADER]
+**文件名**: zhipu_client.py
+**职责**: 封装智谱AI API调用，提供重试机制、熔断器、缓存、性能监控、安全检查和智能参数调整
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 增强型智谱AI服务
+
+## [INPUT]
+- **messages: List[Dict[str, str]]** - 对话消息列表
+  - role: 消息角色
+  - content: 消息内容
+- **model: Optional[str]** - 模型名称（默认glm-4-flash）
+- **max_tokens: Optional[int]** - 最大tokens
+- **temperature: Optional[float]** - 温度参数
+- **stream: bool** - 是否流式输出
+- **enable_thinking: Optional[bool]** - 是否启用思考模式（None表示智能判断）
+- **enable_cache: bool** - 是否启用缓存
+- **skip_security_check: bool** - 跳过安全检查（仅内部调用）
+- **show_thinking: bool** - 是否显示思考过程
+
+## [OUTPUT]
+- **Dict[str, Any]**: 非流式响应
+  - content: str - 回复内容
+  - role: str - 消息角色
+  - usage: Dict[str, int] - token使用统计
+  - model: str - 使用的模型
+  - created_at: str - 创建时间
+  - finish_reason: str - 结束原因
+- **AsyncGenerator[Dict[str, Any]]**: 流式响应
+  - type: str - 块类型 ("thinking", "content", "error")
+  - content: str - 内容
+  - model: str - 模型名称
+  - finished: bool - 是否完成
+- **Optional[List[List[float]]]**: 文本嵌入向量（embedding方法）
+- **Optional[Dict[str, Any]]**: 语义搜索结果（semantic_search方法）
+- **Optional[str]**: 生成的SQL查询（generate_sql_from_natural_language方法）
+
+**上游依赖** (已读取源码):
+- [./core/config.py](./core/config.py) - 配置管理（API keys、模型配置）
+- [./core/performance_optimizer.py](./core/performance_optimizer.py) - 性能监控装饰器
+- [./core/security_monitor.py](./core/security_monitor.py) - 安全监控和敏感数据过滤
+
+**下游依赖** (需要反向索引分析):
+- [llm_service.py](./llm_service.py) - LLM服务（使用ZhipuProvider）
+
+**调用方**:
+- [llm_service.py](./llm_service.py) - LLM服务（ZhipuProvider实例化）
+- [../api/v1/endpoints/llm.py](../api/v1/endpoints/llm.py) - LLM API端点（间接）
+- SQL生成和查询解释流程
+
+## [STATE]
+- **缓存系统**:
+  - 内存字典缓存（LRU淘汰策略）
+  - 最大100条记录
+  - TTL 5分钟
+  - 基于MD5的缓存键
+- **性能监控**:
+  - request_count / success_count / error_count
+  - total_response_time / avg_response_time
+  - 每30秒记录一次性能日志
+- **熔断器**: retry_on_failure装饰器
+  - 失败计数和最后失败时间
+  - 阈值5次触发熔断
+  - 重置时间60秒
+- **重试机制**: 指数退避 + 随机抖动
+- **思考模式**: 智能判断是否启用思考模式
+  - 关键词检测（"分析"、"解释"、"为什么"等17个词）
+  - 问题复杂度评估（长度、问号数、复杂词汇）
+
+## [SIDE-EFFECTS]
+- **HTTP请求**: 调用智谱AI REST API
+- **异步操作**: async/await模式
+- **缓存读写**: 内存字典操作
+- **性能日志**: 定时记录统计信息
+- **安全检查**: security_monitor.check_request_security（可跳过）
+- **敏感信息过滤**: API key、token、password等敏感词过滤
+- **延迟**: 速率限制延迟（0.1秒）
+
+## [POS]
+**路径**: backend/src/app/services/zhipu_client.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 直接依赖 core.config, core.performance_optimizer, core.security_monitor
+"""
+
+"""
 智谱 AI 客户端
 GLM API 调用封装
 """

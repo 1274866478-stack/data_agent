@@ -1,6 +1,94 @@
 """
-缓存服务抽象层
-支持内存缓存和Redis分布式缓存，为RAG-SQL服务提供租户隔离的缓存支持
+# [CACHE_SERVICE] 缓存服务抽象层
+
+## [HEADER]
+**文件名**: cache_service.py
+**职责**: 提供统一的缓存抽象层，支持内存缓存和Redis分布式缓存，为RAG-SQL服务提供租户隔离的缓存支持
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 缓存服务抽象层
+
+## [INPUT]
+- **key: str** - 缓存键
+- **value: Any** - 缓存值
+- **ttl: Optional[int]** - 缓存过期时间（秒）
+- **pattern: Optional[str]** - 缓存清理模式
+- **tenant_id: str** - 租户ID
+- **db_connection_id: int** - 数据库连接ID
+- **query: str** - 自然语言查询
+- **sql: str** - SQL语句
+- **query_type: str** - 查询类型
+- **query_pattern: str** - SQL模板模式
+- **time_range: str** - 时间范围
+- **cache_type: str** - 缓存类型（"memory" 或 "redis"）
+- **max_size: int** - 内存缓存最大条目数
+- **default_ttl: int** - 默认TTL（秒）
+- **redis_url: str** - Redis连接URL
+- **key_prefix: str** - Redis键前缀
+- **cache: CacheInterface** - 缓存实例
+- **key_generator: Callable** - 自定义键生成函数
+
+## [OUTPUT]
+- **Optional[Any]** - 缓存值（CacheInterface.get）
+- **bool** - 操作是否成功（CacheInterface.set, delete, exists）
+- **int** - 清理的缓存条目数（CacheInterface.clear）
+- **Dict[str, Any]** - 缓存统计信息（CacheInterface.get_stats）
+  - MemoryCache: type, size, max_size, hit_rate, hits, misses, sets, deletes, evictions
+  - RedisCache: type, connected_clients, used_memory, total_commands_processed, keyspace_hits, keyspace_misses
+- **CacheInterface** - 缓存实例（CacheFactory.create_cache）
+- **CacheManager** - 缓存管理器实例（initialize_cache）
+
+**上游依赖** (已读取源码):
+- Python标准库: abc（抽象基类）, asyncio（异步操作）, functools（wraps装饰器）, hashlib（MD5哈希）, json（序列化）, logging（日志）, time（时间戳）
+- 第三方库: redis.asyncio（Redis异步客户端，可选）
+
+**下游依赖** (需要反向索引分析):
+- [llm_service.py](./llm_service.py) - RAG-SQL服务使用缓存
+- [agent_service.py](./agent_service.py) - Agent集成使用缓存
+
+**调用方**:
+- RAG-SQL服务缓存数据库schema
+- Agent服务缓存查询结果
+- 应用启动时初始化全局缓存管理器
+
+## [STATE]
+- **抽象基类**: CacheInterface定义缓存操作契约（get, set, delete, exists, clear, get_stats）
+- **内存缓存**: MemoryCache使用Dict存储，支持LRU淘汰策略（max_size=1000）
+- **Redis缓存**: RedisCache使用redis.asyncio客户端，支持分布式缓存（可选依赖）
+- **租户隔离**: TenantCacheKeyGenerator生成租户级别缓存键（tenant:{tenant_id}:...）
+- **缓存键生成**:
+  - Schema缓存: `tenant:{tenant_id}:schema:{db_connection_id}`
+  - Query缓存: `tenant:{tenant_id}:query:{query_hash}`（MD5哈希SQL）
+  - SQL模板缓存: `tenant:{tenant_id}:sql_template:{query_type}:{pattern_hash}`
+  - 性能缓存: `tenant:{tenant_id}:performance:{time_range}`
+- **工厂模式**: CacheFactory.create_cache根据类型创建缓存实例
+- **缓存装饰器**: @cached_result支持函数级缓存
+- **全局单例**: _cache_manager全局缓存管理器实例
+- **降级策略**: Redis不可用时自动降级到MemoryCache
+- **默认配置**: max_size=1000, default_ttl=3600秒（1小时）
+
+## [SIDE-EFFECTS]
+- **字典操作**: MemoryCache中使用Dict读写缓存项
+- **时间戳记录**: created_at, expires_at记录缓存创建和过期时间
+- **过期检查**: _is_expired中time.time() > expires_at检查
+- **LRU淘汰**: _evict_if_needed中min找出最旧项并删除
+- **统计计数**: hits, misses, sets, deletes, evictions计数器更新
+- **模式匹配**: fnmatch.fnmatch实现模式匹配清理（clear方法）
+- **JSON序列化**: RedisCache中json.dumps/json.loads序列化值
+- **Redis操作**: redis.get, redis.setex, redis.delete, redis.exists, redis.keys, redis.info
+- **键前缀**: RedisCache中添加dataagent:前缀避免冲突
+- **MD5哈希**: hashlib.md5(sql.encode()).hexdigest()生成缓存键哈希
+- **全局状态修改**: initialize_cache修改_cache_manager全局变量
+- **异常处理**: 所有缓存操作捕获异常并记录日志
+- **装饰器副作用**: @cached_result包装函数，修改函数行为（缓存优先）
+- **异步操作**: 所有缓存方法都是async（支持await）
+- **日志记录**: logger.debug/info/warning/error记录缓存操作
+
+## [POS]
+**路径**: backend/src/app/services/cache_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 外部依赖redis库（可选）
 """
 
 import json

@@ -1,3 +1,53 @@
+/**
+ * # [CHAT_INTERFACE] 聊天界面组件
+ *
+ * ## [MODULE]
+ * **文件名**: ChatInterface.tsx
+ * **职责**: 提供完整的聊天用户界面，包括会话列表、消息显示、消息输入、搜索和离线状态指示
+ *
+ * ## [INPUT]
+ * Props:
+ * - **className?: string** - 可选的CSS类名
+ *
+ * ## [OUTPUT]
+ * UI组件:
+ * - **会话列表侧边栏**: 显示所有会话，支持搜索、创建、删除、切换会话
+ * - **消息列表区域**: 显示当前会话的所有消息
+ * - **消息输入区域**: 提供消息输入和文件上传功能
+ * - **搜索面板**: 支持跨会话搜索消息
+ * - **响应式布局**: 移动端使用Sheet侧滑，桌面端固定侧边栏
+ *
+ * **上游依赖**:
+ * - [../../store/chatStore.ts](../../store/chatStore.ts) - 聊天状态管理Store
+ * - [./MessageList.tsx](./MessageList.tsx) - 消息列表组件
+ * - [./MessageInput.tsx](./MessageInput.tsx) - 消息输入组件
+ * - [./SearchPanel.tsx](./SearchPanel.tsx) - 搜索面板组件
+ * - [./OfflineStatusIndicator.tsx](./OfflineStatusIndicator.tsx) - 离线状态指示器
+ * - [../ui/button.tsx](../ui/button.tsx) - 按钮组件
+ * - [../ui/card.tsx](../ui/card.tsx) - 卡片组件
+ * - [../ui/sheet.tsx](../ui/sheet.tsx) - 侧滑面板组件
+ * - lucide-react - 图标库 (Plus, Menu, X, Settings, History, Database, Search)
+ *
+ * **下游依赖**:
+ * - [../layout/Layout.tsx](../layout/Layout.tsx) - 主布局组件 (调用此组件)
+ *
+ * **调用方**:
+ * - [../../app/(app)/chat/page.tsx](../../app/(app)/chat/page.tsx) - 聊天页面
+ * - [../../app/page.tsx](../../app/page.tsx) - 首页
+ *
+ * ## [STATE]
+ * - **侧边栏状态**: sidebarOpen (控制移动端侧边栏显示)
+ * - **搜索状态**: sessionTitleFilter (会话标题过滤), searchPanelOpen (搜索面板显示)
+ * - **高亮状态**: highlightedMessageId (搜索结果高亮显示)
+ * - **会话管理**: 从chatStore读取sessions和currentSession
+ *
+ * ## [SIDE-EFFECTS]
+ * - 调用chatStore actions (createSession, switchSession, deleteSession, updateSessionTitle, clearHistory)
+ * - 操作MessageList ref (scrollToMessage方法)
+ * - 浏览器confirm对话框 (删除会话和清空历史确认)
+ * - 定时器 (消息高亮显示3秒后自动清除)
+ */
+
 'use client'
 
 import { useEffect, useState, useRef } from 'react'

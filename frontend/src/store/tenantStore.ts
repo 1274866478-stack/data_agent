@@ -1,6 +1,81 @@
 /**
- * 租户状态管理
- * 实现Story-2.2要求的前端租户管理
+ * # [TENANT_STORE] 租户状态管理Store
+ *
+ * ## [MODULE]
+ * **文件名**: tenantStore.ts
+ * **职责**: Story-2.2前端租户管理 - 租户信息获取、更新、统计信息、状态管理
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ * **变更记录**:
+ * - v1.0.0 (2026-01-01): 初始版本 - 租户状态管理Store
+ *
+ * ## [INPUT]
+ * Props (无 - Zustand Store):
+ * - 无直接Props输入
+ * - 内部从API获取租户信息
+ *
+ * ## [OUTPUT]
+ * Store:
+ * - **currentTenant: Tenant | null** - 当前租户信息
+ *   - id, email, status (active/suspended/deleted)
+ *   - display_name, settings (timezone, language, preferences)
+ *   - storage_quota_mb, created_at, updated_at
+ * - **tenantStats: TenantStats | null** - 租户统计信息
+ *   - total_documents, total_data_sources, storage_used_mb
+ *   - processed_documents, pending_documents
+ *   - storage_quota_mb, storage_usage_percent
+ * - **isLoading: boolean** - 加载状态
+ * - **error: string | null** - 错误信息
+ * Actions:
+ * - fetchTenantProfile() - 获取租户信息
+ * - updateTenantProfile(updateData) - 更新租户信息
+ * - fetchTenantStats() - 获取租户统计信息
+ * - clearTenantData() - 清除租户数据
+ * - setError(error) - 设置错误信息
+ * Selectors:
+ * - useCurrentTenant() - 获取当前租户
+ * - useTenantStats() - 获取租户统计
+ * - useTenantLoading() - 获取加载状态
+ * - useTenantError() - 获取错误信息
+ * - useTenantActions() - 获取所有操作方法
+ * Utilities:
+ * - getStorageUsageColor(usagePercent) - 存储使用率颜色
+ * - getStorageUsageVariant(usagePercent) - 存储使用率样式变体
+ * - formatFileSize(mb) - 格式化文件大小
+ * - getStatusColor(status) - 状态颜色
+ * - getStatusBadgeVariant(status) - 状态徽章样式
+ *
+ * **上游依赖**:
+ * - [zustand](https://github.com/pmndrs/zustand) - 状态管理库
+ * - [zustand/middleware](https://github.com/pmndrs/zustand#devtools) - devtools中间件
+ *
+ * **下游依赖**:
+ * - 无（Store是叶子状态管理模块）
+ *
+ * **调用方**:
+ * - [../components/tenant/TenantProfile.tsx](../components/tenant/TenantProfile.tsx) - 租户资料组件
+ * - [../components/tenant/TenantStats.tsx](../components/tenant/TenantStats.tsx) - 租户统计组件
+ * - [../components/tenant/TenantSettings.tsx](../components/tenant/TenantSettings.tsx) - 租户设置组件
+ * - [../app/(app)/settings/page.tsx](../app/(app)/settings/page.tsx) - 设置页面
+ *
+ * ## [STATE]
+ * - **租户信息**: currentTenant存储当前租户完整信息
+ * - **统计信息**: tenantStats存储租户使用统计
+ * - **API客户端**: TenantAPI类封装API调用
+ *   - getCurrentTenant() - GET /tenants/me
+ *   - updateCurrentTenant() - PUT /tenants/me
+ *   - getTenantStats() - GET /tenants/me/stats
+ * - **工具函数**: 存储颜色、状态颜色、文件大小格式化
+ * - **选择器函数**: Zustand选择器优化订阅
+ *
+ * ## [SIDE-EFFECTS]
+ * - **HTTP请求**: fetch调用Backend API（/tenants/me, /tenants/me/stats）
+ * - **localStorage操作**: localStorage.getItem('auth_token')获取认证令牌
+ * - **状态更新**: set()更新currentTenant, tenantStats, isLoading, error
+ * - **异常处理**: try-catch捕获网络和API错误
+ * - **Zustand devtools**: 集成Redux DevTools调试
+ * - **条件判断**: status枚举值判断颜色和样式变体
+ * - **文件大小格式化**: if (mb < 1024)判断单位
  */
 
 import { create } from 'zustand'

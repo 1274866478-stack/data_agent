@@ -1,0 +1,50 @@
+# [FOLDER_NAME] 文件夹描述
+
+## [MODULE]
+**模块名称**: 模块名
+**职责**: 核心职责描述
+**类型**: 模块类型（application/library/service/etc.）
+
+## [BOUNDARY]
+**输入**:
+- 输入项1: 描述
+- 输入项2: 描述
+
+**输出**:
+- 输出项1: 描述
+- 输出项2: 描述
+
+## [PROTOCOL]
+1. 规则1
+2. 规则2
+3. 规则3
+
+## [STRUCTURE]
+```
+目录/
+├── 文件1
+├── 文件2
+└── 子目录/
+```
+
+## [LINK]
+**上游依赖**:
+- [../path/to/file.py](../path/to/file.py) - 依赖说明
+
+**下游依赖**:
+- [../path/to/file.py](../path/to/file.py) - 被依赖说明
+
+**调用方**:
+- [../../path/to/caller.py](../../path/to/caller.py) - 调用方说明
+
+## [STATE]
+- 状态项1: 描述
+- 状态项2: 描述
+
+## [THREAD-SAFE]
+- 是否线程安全: 是/否
+- 并发注意事项: 描述
+
+## [SIDE-EFFECTS]
+- 副作用1: 描述
+- 副作用2: 描述

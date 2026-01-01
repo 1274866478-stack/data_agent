@@ -1,3 +1,63 @@
+/**
+ * # [DATA_SOURCE_STORE] 数据源状态管理Store
+ *
+ * ## [MODULE]
+ * **文件名**: dataSourceStore.ts
+ * **职责**: 管理数据源连接列表、CRUD操作、连接测试、批量删除和API客户端封装，集成Zustand状态管理和TypeScript类型安全
+ *
+ * ## [INPUT]
+ * Props (无 - Zustand Store):
+ * - 接收tenantId进行数据查询
+ * - 接收数据源创建/更新请求数据
+ * - 接收文件上传数据
+ *
+ * ## [OUTPUT]
+ * Store:
+ * - **dataSources: DataSourceConnection[]** - 数据源连接列表
+ * - **currentDataSource: DataSourceConnection | null** - 当前选中数据源
+ * - **isLoading: boolean** - 加载状态
+ * - **error: string | null** - 错误信息
+ * - **testResults: Record<string, TestResult>** - 连接测试结果缓存
+ * Actions:
+ * - fetchDataSources(tenantId, filters) - 获取数据源列表
+ * - getDataSourceById(id, tenantId) - 获取单个数据源
+ * - createDataSource(tenantId, data) - 创建数据源（支持文件上传和连接字符串）
+ * - updateDataSource(id, tenantId, data) - 更新数据源
+ * - deleteDataSource(id, tenantId) - 删除数据源
+ * - bulkDeleteDataSources(ids, tenantId, userId) - 批量删除数据源
+ * - testConnection(connectionString, dbType) - 测试连接字符串
+ * - testDataSourceConnection(id, tenantId) - 测试现有数据源连接
+ * - getSupportedDatabaseTypes() - 获取支持的数据库类型
+ * - clearError() - 清除错误
+ * - setCurrentDataSource(dataSource) - 设置当前数据源
+ *
+ * **上游依赖**:
+ * - [zustand](https://github.com/pmndrs/zustand) - 状态管理库
+ * - [zustand/middleware](https://github.com/pmndrs/zustand#devtools) - devtools中间件
+ *
+ * **下游依赖**:
+ * - 无（Store是叶子状态管理模块）
+ *
+ * **调用方**:
+ * - [../components/data-sources/DataSourceList.tsx](../components/data-sources/DataSourceList.tsx) - 数据源列表
+ * - [../components/data-sources/DataSourceForm.tsx](../components/data-sources/DataSourceForm.tsx) - 数据源表单
+ * - [../components/data-sources/DataSourceCard.tsx](../components/data-sources/DataSourceCard.tsx) - 数据源卡片
+ * - [../app/data-sources/page.tsx](../app/data-sources/page.tsx) - 数据源管理页面
+ *
+ * ## [STATE]
+ * - **数据源列表**: 维护tenant的所有数据源连接
+ * - **当前选中**: 跟踪当前操作的数据源
+ * - **测试结果**: 缓存连接测试结果
+ * - **API客户端**: 内置ApiClient类封装API调用
+ * - **文件上传**: 支持CSV/Excel/SQLite文件上传创建数据源
+ *
+ * ## [SIDE-EFFECTS]
+ * - HTTP请求（调用Backend API）
+ * - 文件上传（FormData multipart）
+ * - localStorage操作（读取auth_token）
+ * - 开发工具集成（Zustand devtools）
+ */
+
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 

@@ -4,7 +4,40 @@
       "Bash(dir \"C:\\\\Users\\\\Tian\\\\.claude\")",
       "Bash(cat:*)",
       "Bash(claude:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(python scripts/tools/validate_fractalflow.py:*)",
+      "Bash(python:*)",
+      "Bash(xargs:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(findstr:*)",
+      "Bash(test:*)",
+      "Bash(find:*)",
+      "Bash(where:*)",
+      "Bash(../.venv/Scripts/python.exe:*)",
+      "Bash(echo:*)",
+      "LSP*",
+      "Bash(export ENABLE_LSP_TOOLS=1)",
+      "Bash(npm install:*)",
+      "Bash(npm search:*)",
+      "Bash(npm view:*)",
+      "Bash(pyright:*)",
+      "Bash(typescript-language-server:*)",
+      "Bash(pyright-langserver:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(tasklist:*)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "serena",
+    "chrome-devtools",
+    "context7",
+    "exa",
+    "ide",
+    "deepwiki",
+    "open-websearch"
+  ],
+  "enableAllProjectMcpServers": true
 }

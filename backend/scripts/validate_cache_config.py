@@ -1,6 +1,102 @@
 """
-缓存配置验证工具
-用于验证Redis和内存缓存配置
+[HEADER]
+缓存配置验证工具 - Cache Configuration Validator
+用于验证Redis和内存缓存的配置和性能
+
+[MODULE]
+模块类型: 配置验证脚本 (Standalone Script)
+所属功能: 开发工具与配置验证
+技术栈: Python 3.8+, asyncio, logging, time
+
+[INPUT]
+- 命令行参数: 无
+- 环境变量依赖:
+  - REDIS_URL: Redis连接URL (可选)
+  - CACHE_TYPE: 缓存类型 (memory/redis, 默认memory)
+- 配置来源:
+  - src.services.cache_service - 缓存服务工厂和实现
+- 测试数据:
+  - 内存缓存测试: {"message": "Hello World", "timestamp": ...}
+  - Redis缓存测试: {"message": "Hello Redis", "timestamp": ...}
+
+[OUTPUT]
+- 控制台输出:
+  - 测试进度和结果 (emoji标识)
+  - 健康检查状态
+  - 性能测试结果 (ops/sec)
+  - 验证总结
+- 退出码:
+  - 0: 所有测试通过
+  - 1: 部分或全部测试失败
+- 测试项目:
+  1. 内存缓存: 基本操作、TTL过期、大小限制
+  2. Redis缓存: 连接、基本操作、租户隔离、信息获取
+  3. 缓存工厂: 创建memory/redis/default缓存
+  4. 性能测试: 读写性能 (1000次操作)
+
+[LINK]
+- 依赖模块:
+  - src.services.cache_service.CacheFactory - 缓存工厂
+  - src.services.cache_service.MemoryCache - 内存缓存实现
+  - src.services.cache_service.RedisCache - Redis缓存实现
+- 关联脚本:
+  - scripts/validate_zhipu_config.py - 智谱AI配置验证
+  - scripts/validate_database_support.py - 数据库支持验证
+- 文档参考:
+  - docs/setup/cache-setup.md - 缓存配置指南
+
+[POS]
+- 文件路径: backend/scripts/validate_cache_config.py
+- 执行方式:
+  - 直接运行: python scripts/validate_cache_config.py
+  - Docker: docker-compose exec backend python scripts/validate_cache_config.py
+- 使用场景:
+  - 首次配置缓存后验证
+  - 缓存性能问题排查
+  - CI/CD流程中的性能基准测试
+
+[PROTOCOL]
+- 执行流程:
+  1. 内存缓存测试:
+     - 写入/读取测试数据
+     - 验证TTL过期机制 (1秒)
+     - 检查缓存大小
+  2. Redis缓存测试:
+     - 健康检查 (health_check)
+     - 写入/读取测试数据
+     - 租户缓存清理测试
+     - 获取Redis信息
+     - 关闭连接
+  3. 缓存工厂测试:
+     - 创建memory缓存
+     - 创建redis缓存 (如果可用)
+     - 创建default缓存
+  4. 性能测试:
+     - 写入性能: 1000次set操作
+     - 读取性能: 1000次get操作
+     - 输出ops/sec指标
+- 测试标准:
+  - 内存缓存: 所有基本功能正常
+  - Redis缓存: 连接成功, 健康状态为healthy
+  - 性能基准:
+    - 内存缓存: >10000 ops/sec
+    - Redis缓存: >1000 ops/sec (取决于网络)
+- 错误处理:
+  - 捕获所有异常并记录
+  - Redis未安装: 显示警告, 继续执行
+  - 连接失败: 记录错误, 跳过相关测试
+- 结果判断:
+  - 全部通过: 退出码 0
+  - 部分失败: 显示失败组件, 退出码 1
+
+[PERFORMANCE]
+- 性能测试参数:
+  - 操作次数: 1000
+  - TTL测试: 1秒 (sleep 2秒验证过期)
+  - 缓存大小: 1000 (max_size)
+- 指标计算:
+  - write_ops_per_sec = operations / write_time
+  - read_ops_per_sec = operations / read_time
 """
 
 import asyncio

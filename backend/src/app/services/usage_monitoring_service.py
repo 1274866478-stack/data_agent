@@ -1,6 +1,97 @@
 """
-使用量监控服务
-监控Token使用量、API调用次数、成本计算等
+# [USAGE_MONITORING_SERVICE] 使用量监控服务
+
+## [HEADER]
+**文件名**: usage_monitoring_service.py
+**职责**: 监控Token使用量、API调用次数、成本计算，提供使用量限制检查和统计功能
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 使用量监控服务
+
+## [INPUT]
+- **tenant_id: str** - 租户ID
+- **provider: ProviderType** - 提供商类型（ZHIPU, OPENROUTER, LOCAL）
+- **model: str** - 模型名称
+- **usage_type: UsageType** - 使用量类型（TOKENS, API_CALLS, CHARACTERS, REQUESTS, RESPONSES）
+- **amount: int** - 使用量
+- **prompt_tokens: int** - 提示Token数
+- **completion_tokens: int** - 完成Token数
+- **total_tokens: int** - 总Token数
+- **requested_tokens: int** - 请求的Token数
+- **period: str** - 统计周期（"daily", "weekly", "monthly"）
+- **start_date: datetime** - 开始日期
+- **end_date: datetime** - 结束日期
+- **format: str** - 导出格式（"json", "csv"）
+- **days: int** - 保留天数
+- **usage_limit: UsageLimit** - 使用量限制配置
+- **metadata: Optional[Dict[str, Any]]** - 元数据
+
+## [OUTPUT]
+- **bool**: 操作是否成功（record_usage, record_cost, check_usage_limits, set_usage_limit）
+- **Tuple[bool, List[str]]**: (是否允许, 警告消息列表)（check_usage_limits）
+- **Dict[str, Any]**: 当前使用量统计（get_current_usage）
+  - daily_tokens, daily_api_calls, daily_cost
+  - monthly_tokens, monthly_api_calls, monthly_cost
+  - timestamp
+- **UsageStatistics**: 使用量统计对象（get_usage_statistics）
+- **Dict[str, Any]**: 实时使用量数据（get_real_time_usage）
+- **List[int]**: 每小时使用量列表（get_hourly_usage）
+- **Optional[str]**: 导出数据路径或内容（export_usage_data）
+- **Dict[str, Any]**: 内存使用情况（get_memory_usage）
+- **List[str]**: 警告消息列表（check_and_alert）
+
+**上游依赖** (已读取源码):
+- Python标准库: asyncio, collections（defaultdict, deque）, dataclasses, datetime, enum, json, logging, time
+- 项目配置: src.app.core.config.settings
+
+**下游依赖** (需要反向索引分析):
+- [llm_service.py](./llm_service.py) - LLM服务记录使用量
+- [agent_service.py](./agent_service.py) - Agent服务记录使用量
+
+**调用方**:
+- LLM服务调用时记录Token使用量和成本
+- Agent服务调用时检查使用量限制
+- 定期清理任务（24小时一次）
+
+## [STATE]
+- **数据结构**:
+  - UsageRecord: 使用量记录（tenant_id, provider, model, usage_type, amount, timestamp, metadata）
+  - CostRecord: 成本记录（prompt_tokens, completion_tokens, total_tokens, estimated_cost）
+  - UsageLimit: 使用量限制（daily_token_limit, daily_api_limit, monthly_token_limit, monthly_api_limit, cost_limit）
+  - UsageStatistics: 使用量统计（total_tokens, total_api_calls, total_cost, provider_breakdown, model_breakdown）
+- **内存存储**: deque(maxlen=10000)保留最近10000条记录
+- **实时使用量**: Dict[tenant_id, Dict[key, count]]实时统计
+- **小时统计**: Dict[tenant_id, List[int]]最近24小时每小时使用量
+- **Token定价**: pricing_config配置各模型价格（每1000 tokens价格）
+  - ZHIPU: glm-4-flash ($0.0001/0.0002), glm-4 ($0.0005/0.001), glm-4-9b ($0.0003/0.0006)
+  - OPENROUTER: gemini-2.0-flash-exp ($0.000075/0.00015), claude-3.5-sonnet ($0.0015/0.0075), gpt-4o ($0.0025/0.01)
+- **成本计算**: (prompt_tokens/1000)*prompt_price + (completion_tokens/1000)*completion_price
+- **限制检查**: 检查每日/每月Token限制、API调用限制、成本限制
+- **警告阈值**: daily_token_usage 80%, daily_api_calls 80%, monthly_cost 90%
+- **定期清理**: 24小时自动清理旧记录（默认保留30天）
+- **导出格式**: JSON和CSV两种格式
+
+## [SIDE-EFFECTS]
+- **deque操作**: records.append添加记录，自动淘汰最旧记录（maxlen=10000）
+- **实时统计更新**: real_time_usage[tenant_id][key] += amount
+- **小时统计更新**: hourly_usage[tenant_id][-1] += amount
+- **成本计算**: _calculate_cost根据模型和Token数计算成本
+- **时间过滤**: datetime.utcnow()替换、today_start、month_start计算
+- **列表推导式过滤**: [record for record in self.cost_records if conditions]
+- **聚合计算**: sum(record.total_tokens for record in filtered_costs)
+- **分组统计**: defaultdict(lambda: {"tokens": 0, "calls": 0, "cost": 0.0})按提供商/模型分组
+- **JSON序列化**: json.dumps(data, indent=2, ensure_ascii=False)导出JSON
+- **CSV格式化**: "\n".join(lines)生成CSV字符串
+- **内存估算**: (len(records)*200 + len(cost_records)*300 + ...) / (1024*1024)
+- **deque清理**: deque((record for record in self.records if record.timestamp >= cutoff_date), maxlen=10000)
+- **全局单例**: usage_monitoring_service全局实例
+- **异步任务**: asyncio.create_task(self._periodic_cleanup())启动定期清理
+
+## [POS]
+**路径**: backend/src/app/services/usage_monitoring_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 外部依赖无，依赖项目配置settings
 """
 
 import logging

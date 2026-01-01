@@ -1,5 +1,110 @@
 """
-pytest 配置文件
+[HEADER]
+Pytest配置与Fixtures - Pytest Configuration and Test Fixtures
+为所有测试提供共享的fixtures和配置
+
+[MODULE]
+模块类型: 测试配置文件 (Pytest Configuration)
+所属功能: 测试基础设施
+技术栈: pytest, asyncio, FastAPI TestClient, SQLAlchemy
+
+[INPUT]
+- 环境变量设置:
+  - ENVIRONMENT: 'testing' (测试环境标识)
+  - DATABASE_URL: 'sqlite:///./test.db' (内存SQLite)
+  - MINIO_ACCESS_KEY: 测试用访问密钥
+  - MINIO_SECRET_KEY: 测试用密钥 (>=32字符)
+  - ZHIPUAI_API_KEY: 测试用API密钥
+  - CLERK_JWT_PUBLIC_KEY: 测试用公钥
+  - CLERK_API_URL: 测试用API URL
+- 配置加载:
+  - src.app.main.app - FastAPI应用实例
+  - src.app.data.database - 数据库连接和模型
+
+[OUTPUT]
+- 提供的Fixtures:
+  1. event_loop (scope="session"):
+     - 创建session级别的事件循环
+     - 支持异步测试
+  2. db_session (scope="function"):
+     - 创建内存SQLite数据库
+     - 自动创建所有表
+     - 提供测试用SQLAlchemy session
+     - 测试结束后自动清理
+  3. client (推导, 通常在其他fixture中):
+     - FastAPI TestClient实例
+     - 用于API端点测试
+- 测试数据库:
+  - 类型: SQLite (内存)
+  - 连接URL: sqlite:///./test.db
+  - 特性: check_same_thread=False, StaticPool
+
+[LINK]
+- 依赖模块:
+  - pytest - 测试框架
+  - asyncio - 异步支持
+  - fastapi.testclient.TestClient - API测试客户端
+  - sqlalchemy - ORM和数据库
+- 测试使用:
+  - tests/api/v1/endpoints/test_*.py - API端点测试
+  - tests/services/test_*.py - 服务层测试
+  - tests/data/test_*.py - 数据模型测试
+- 文档参考:
+  - docs/testing-guide.md - 测试指南
+
+[POS]
+- 文件路径: backend/tests/conftest.py
+- pytest自动加载: 是 (根目录或tests目录下的conftest.py自动被pytest发现)
+- 作用范围: 整个tests/目录
+- 优先级: 默认最高 (pytest自动优先使用conftest.py中的fixtures)
+
+[PROTOCOL]
+- 初始化顺序:
+  1. 设置测试环境变量 (os.environ.setdefault)
+  2. 导入应用模块 (src.app.main, src.app.data.database)
+  3. 创建测试数据库引擎 (SQLite)
+  4. 创建session工厂 (TestingSessionLocal)
+- Fixture生命周期:
+  - event_loop:
+    - session级别: 整个测试运行期间共享一个事件循环
+    - 适用于异步测试套件
+  - db_session:
+    - function级别: 每个测试函数独立创建和销毁
+    - 确保测试间数据隔离
+- 测试数据库策略:
+  - 使用SQLite内存数据库 (快速、隔离)
+  - 自动创建所有表 (Base.metadata.create_all)
+  - 不执行迁移 (直接使用模型定义)
+  - 测试结束后自动清理
+
+[USAGE]
+- 使用示例:
+  ```python
+  # API测试
+  def test_health_endpoint(client: TestClient):
+      response = client.get("/health")
+      assert response.status_code == 200
+
+  # 数据库测试
+  def test_create_tenant(db_session):
+      tenant = Tenant(id="test", email="test@example.com")
+      db_session.add(tenant)
+      db_session.commit()
+      assert tenant.id == "test"
+
+  # 异步测试
+  @pytest.mark.asyncio
+  async def test_async_operation(event_loop):
+      result = await async_function()
+      assert result is not None
+  ```
+
+[SECURITY]
+- 测试密钥管理:
+  - 所有测试密钥长度 >= 32字符
+  - 明确标识为测试用途 (_for_testing)
+  - 不与生产环境共享任何密钥
+  - Git忽略: 确保测试配置不包含真实密钥
 """
 
 import os

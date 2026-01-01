@@ -1,6 +1,85 @@
 """
-文档管理API端点 - Story 2.4完全符合规范实现
-文档CRUD操作、状态管理、预览功能、租户隔离
+# [DOCUMENTS] 文档管理API端点
+
+## [HEADER]
+**文件名**: documents.py
+**职责**: 实现文档的完整CRUD操作、上传下载、预览链接生成、处理状态跟踪和统计功能，支持PDF/Word文档，集成MinIO存储和ChromaDB向量化，确保租户隔离
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 实现Story 2.4规范的文档管理API
+
+## [INPUT]
+- **tenant_id: str** - 租户ID（通过占位符函数获取，实际应从JWT提取）
+- **document_id: str** - 文档ID（UUID格式，路径参数）
+- **file: UploadFile** - 上传的文档文件（PDF或Word）
+- **doc_status: str** - 文档状态过滤条件（pending, indexing, ready, error）
+- **file_type: str** - 文件类型过滤条件
+- **skip: int** - 分页跳过数量（默认0）
+- **limit: int** - 分页限制数量（默认100，最大1000）
+- **expires_in_hours: int** - 预览链接有效期（小时，默认1，最大24）
+- **db: Session** - 数据库会话（通过依赖注入获取）
+
+## [OUTPUT]
+- **document_list: DocumentListResponse** - 文档列表响应
+  - success: 操作是否成功
+  - documents: 文档对象列表
+  - total: 总文档数
+  - skip: 跳过数量
+  - limit: 返回限制
+  - stats: 统计信息
+- **document_detail: DocumentResponse** - 文档详情响应
+  - id: 文档ID
+  - tenant_id: 租户ID
+  - file_name: 文件名
+  - storage_path: MinIO存储路径
+  - file_type: 文件类型
+  - file_size: 文件大小
+  - mime_type: MIME类型
+  - status: 处理状态
+  - processing_error: 处理错误信息
+  - indexed_at: 索引时间
+  - created_at: 创建时间
+  - updated_at: 更新时间
+- **document_stats: DocumentStatsResponse** - 文档统计响应
+  - by_status: 按状态统计
+  - by_file_type: 按文件类型统计
+  - total_documents: 总文档数
+  - total_size_bytes: 总字节大小
+  - total_size_mb: 总MB大小
+- **preview_url: dict** - 预览链接响应
+  - success: 操作是否成功
+  - preview_url: 预签名URL
+  - expires_in_hours: 有效期
+  - document: 文档信息
+- **processing_status: dict** - 处理状态响应
+  - success: 操作是否成功
+  - status: 处理状态
+  - progress: 处理进度
+  - stages: 各阶段状态
+- **error_response: HTTPException** - 错误响应（400, 404, 500）
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [../../data/database.py](../../data/database.py) - get_db(), Session
+- [../../data/models.py](../../data/models.py) - DocumentStatus
+- [../../services/document_service.py](../../services/document_service.py) - document_service, 文档CRUD操作
+- [../../services/document_processor.py](../../services/document_processor.py) - document_processor, 文档处理和向量化
+- [../../services/minio_client.py](../../services/minio_client.py) - minio_service, 文件下载
+
+**下游依赖** (已读取源码):
+- 无（API端点是叶子模块）
+
+**调用方**:
+- 前端文档管理页面 - 调用文档CRUD API
+- 前端文档上传组件 - 上传PDF/Word文档
+- 前端文档预览组件 - 生成预览链接
+- 前端仪表板 - 显示文档统计信息
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/documents.py
+**模块层级**: Level 3 - API端点层
+**依赖深度**: 直接依赖 data/*, services/*；被前端文档管理模块调用
 """
 
 import uuid

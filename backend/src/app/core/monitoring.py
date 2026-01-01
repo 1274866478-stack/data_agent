@@ -1,6 +1,42 @@
 """
-性能监控和错误追踪模块
-集成Sentry进行应用监控
+# 性能监控和错误追踪模块
+
+## [HEADER]
+**文件名**: monitoring.py
+**职责**: 集成Sentry进行应用性能监控、错误追踪和性能分析
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本
+
+## [INPUT]
+- error: Exception - 异常对象
+- message: str - 消息内容
+- context: Optional[Dict[str, Any]] - 上下文信息
+- level: str - 日志级别
+- operation_name: str - 操作名称
+- tags: Optional[Dict[str, str]] - 自定义标签
+
+## [OUTPUT]
+- Sentry事件ID: Optional[str]
+- 性能监控上下文: context manager
+
+## [LINK]
+**上游依赖**:
+- [config.py](config.py) - settings配置对象（SENTRY_DSN等）
+
+**下游依赖**:
+- 无（监控系统为独立模块）
+
+**调用方**:
+- 应用主入口（main.py）
+- API端点错误处理
+- 性能关键路径
+
+## [POS]
+**路径**: backend/src/app/core/monitoring.py
+**模块层级**: Level 1（基础设施层）
+**依赖深度**: 1 层（依赖config层）
 """
 
 import logging

@@ -1,6 +1,43 @@
 """
-增强日志配置模块
-提供结构化日志、性能监控和安全过滤功能
+# 增强日志配置模块
+
+## [HEADER]
+**文件名**: logging_config.py
+**职责**: 提供结构化日志、性能监控、安全过滤和上下文日志功能
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本
+
+## [INPUT]
+- logger_name: str - 日志记录器名称
+- func_name: str - 函数名称
+- duration: float - 执行时长
+- success: bool - 是否成功
+- context: Dict[str, Any] - 上下文信息
+- level: str - 日志级别
+
+## [OUTPUT】
+- 结构化日志: str（JSON格式）
+- 日志记录器实例: logging.Logger
+
+## [LINK]
+**上游依赖**:
+- [config.py](config.py) - settings配置对象
+- [security_monitor.py](security_monitor.py) - SensitiveDataFilter敏感数据过滤
+
+**下游依赖**:
+- 无（日志系统为最底层）
+
+**调用方**:
+- 所有应用模块
+- API端点
+- 服务层
+
+## [POS]
+**路径**: backend/src/app/core/logging_config.py
+**模块层级**: Level 1（基础设施层）
+**依赖深度**: 1 层（依赖config和security层）
 """
 
 import logging

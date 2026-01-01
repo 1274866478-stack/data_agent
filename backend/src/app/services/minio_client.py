@@ -1,6 +1,64 @@
 """
-MinIO 客户端配置和操作
-MinIO 连接、桶操作、文件上传下载
+# [MINIO_CLIENT] MinIO对象存储客户端
+
+## [HEADER]
+**文件名**: minio_client.py
+**职责**: 提供MinIO对象存储连接、存储桶管理、文件上传下载、预签名URL生成和文件列表功能
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - MinIO对象存储服务
+
+## [INPUT]
+- **bucket_name: str** - 存储桶名称
+- **object_name: str** - 对象名称（文件路径）
+- **file_data: BinaryIO** - 文件数据二进制流
+- **file_size: int** - 文件大小（字节）
+- **content_type: Optional[str]** - 文件MIME类型（如'application/pdf'）
+- **prefix: Optional[str]** - 文件路径前缀（用于列表过滤）
+- **expires: timedelta** - 预签名URL过期时间（默认1小时）
+
+## [OUTPUT]
+- **bool**: 操作成功/失败（create_bucket, upload_file, delete_file）
+- **bool**: 连接状态（check_connection）
+- **Optional[bytes]**: 文件二进制数据（download_file）
+- **list**: 文件元数据列表（list_files）
+  - name: str - 文件名
+  - size: int - 文件大小
+  - last_modified: datetime - 最后修改时间
+  - etag: str - 文件ETag
+- **Optional[str]**: 预签名URL（get_presigned_url）
+
+**上游依赖** (已读取源码):
+- [./core/config.py](./core/config.py) - 配置管理（MinIO endpoint, access_key, secret_key, secure）
+
+**下游依赖** (需要反向索引分析):
+- [document_service.py](./document_service.py) - 文档上传下载
+- [../api/v1/endpoints/documents.py](../api/v1/endpoints/documents.py) - 文档API端点
+
+**调用方**:
+- 文档上传流程（KnowledgeDocument创建后）
+- 文档下载API
+- MinIO健康检查端点
+
+## [STATE]
+- **客户端初始化**: 构造函数中创建Minio客户端实例
+- **默认存储桶**: default_bucket = "knowledge-documents"
+- **连接配置**: 从settings读取endpoint, access_key, secret_key, secure
+- **全局实例**: minio_service单例供全局使用
+
+## [SIDE-EFFECTS]
+- **HTTP连接**: 连接MinIO服务（settings.minio_endpoint）
+- **存储桶操作**: 自动创建不存在的存储桶（upload_file中）
+- **文件I/O**: 读写文件二进制流
+- **网络传输**: 上传/下载大文件时的网络流量
+- **异常处理**: S3Error捕获和日志记录
+- **资源管理**: download_file后关闭response和释放连接
+
+## [POS]
+**路径**: backend/src/app/services/minio_client.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 直接依赖 core.config
 """
 
 from minio import Minio

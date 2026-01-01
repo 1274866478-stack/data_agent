@@ -1,3 +1,102 @@
+/**
+ * # [DASHBOARD_STORE] 仪表板状态管理Store
+ *
+ * ## [MODULE]
+ * **文件名**: dashboardStore.ts
+ * **职责**: 仪表板数据管理 - 概览统计、搜索筛选、批量操作、活跃标签页
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ * **变更记录**:
+ * - v1.0.0 (2026-01-01): 初始版本 - 仪表板状态管理Store
+ *
+ * ## [INPUT]
+ * Props (无 - Zustand Store):
+ * - page?: number - 搜索页码
+ * - tab: 'databases' | 'documents' - 活跃标签页
+ * - query: string - 搜索关键词
+ * - filters: Partial<DataSourceFilters> - 筛选器
+ * - id: string - 数据项ID
+ * - ids: string[] - 数据项ID列表
+ * - itemType: 'database' | 'document' - 数据项类型
+ * - items: string[] - 选中项列表
+ *
+ * ## [OUTPUT]
+ * Store:
+ * - **overview: DashboardOverview | null** - 概览统计
+ *   - databases: { total, active, error }
+ *   - documents: { total, ready, processing, error }
+ *   - storage: { used_mb, quota_mb, usage_percentage }
+ *   - recent_activity: ActivityItem[]
+ * - **activeTab: 'databases' | 'documents'** - 活跃标签页
+ * - **searchQuery: string** - 搜索关键词
+ * - **filters: DataSourceFilters** - 筛选器
+ *   - type: 'database' | 'document' | 'all'
+ *   - status: string[]
+ *   - dateRange: { from?, to? }
+ * - **selectedItems: string[]** - 选中的数据项ID列表
+ * - **isLoading: boolean** - 加载状态
+ * - **error: string | null** - 错误信息
+ * - **searchResults: SearchResult[]** - 搜索结果
+ * - **searchTotal: number** - 搜索结果总数
+ * - **searchPage: number** - 当前搜索页
+ * - **searchTotalPages: number** - 搜索总页数
+ * Actions:
+ * - fetchOverview() - 获取概览数据
+ * - setActiveTab(tab) - 设置活跃标签页
+ * - setSearchQuery(query) - 设置搜索查询（防抖300ms）
+ * - updateFilters(filters) - 更新筛选器
+ * - clearFilters() - 清除筛选器
+ * - toggleSelection(id) - 切换选择状态
+ * - selectAll(ids) - 全选
+ * - clearSelection() - 清除选择
+ * - searchDataSources(page?) - 搜索数据源
+ * - bulkDelete(itemIds, itemType) - 批量删除
+ * - clearError() - 清除错误
+ * - setSelectedItems(items) - 设置选中项
+ *
+ * **上游依赖**:
+ * - [zustand](https://github.com/pmndrs/zustand) - 状态管理库
+ * - [zustand/middleware](https://github.com/pmndrs/zustand#devtools) - devtools中间件
+ * - [./authStore](./authStore.ts) - 获取租户ID和用户ID
+ *
+ * **下游依赖**:
+ * - 无（Store是叶子状态管理模块）
+ *
+ * **调用方**:
+ * - [../app/(app)/dashboard/page.tsx](../app/(app)/dashboard/page.tsx) - 仪表板页面
+ * - [../components/data-sources/DataSourceOverview.tsx](../components/data-sources/DataSourceOverview.tsx) - 数据源概览
+ * - [../components/data-sources/SearchAndFilter.tsx](../components/data-sources/SearchAndFilter.tsx) - 搜索和筛选
+ *
+ * ## [STATE]
+ * - **概览数据**: overview存储统计和活动记录
+ * - **标签页映射**: tabToType映射（databases→database, documents→document）
+ * - **初始筛选器**: type='all', status=[], dateRange={}
+ * - **防抖搜索**: setSearchQuery中setTimeout 300ms延迟
+ * - **认证参数**: getAuthParams()获取tenant_id和user_id
+ * - **API基础URL**: getApiBaseUrl()获取API地址
+ * - **批量操作**: bulkDelete支持数据库和文档批量删除
+ * - **状态同步**: 删除后自动刷新概览、搜索结果、清除选择
+ *
+ * ## [SIDE-EFFECTS]
+ * - **HTTP请求**: fetch调用Backend API
+ *   - GET /data-sources/overview - 获取概览数据
+ *   - GET /data-sources/search - 搜索数据源
+ *   - POST /data-sources/bulk-delete - 批量删除
+ * - **认证参数**: 从authStore获取tenant_id和user_id
+ * - **localStorage**: localStorage.getItem('auth_token')获取令牌
+ * - **URLSearchParams**: 构建查询参数
+ *   - tenant_id, user_id, q, type, page, limit
+ *   - status (逗号分隔), date_from, date_to
+ * - **状态更新**: set()更新overview, searchResults, isLoading等
+ * - **防抖**: setTimeout延迟300ms执行搜索
+ * - **数组操作**: includes判断选中状态，filter删除选中项
+ * - **对象扩展**: { ...get().filters, ...newFilters }合并筛选器
+ * - **标签映射**: tabToType[activeTab]或filters.type映射搜索类型
+ * - **异常处理**: try-catch捕获网络和API错误
+ * - **刷新流程**: fetchOverview() → searchDataSources() → clearSelection()
+ * - **Zustand devtools**: 集成Redux DevTools调试
+ */
+
 'use client'
 
 import { create } from 'zustand'

@@ -1,4 +1,48 @@
 /**
+ * # DocumentList 文档列表组件
+ *
+ * ## [MODULE]
+ * **文件名**: DocumentList.tsx
+ * **职责**: 显示文档列表，提供搜索、过滤、分页、批量操作和统计功能
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - **showSelection**: boolean (可选) - 是否显示选择框，默认false
+ * - **onSelectionChange**: (selectedIds: string[]) => void (可选) - 选中状态变化回调
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 完整的文档列表界面（工具栏+统计+卡片列表+分页）
+ * - **副作用**: 调用documentStore的各种方法和修改状态
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [react](https://react.dev) - React核心库
+ * - [@/store/documentStore.ts](../../store/documentStore.ts) - 文档状态管理
+ * - [@/components/ui/*](../ui/) - UI基础组件（Button, Alert）
+ * - [./DocumentCard.tsx](./DocumentCard.tsx) - 文档卡片
+ *
+ * **下游依赖**:
+ * - 无直接下游组件
+ *
+ * **调用方**:
+ * - [../../app/(app)/documents/page.tsx](../../app/(app)/documents/page.tsx) - 文档页面
+ *
+ * ## [STATE]
+ * - **localSearchQuery**: string - 本地搜索查询文本（防抖）
+ * - 从documentStore获取：documents, isLoading, error, selectedDocuments, total, currentPage, pageSize, statusFilter, fileTypeFilter, searchQuery, stats
+ *
+ * ## [SIDE-EFFECTS]
+ * - 初始化时调用fetchDocuments()
+ * - 搜索防抖300ms后调用setFilter()
+ * - 状态过滤时调用setFilter()
+ * - 分页时调用setPage()
+ * - 批量删除时调用deleteSelectedDocuments()
+ * - 刷新时调用refreshDocuments()
+ * - 通知父组件选中变化（onSelectionChange回调）
+ * - 删除确认弹窗（window.confirm）
+ */
+/**
  * 文档列表组件 - Story 2.4规范实现
  * 文档列表显示、搜索过滤、批量操作、状态显示
  */

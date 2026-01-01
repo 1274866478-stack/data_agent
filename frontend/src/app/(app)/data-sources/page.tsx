@@ -1,3 +1,55 @@
+/**
+ * # DataSourcesPage 数据源管理页面
+ *
+ * ## [MODULE]
+ * **文件名**: app/(app)/data-sources/page.tsx
+ * **职责**: 提供数据源和文档的统一管理界面，包括列表展示、搜索筛选、批量操作和上传功能
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - 无直接 Props（页面组件）
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 数据源管理页面，包含概览、标签页、搜索、列表和上传界面
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [@/store/dashboardStore](../../../store/dashboardStore.ts) - 提供数据源状态管理
+ * - [@/store/authStore](../../../store/authStore.ts) - 提供租户ID
+ * - [@/components/data-sources/DataSourceOverview](../../components/data-sources/DataSourceOverview.tsx) - 概览组件
+ * - [@/components/data-sources/DataSourceTabs](../../components/data-sources/DataSourceTabs.tsx) - 标签页组件
+ * - [@/components/data-sources/SearchAndFilter](../../components/data-sources/SearchAndFilter.tsx) - 搜索筛选组件
+ * - [@/components/data-sources/BulkOperations](../../components/data-sources/BulkOperations.tsx) - 批量操作组件
+ * - [@/components/data-sources/DataSourceList](../../components/data-sources/DataSourceList.tsx) - 数据源列表
+ * - [@/components/documents/DocumentList](../../components/documents/DocumentList.tsx) - 文档列表
+ * - [DocumentUpload](../../components/documents/DocumentUpload.tsx) - 文档上传组件
+ * - [@/components/ui/button](../../components/ui/button.tsx) - 按钮组件
+ * - [lucide-react](https://lucide.dev) - 图标库
+ *
+ * **下游依赖**:
+ * - 无（页面是用户交互入口点）
+ *
+ * ## [STATE]
+ * - **tenantId: string** - 当前租户ID（从 authStore 获取）
+ * - **overview: DashboardOverview | null** - 数据源概览（从 dashboardStore 获取）
+ * - **searchResults: SearchResult[]** - 搜索和筛选结果
+ * - **isLoading: boolean** - 加载状态
+ * - **error: string | null** - 错误信息
+ * - **activeTab: 'databases' | 'documents'** - 当前活动标签页
+ * - **selectedItems: string[]** - 已选中的项目ID列表
+ * - **showOverview: boolean** - 是否显示概览面板
+ * - **isCreateMode: boolean** - 是否处于创建模式（添加数据源或上传文档）
+ *
+ * ## [SIDE-EFFECTS]
+ * - **数据获取**: 组件挂载时自动调用 fetchOverview() 和 searchDataSources()
+ * - **租户验证**: 检查租户ID是否存在，不存在时显示认证错误
+ * - **标签切换**: 切换数据库/文档标签时重新搜索数据
+ * - **选择同步**: 处理批量选择状态变化
+ * - **数据刷新**: 提供手动刷新功能
+ * - **上传处理**: 处理文档上传成功和错误回调
+ * - **模式切换**: 在管理界面和创建界面之间切换
+ */
 'use client'
 
 import { useState, useEffect } from 'react'

@@ -1,6 +1,92 @@
 """
-推理引擎服务
-实现查询理解、答案生成、质量控制等功能
+# [REASONING_SERVICE] 推理引擎服务
+
+## [HEADER]
+**文件名**: reasoning_service.py
+**职责**: 实现查询理解、答案生成、推理步骤记录、质量控制等完整推理流程
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 推理引擎服务
+
+## [INPUT]
+- **query: str** - 用户查询
+- **context: Optional[List[Dict[str, Any]]]** - 上下文信息
+- **data_sources: Optional[List[Dict[str, Any]]]** - 数据源信息
+- **tenant_id: Optional[str]** - 租户ID
+- **reasoning_mode: Optional[ReasoningMode]** - 推理模式
+- **sql_results/rag_results/documents: Optional[List[Dict[str, Any]]]** - 增强推理的多源数据
+
+## [OUTPUT]
+- **QueryAnalysis**: 查询分析结果（analyze_query）
+  - query_type, intent, entities, keywords, temporal_expressions
+  - complexity_score, confidence, reasoning_mode
+  - suggested_temperature, suggested_max_tokens
+- **ReasoningResult**: 推理结果（reason）
+  - answer, reasoning_steps, confidence, sources
+  - query_analysis, quality_score, safety_filter_triggered
+- **Dict[str, Any]**: 增强推理结果（enhanced_reason）
+  - base_reasoning, fusion_result, xai_explanation
+  - enhanced_answer, processing_metadata, quality_metrics
+
+**上游依赖** (已读取源码):
+- 项目服务: zhipu_client（zhipu_service）, llm_service（llm_service, LLMMessage）
+
+**下游依赖** (需要反向索引分析):
+- [llm_service.py](./llm_service.py) - LLM服务调用
+- [fusion_service.py](./fusion_service.py) - 融合引擎集成
+- [xai_service.py](./xai_service.py) - XAI服务集成
+
+**调用方**:
+- RAG-SQL链执行查询分析
+- Agent服务调用推理引擎
+- 增强推理集成多源数据
+
+## [STATE]
+- **查询类型**: QueryType枚举（8种）
+  - FACTUAL（事实）, ANALYTICAL（分析）, COMPARATIVE（比较）, TEMPORAL（时间）, CAUSAL（因果）, PROCEDURAL（流程）, PREDICTIVE（预测）, UNKNOWN
+- **推理模式**: ReasoningMode枚举（5种）
+  - BASIC, ANALYTICAL, STEP_BY_STEP, MULTI_SOURCE, CONTEXT_AWARE
+- **数据类**: QueryAnalysis, ReasoningStep, ReasoningResult
+- **查询理解引擎**: QueryUnderstandingEngine
+  - 意图模式字典（intent_patterns）
+  - 复杂度指示词列表
+  - 查询分类、意图提取、实体提取、关键词提取、时间表达式提取
+  - 复杂度计算、置信度计算、推理模式建议
+  - 温度和max_tokens建议
+- **答案生成器**: AnswerGenerator
+  - 生成模板字典（7种查询类型）
+  - 推理步骤生成、主答案生成、置信度计算、质量分数计算
+  - 安全过滤（unsafe_patterns正则检测）
+- **推理引擎主类**: ReasoningEngine
+  - 整合查询理解和答案生成
+  - 完整推理流程（分析→生成）
+- **增强推理引擎**: EnhancedReasoningEngine
+  - 延迟加载融合引擎和XAI服务（避免循环依赖）
+  - 增强推理流程（基础推理→数据融合→XAI解释→质量指标）
+  - 基准测试（benchmark_reasoning）
+  - 能力信息获取（get_reasoning_capabilities）
+
+## [SIDE-EFFECTS]
+- **LLM调用**: llm_service.chat_completion生成答案
+- **正则匹配**: re.search提取意图、实体、关键词、时间表达式
+- **列表推导式**: 提取实体、关键词，计算匹配分数
+- **对象创建**: QueryAnalysis, ReasoningStep, ReasoningResult创建
+- **字典操作**: 意图模式字典、生成模板字典
+- **时间计算**: time.time()计算处理时间
+- **字符串操作**: query[:100]截断查询
+- **条件判断**: 检查unsafe_patterns，检查quality_score决定是否使用融合答案
+- **延迟导入**: from导入避免循环依赖（fusion_engine, xai_service）
+- **属性访问**: @property延迟加载fusion_engine和xai_service
+- **异常处理**: try-except捕获所有异常，返回默认结果
+- **安全检测**: 正则检测暴力、色情、仇恨、自残、违法内容
+- **质量评分**: 基于推理步骤、答案长度、结构化程度、专业术语
+- **全局单例**: reasoning_engine, enhanced_reasoning_engine全局实例
+
+## [POS]
+**路径**: backend/src/app/services/reasoning_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 依赖zhipu_client和llm_service
 """
 
 import logging

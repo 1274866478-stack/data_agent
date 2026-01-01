@@ -1,14 +1,53 @@
+/**
+ * # ProcessingSteps AI处理步骤展示组件
+ *
+ * ## [MODULE]
+ * **文件名**: ProcessingSteps.tsx
+ * **职责**: 可视化展示AI推理和SQL生成的各个处理步骤，支持折叠展开和耗时统计
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - **steps**: ProcessingStep[] - 处理步骤数组
+ * - **className**: string (可选) - 自定义样式类名
+ * - **defaultExpanded**: boolean (可选) - 默认是否展开，默认true
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 折叠卡片式的步骤列表或null
+ * - **副作用**: 无副作用
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [react](https://react.dev) - React核心库
+ * - [@/lib/utils.ts](../../lib/utils.ts) - 工具函数（cn）
+ * - [lucide-react](https://lucide.dev) - 图标库（12种步骤图标）
+ * - [@/types/chat.ts](../../types/chat.ts) - ProcessingStep类型定义
+ *
+ * **下游依赖**:
+ * - 无直接下游组件
+ *
+ * **调用方**:
+ * - [./MessageList.tsx](./MessageList.tsx) - 消息列表中展示AI推理过程
+ *
+ * ## [STATE]
+ * - **isExpanded**: boolean - 步骤列表展开/折叠状态
+ *
+ * ## [SIDE-EFFECTS]
+ * - 根据步骤状态自动选择对应图标（6步AI流程）
+ * - 自动计算总耗时和完成进度
+ * - 支持查看详情（如SQL语句）的折叠面板
+ */
 'use client'
 
 import React from 'react'
 import { cn } from '@/lib/utils'
-import { 
-  Database, 
-  Search, 
-  FileCode, 
-  Play, 
-  CheckCircle2, 
-  XCircle, 
+import {
+  Database,
+  Search,
+  FileCode,
+  Play,
+  CheckCircle2,
+  XCircle,
   Loader2,
   ChevronDown,
   ChevronUp,

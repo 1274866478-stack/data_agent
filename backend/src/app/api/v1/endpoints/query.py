@@ -1,6 +1,88 @@
 """
-查询API端点
-Story 3.1: 租户隔离的查询 API V3格式
+# [QUERY] 智能查询API端点
+
+## [HEADER]
+**文件名**: query.py
+**职责**: 实现自然语言查询API，集成LangGraph SQL Agent和LLM服务，支持SQL/文档/混合查询，提供查询历史、状态跟踪和缓存管理，确保租户隔离和查询安全
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 实现Story 3.1规范的智能查询API
+
+## [INPUT]
+- **tenant_id: str** - 租户ID（从JWT token中提取）
+- **user_id: str** - 用户ID（从JWT token中提取，用于操作审计）
+- **query_id: str** - 查询ID（UUID格式，路径参数）
+- **query_hash: str** - 查询哈希值（用于缓存管理）
+- **request: QueryRequest** - 查询请求模型（Pydantic模型）
+  - query: 自然语言查询问题
+  - connection_id: 数据源连接ID（可选）
+  - data_source_ids: 数据源ID列表（可选）
+  - document_ids: 文档ID列表（可选）
+  - options: 查询选项（可选）
+- **page: int** - 分页页码（默认1）
+- **page_size: int** - 分页大小（默认10，最大100）
+- **background_tasks: BackgroundTasks** - FastAPI后台任务
+- **db: Session** - 数据库会话（通过依赖注入获取）
+
+## [OUTPUT]
+- **query_response: QueryResponseV3** - 查询响应V3格式
+  - query_id: 查询ID
+  - tenant_id: 租户ID
+  - original_query: 原始查询
+  - generated_sql: 生成的SQL语句（Agent查询）
+  - results: 查询结果数据
+  - row_count: 结果行数
+  - processing_time_ms: 处理时间（毫秒）
+  - confidence_score: 置信度分数
+  - explanation: 结果解释
+  - processing_steps: 处理步骤列表
+  - validation_result: 验证结果
+  - execution_result: 执行结果
+  - correction_attempts: 修正尝试次数
+- **query_status: QueryStatusResponse** - 查询状态响应
+  - query_id: 查询ID
+  - status: 查询状态（processing, success, error）
+  - created_at: 创建时间
+  - updated_at: 更新时间
+  - response_time_ms: 响应时间
+  - error_message: 错误消息
+  - progress_percentage: 进度百分比
+- **query_history: QueryHistoryResponse** - 查询历史响应
+  - queries: 查询记录列表
+  - total_count: 总记录数
+  - page: 当前页码
+  - page_size: 分页大小
+- **cache_response: QueryCacheResponse** - 缓存响应
+  - query_hash: 查询哈希
+  - cache_cleared: 缓存是否清除
+  - message: 操作消息
+- **error_response: HTTPException** - 错误响应（400, 404, 429, 500）
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [../../data/database.py](../../data/database.py) - get_db(), Session
+- [../../data/models.py](../../data/models.py) - QueryStatus, QueryType
+- [../../middleware/tenant_context.py](../../middleware/tenant_context.py) - get_current_tenant_from_request, get_current_tenant_id
+- [../../services/query_context.py](../../services/query_context.py) - get_query_context, 查询上下文管理
+- [../../services/llm_service.py](../../services/llm_service.py) - llm_service, LLM服务调用
+- [../../services/agent_service.py](../../services/agent_service.py) - run_agent_query, convert_agent_response_to_query_response, is_agent_available
+- [../../services/data_source_service.py](../../services/data_source_service.py) - DataSourceService, 数据源服务
+- [../../core/jwt_utils.py](../../core/jwt_utils.py) - get_current_user_from_token, JWT解析
+
+**下游依赖** (已读取源码):
+- 无（API端点是叶子模块）
+
+**调用方**:
+- 前端聊天界面 - 发送自然语言查询
+- 前端仪表板 - 显示查询历史
+- LangGraph Agent - SQL智能代理查询
+- 前端查询管理 - 查询状态跟踪
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/query.py
+**模块层级**: Level 3 - API端点层
+**依赖深度**: 直接依赖 data/*, services/*, middleware/*, core/*；被前端查询模块调用
 """
 
 import asyncio

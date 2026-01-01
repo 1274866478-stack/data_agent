@@ -1,6 +1,39 @@
 """
-路径提取工具 - 从数据源配置中提取文件路径
-支持 connection_config 字段（JSON或字符串）和 connection_string 字段
+# Agent 路径提取器 - 文件路径解析与动态发现
+
+## [HEADER]
+**文件名**: path_extractor.py
+**职责**: 从数据源配置中提取和解析文件路径，支持多种路径格式和动态文件发现
+**作者**: Data Agent Team
+**版本**: 1.3.0
+**变更记录**:
+- v1.3.0 (2026-01-01): 新增动态Excel文件发现功能
+- v1.0.0 (2025-12-01): 初始版本，基础路径解析
+
+## [INPUT]
+- connection_config: Dict/str - 连接配置(JSON或字符串)
+- connection_string: str - 连接字符串(后备选项)
+- file_path: str - 原始文件路径
+
+## [OUTPUT]
+- 解析后的路径: str/None - 容器内绝对路径
+- 文件路径: str - 动态发现的最新文件路径
+
+## [LINK]
+**上游依赖**:
+- Python标准库 - os, glob, json
+
+**下游依赖**:
+- [tools.py](tools.py) - 文件工具路径解析
+
+**调用方**:
+- inspect_file工具 - 文件路径解析
+- analyze_dataframe工具 - 文件路径解析
+
+## [POS]
+**路径**: backend/src/app/services/agent/path_extractor.py
+**模块层级**: Level 3 (Services → Agent → Path Extractor)
+**依赖深度**: 2 层
 """
 import json
 import logging

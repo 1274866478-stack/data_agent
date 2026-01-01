@@ -1,6 +1,127 @@
 """
-查询性能监控服务 - 统一接口
-提供查询性能监控的统一接口和全局实例
+# [QUERY_PERFORMANCE_MONITOR] 查询性能监控服务
+
+## [HEADER]
+**文件名**: query_performance_monitor.py
+**职责**: 提供查询性能监控的统一接口，收集查询指标、系统资源、告警管理
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 查询性能监控服务
+
+## [INPUT]
+- **query_id: str** - 查询ID
+- **tenant_id: str** - 租户ID
+- **query_type: str** - 查询类型
+- **alert_type: AlertType** - 告警类型
+- **message: str** - 告警消息
+- **metric_value: float** - 指标值
+- **threshold_value: float** - 阈值
+- **hours: int** - 时间范围（小时）
+- **limit: int** - 限制数量
+- **format: str** - 导出格式（json/csv）
+- **history_size: int** - 历史记录大小
+- **slow_query_threshold: float** - 慢查询阈值（秒）
+- **max_alerts: int** - 最大告警数量
+
+## [OUTPUT]
+- **PerformanceAlert**: 性能告警对象
+- **QueryMetrics**: 查询指标对象
+- **SystemMetrics**: 系统指标对象
+- **Dict[str, Any]**: 实时统计信息
+  - total_queries, queries_per_second, cache_hit_rate, error_rate, slow_queries
+  - avg_execution_time, uptime_hours, memory_usage_mb, cpu_usage_percent
+- **Dict[str, Any]**: 租户性能报告
+- **List[Dict[str, Any]]**: 慢查询列表
+- **Dict[str, Any]**: 查询类型性能统计
+- **List[Dict]]**: 性能警告列表
+- **str**: 导出的指标数据（JSON/CSV格式）
+- **Dict[str, Any]**: 健康状态
+  - status: healthy/degraded/unhealthy
+  - health_score: 0-100
+  - issues: 问题列表
+
+**上游依赖** (已读取源码):
+- 无（独立监控服务）
+
+**下游依赖** (需要反向索引分析):
+- [llm_service.py](./llm_service.py) - LLM服务记录查询性能
+- [query_optimization_service.py](./query_optimization_service.py) - 查询优化服务使用性能数据
+- API端点展示监控指标和健康状态
+
+**调用方**:
+- LLM服务监控查询性能
+- 查询优化服务分析慢查询
+- API端点提供监控数据
+- 运维脚本获取健康状态
+
+## [STATE]
+- **告警级别**: AlertLevel枚举（INFO, WARNING, CRITICAL）
+- **告警类型**: AlertType枚举（SLOW_QUERY, HIGH_ERROR_RATE, HIGH_MEMORY, HIGH_CPU, LOW_CACHE_HIT, CONNECTION_POOL）
+- **告警阈值**: thresholds字典
+  - SLOW_QUERY: 5.0秒
+  - HIGH_ERROR_RATE: 10.0%
+  - HIGH_MEMORY: 85.0%
+  - HIGH_CPU: 90.0%
+  - LOW_CACHE_HIT: 30.0%
+  - CONNECTION_POOL: 80.0%
+- **告警管理器**: AlertManager
+  - alerts: deque（最多500条）
+  - active_alerts: 字典（活跃告警）
+  - _alert_counter: 告警计数器
+  - _lock: 线程锁
+- **系统资源监控器**: SystemResourceMonitor
+  - metrics_history: deque（最多1000条）
+  - process: psutil.Process实例
+  - _running: 监控运行状态
+  - _monitor_task: 后台监控任务
+- **查询性能监控器**: QueryPerformanceMonitor
+  - query_history: deque（最多10000条）
+  - tenant_history: 字典（租户历史）
+  - query_type_stats: 字典（查询类型统计）
+  - stats: 实时统计字典（total_queries, cache_hits, errors, slow_queries, start_time）
+  - alert_manager: 告警管理器
+  - resource_monitor: 资源监控器
+  - _lock: 线程锁
+- **后台检查**: _background_check（30秒间隔）
+  - 收集系统指标
+  - 检查资源告警（内存、CPU）
+  - 检查错误率
+  - 生成/解决告警
+- **上下文管理器**: monitor_query（查询监控）
+- **健康评分**: 基于错误率、响应时间、资源使用率、活跃告警
+
+## [SIDE-EFFECTS]
+- **psutil操作**: psutil.virtual_memory()获取内存，psutil.cpu_percent()获取CPU，psutil.disk_usage()获取磁盘
+- **进程信息**: psutil.Process()获取当前进程信息
+- **线程/连接数**: process.num_threads(), len(process.connections())
+- **时间测量**: time.time()计算执行时间
+- **内存测量**: psutil.Process().memory_info().rss / 1024 / 1024计算内存使用（MB）
+- **哈希计算**: hashlib.md5(query_type.encode('utf-8')).hexdigest()计算查询哈希
+- **统计计算**: statistics.mean/max/min计算平均值、最大值、最小值
+- **百分比计算**: (cache_hits / total_queries * 100)计算缓存命中率
+- **QPS计算**: total_queries / uptime计算每秒查询数
+- **条件判断**: 检查阈值（metric_value >= threshold * 1.5判断CRITICAL）
+- **上下文管理器**: @asynccontextmanager装饰monitor_query
+- **异常处理**: try-except捕获异常，设置metrics.error = True
+- **try-finally**: 确保记录查询指标
+- **deque操作**: query_history.append(metrics)添加历史
+- **列表推导式**: [m for m in tenant_queries if m.timestamp >= cutoff_time]过滤历史
+- **排序**: slow.sort(key=lambda x: x.total_time, reverse=True)排序慢查询
+- **百分位数**: sorted(times)[int(len(times) * 0.95)]计算P95
+- **JSON序列化**: json.dumps(data, indent=2, ensure_ascii=False)导出JSON
+- **健康评分**: health_score -= 20/15/5根据问题扣分
+- **字典操作**: stats['total_queries'] += 1更新统计
+- **异步任务**: asyncio.create_task(monitor_loop())创建后台监控
+- **线程锁**: with self._lock保护共享数据
+- **异常处理**: try-except捕获所有异常，记录日志
+- **日志记录**: logger.warning记录告警，logger.error记录错误
+- **全局单例**: query_perf_monitor全局实例
+
+## [POS]
+**路径**: backend/src/app/services/query_performance_monitor.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 无外部依赖（仅psutil）
 """
 
 import time

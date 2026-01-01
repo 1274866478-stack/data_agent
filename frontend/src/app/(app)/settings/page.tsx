@@ -1,3 +1,43 @@
+/**
+ * # SettingsPage 系统设置页面
+ *
+ * ## [MODULE]
+ * **文件名**: app/(app)/settings/page.tsx
+ * **职责**: 提供租户系统设置界面，包括显示名称、时区、语言、主题、通知和存储配额配置
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - 无直接 Props（页面组件）
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 系统设置页面，包含设置表单和保存功能
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [@/components/ui/card](../../components/ui/card.tsx) - 卡片容器组件
+ * - [@/components/ui/button](../../components/ui/button.tsx) - 按钮组件
+ * - [@/components/ui/input](../../components/ui/input.tsx) - 输入框组件
+ * - [@/components/ui/label](../../components/ui/label.tsx) - 标签组件
+ * - [@/components/ui/switch](../../components/ui/switch.tsx) - 开关组件
+ * - [lucide-react](https://lucide.dev) - 图标库
+ *
+ * **下游依赖**:
+ * - 无（页面是用户交互入口点）
+ *
+ * ## [STATE]
+ * - **settings: TenantSettings** - 当前设置对象，包含 display_name, timezone, language, theme, email_notifications, system_alerts, storage_quota_mb
+ * - **loading: boolean** - 加载状态
+ * - **error: string | null** - 错误信息
+ * - **success: boolean** - 保存成功状态
+ *
+ * ## [SIDE-EFFECTS]
+ * - **设置加载**: 组件挂载时调用 loadSettings() 获取当前设置（TODO: 待实现API）
+ * - **设置保存**: 调用 handleSave() 保存设置更改（TODO: 待实现API）
+ * - **成功提示**: 保存成功后显示3秒成功提示
+ * - **错误处理**: 显示和清除错误信息
+ * - **字段更新**: 实时更新设置对象的状态
+ */
 'use client'
 
 import { useState, useEffect } from 'react'

@@ -1,3 +1,49 @@
+/**
+ * # BulkOperations 批量操作组件
+ *
+ * ## [MODULE]
+ * **文件名**: BulkOperations.tsx
+ * **职责**: 提供数据源的批量选择、删除和导出功能，支持全选、反选和批量确认
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - **items: SearchResult[]** - 可操作的数据源列表
+ * - **selectedItems: string[]** - 已选中的项目 ID 列表
+ * - **onSelectionChange: (selectedItems: string[]) => void** - 选中状态变化回调
+ * - **onRefresh?: () => void** - 刷新数据回调（可选）
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 批量操作界面，包含选择框、批量操作栏和确认对话框
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [@/store/dashboardStore](../../store/dashboardStore.ts) - 提供批量删除功能和状态管理
+ * - [@/components/ui/button](../ui/button.tsx) - 按钮组件
+ * - [@/components/ui/badge](../ui/badge.tsx) - 状态徽章组件
+ * - [@/components/ui/checkbox](../ui/checkbox.tsx) - 复选框组件
+ * - [@/components/ui/alert-dialog](../ui/alert-dialog.tsx) - 确认对话框组件
+ * - [@/components/ui/dropdown-menu](../ui/dropdown-menu.tsx) - 下拉菜单组件
+ * - [lucide-react](https://lucide.dev) - 图标库
+ *
+ * **下游依赖**:
+ * - [DataSourceList.tsx](./DataSourceList.tsx) - 在数据源列表中集成批量操作
+ * - [../../app/(app)/data-sources/page.tsx](../../app/(app)/data-sources/page.tsx) - 在数据源页面中使用
+ *
+ * ## [STATE]
+ * - **selectedItems: string[]** - 当前选中的项目 ID 列表
+ * - **showDeleteDialog: boolean** - 是否显示批量删除确认对话框
+ * - **isLoading: boolean** - 批量操作是否正在进行（从 store 获取）
+ * - **error: string | null** - 错误信息（从 store 获取）
+ * - **activeTab: 'databases' | 'documents'** - 当前活动标签页（从 store 获取）
+ *
+ * ## [SIDE-EFFECTS]
+ * - **批量删除**: 调用 bulkDelete() API 执行批量删除操作
+ * - **选择同步**: 调用 onSelectionChange() 同步选中状态到父组件
+ * - **错误处理**: 显示和清除操作错误信息
+ * - **数据刷新**: 可选地调用 onRefresh() 刷新数据列表
+ * - **用户交互**: 处理全选、反选、单项选择、批量删除确认等操作
+ */
 'use client'
 
 import { useState } from 'react'

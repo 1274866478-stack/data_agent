@@ -1,6 +1,56 @@
 """
-推理API端点
-提供智能查询理解、推理分析和答案生成服务
+# 推理API端点
+
+## [HEADER]
+**文件名**: reasoning.py
+**职责**: 提供智能查询理解、推理分析、答案生成、对话管理和使用量监控的RESTful API
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本
+
+## [INPUT]
+- query: str - 用户查询文本
+- context: Optional[List[Dict[str, Any]]] - 上下文信息
+- data_sources: Optional[List[Dict[str, Any]]] - 数据源信息
+- conversation_id: Optional[str] - 对话ID
+- reasoning_mode: Optional[str] - 推理模式
+- provider: Optional[str] - LLM提供商（默认zhipu）
+- model: Optional[str] - 模型名称
+- stream: bool - 是否启用流式输出
+- period: str - 统计周期（daily, weekly, monthly）
+
+## [OUTPUT]
+- 查询分析结果: Dict[str, Any]（包含意图、实体、关键词、复杂度）
+- 推理结果: ReasoningResponse（包含答案、推理步骤、置信度、质量分数）
+- 流式推理响应: StreamingResponse（SSE格式）
+- 对话ID: Dict[str, str]
+- 对话历史: Dict[str, Any]
+- 使用量统计: Dict[str, Any]
+- 使用量限制信息: Dict[str, Any]
+- 健康检查状态: Dict[str, Any]
+
+## [LINK]
+**上游依赖**:
+- [../../core/auth.py](../../core/auth.py) - get_current_user_with_tenant依赖注入
+- [../../services/reasoning_service.py](../../services/reasoning_service.py) - reasoning_engine推理引擎
+- [../../services/conversation_service.py](../../services/conversation_service.py) - conversation_manager对话管理器
+- [../../services/usage_monitoring_service.py](../../services/usage_monitoring_service.py) - usage_monitoring_service使用量监控
+- [../../data/models.py](../../data/models.py) - Tenant模型
+
+**下游依赖**:
+- 无（API端点为最外层）
+
+**调用方**:
+- 前端智能问答界面
+- 对话式分析工具
+- AI推理系统
+- 使用量统计仪表板
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/reasoning.py
+**模块层级**: Level 3（API端点层）
+**依赖深度**: 2 层（依赖于services和core层）
 """
 
 import json

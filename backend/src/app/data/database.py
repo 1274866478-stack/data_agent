@@ -1,6 +1,47 @@
 """
-数据库连接配置模块
-PostgreSQL 连接池配置、会话管理
+# [DATABASE] 数据库连接配置
+
+## [HEADER]
+**文件名**: database.py
+**职责**: PostgreSQL连接池配置、会话管理和数据库连接状态检查
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 实现数据库连接池和会话管理
+
+## [INPUT]
+- **database_url: str** - 数据库连接字符串（从配置中获取）
+- **settings: Settings** - 配置对象（连接池参数等）
+- **pool_size: int** - 连接池大小
+- **max_overflow: int** - 连接池最大溢出连接数
+- **pool_timeout: int** - 获取连接超时时间（秒）
+- **pool_recycle: int** - 连接回收时间（秒）
+
+## [OUTPUT]
+- **engine: Engine** - SQLAlchemy数据库引擎实例
+- **SessionLocal: sessionmaker** - 数据库会话工厂
+- **Base: DeclarativeMeta** - ORM基础模型类
+- **db: Session** - 数据库会话实例（生成器）
+- **connection_status: bool** - 数据库连接状态（True/False）
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [../core/config.py](../core/config.py) - Settings类，数据库连接配置
+
+**下游依赖** (已读取源码):
+- [./models.py](./models.py) - 数据模型定义，继承Base
+- [../api/v1/endpoints/*.py](../api/v1/endpoints/) - API端点使用get_db()依赖注入
+- [../main.py](../main.py) - 应用启动时检查数据库连接
+
+**调用方**:
+- 所有API端点 - 使用get_db()获取数据库会话
+- 数据模型 - 继承Base类
+- 健康检查端点 - 使用check_database_connection()
+
+## [POS]
+**路径**: backend/src/app/data/database.py
+**模块层级**: Level 2 - 数据层核心
+**依赖深度**: 直接依赖 config.py；被所有需要数据库操作的模块依赖
 """
 
 from sqlalchemy import create_engine, text

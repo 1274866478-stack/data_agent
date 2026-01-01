@@ -1,6 +1,100 @@
 """
-Agent服务模块
-集成 LangGraph SQL Agent 功能到后端API
+# [AGENT_SERVICE] Agent集成服务
+
+## [HEADER]
+**文件名**: agent_service.py
+**职责**: 集成LangGraph SQL Agent到后端API，提供Agent响应转换、图表处理、文件/数据库智能路由和幻觉检测功能
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - Agent集成服务
+
+## [INPUT]
+- **question: str** - 用户自然语言问题
+- **thread_id: str** - 会话线程ID
+- **database_url: Optional[str]** - 数据库连接URL或文件路径（xlsx, csv, /uploads/, /data/等）
+- **verbose: bool** - 是否显示详细输出（默认False）
+- **enable_echarts: bool** - 是否启用ECharts图表生成（默认True）
+- **agent_response: VisualizationResponse** - Agent返回的响应对象
+- **query_id: str** - 查询ID
+- **tenant_id: str** - 租户ID
+- **original_query: str** - 原始查询文本
+- **processing_time_ms: int** - 处理时间（毫秒）
+- **execution_time: float** - 执行时间（秒）
+- **chart_path: str** - 图表文件路径
+- **answer: str** - Agent返回的answer文本
+
+## [OUTPUT]
+- **VisualizationResponse**: run_agent_query返回Agent响应对象
+  - success: bool - 查询是否成功
+  - sql: str - 生成的SQL语句
+  - answer: str - 自然语言解释
+  - data: QueryResult - 查询结果数据
+  - chart: ChartConfig - 图表配置
+  - echarts_option: Dict - ECharts配置选项
+  - metadata: Dict - 元数据（幻觉检测标志等）
+- **Dict[str, Any]**: convert_agent_response_to_query_response返回QueryResponseV3格式
+  - query_id, tenant_id, original_query
+  - generated_sql, results, row_count
+  - execution_result: {success, data_columns, chart_type, chart_title, chart_data, echarts_option}
+  - explanation, processing_steps, validation_result
+  - metadata: {hallucination_detected, hallucination_reason}
+- **Dict[str, Any]**: convert_agent_response_to_chat_response返回ChatQueryResponse格式
+  - answer, sources, reasoning, confidence, execution_time
+  - sql, data: {columns, rows, row_count}
+  - chart: {chart_type, title, x_field, y_field, chart_image, chart_data}
+  - echarts_option: Dict
+- **Optional[str]**: extract_chart_path_from_answer返回提取的图表路径或URL
+- **Optional[str]**: load_chart_as_base64返回Base64编码的图片数据（data URI格式）
+- **bool**: is_agent_available返回Agent是否可用
+
+**上游依赖** (已读取源码):
+- [Agent/models.py](../../Agent/models.py) - Agent数据模型（VisualizationResponse）
+- [Agent/sql_agent.py](../../Agent/sql_agent.py) - 旧版Agent（run_agent）
+- [Agent/app/services/agent_service.py](../../Agent/app/services/agent_service.py) - 新版Agent（支持enable_echarts）
+- [Agent/config.py](../../Agent/config.py) - Agent配置
+
+**下游依赖** (需要反向索引分析):
+- [../api/v1/endpoints/query.py](../api/v1/endpoints/query.py) - 查询API端点
+- [../api/v1/endpoints/llm.py](../api/v1/endpoints/llm.py) - LLM API端点
+- [llm_service.py](./llm_service.py) - LLM服务（Agent查询集成）
+
+**调用方**:
+- 自然语言查询API
+- 聊天对话中的查询功能
+- Agent查询健康检查
+
+## [STATE]
+- **Agent路径管理**: 动态添加Agent目录到sys.path
+- **版本兼容**: 支持新旧两个版本Agent（_use_new_agent标志）
+  - 新版本: 支持enable_echarts参数，返回{response: VisualizationResponse}
+  - 旧版本: 不支持enable_echarts，直接返回VisualizationResponse
+- **降级机制**: Agent导入失败时设置_agent_available=False，不阻塞应用启动
+- **文件/数据库路由**: 早期检测database_url类型（文件扩展名、本地路径、数据库协议）
+- **幻觉检测**: 三道防线
+  1. metadata.hallucination_detected标志
+  2. answer字段假数据模式二次检查（正则匹配测试名）
+  3. safe_get安全属性访问（防止Pydantic/字典访问错误）
+- **Prompt注入**: 根据路由模式注入不同的系统指令（文件模式禁用SQL工具）
+- **配置临时覆盖**: 运行时临时覆盖Agent的database_url配置（查询后恢复）
+
+## [SIDE-EFFECTS]
+- **路径操作**: 修改sys.path插入Agent目录
+- **模块导入**: 动态导入Agent模块（sql_agent, models, config, agent_service）
+- **文件I/O**: load_chart_as_base64读取图表文件
+- **Base64编码**: 图表文件转换为Base64 data URI
+- **正则匹配**: 提取图表路径、检测假数据模式、提取SQL表名
+- **配置修改**: 临时覆盖Agent config.database_url（查询后恢复原值）
+- **Prompt工程**: 注入系统指令到用户问题（enhanced_question）
+- **异常处理**: 大量try-except保护Agent调用和属性访问
+- **日志记录**: 详细的路由、配置、查询执行日志
+- **类型转换**: Pydantic模型转字典（metadata, chart等对象的.dict()或.model_dump()）
+- **URL清理**: 文件模式下清理database_url防止Postgres工具崩溃
+
+## [POS]
+**路径**: backend/src/app/services/agent_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 跨模块依赖Agent目录（外部依赖）
 """
 import sys
 import os

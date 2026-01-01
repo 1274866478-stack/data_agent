@@ -1,3 +1,100 @@
+/**
+ * [HEADER]
+ * 用户管理页面 - Data Agent V4 User Management
+ * 提供租户内用户的查看、搜索、邀请和管理功能
+ *
+ * [MODULE]
+ * 模块类型: Next.js 14 App Router Page Component
+ * 所属功能: 用户与权限管理
+ * 技术栈: React, TypeScript, Lucide Icons
+ *
+ * [INPUT]
+ * - 无路由参数
+ * - 无依赖的全局状态 (当前使用模拟数据)
+ * - 未来将接入后端API:
+ *   - GET /api/v1/users?tenant_id={id} - 获取用户列表
+ *   - POST /api/v1/users/invite - 邀请新用户
+ *   - PUT /api/v1/users/{id} - 更新用户信息
+ *   - DELETE /api/v1/users/{id} - 删除用户
+ *   - POST /api/v1/users/{id}/role - 修改用户角色
+ *
+ * [OUTPUT]
+ * - 渲染内容:
+ *   - 统计卡片 (总用户数、管理员数量)
+ *   - 搜索栏 (实时搜索过滤)
+ *   - 用户列表 (头像、姓名、邮箱、角色、操作按钮)
+ *   - 邀请用户按钮
+ * - 用户交互:
+ *   - 搜索用户 (按邮箱、姓名搜索)
+ *   - 邀请新用户 (功能待实现)
+ *   - 编辑用户信息 (按钮存在, 功能待实现)
+ *   - 加载状态显示
+ *   - 错误重试机制
+ *
+ * [LINK]
+ * - 依赖组件:
+ *   - @/components/ui/card - Card组件族
+ *   - @/components/ui/button - Button组件
+ *   - @/components/ui/input - Input组件 (搜索框)
+ * - 图标库:
+ *   - lucide-react - Users, UserPlus, Search, Mail, Shield, AlertCircle
+ * - 路由:
+ *   - /users - 当前页面路由
+ * - 后端API (规划中):
+ *   - /api/v1/users - 用户管理端点
+ *   - /api/v1/tenants/{id}/users - 租户用户管理
+ *
+ * [POS]
+ * - 文件路径: frontend/src/app/(app)/users/page.tsx
+ * - 访问URL: http://localhost:3000/users
+ * - 布局位置: (app) 路由组, 继承主应用布局
+ * - 导航入口: 侧边栏 "用户管理" 菜单项
+ * - 权限要求: 需要管理员或所有者权限
+ *
+ * [STATE]
+ * - 局部状态:
+ *   - users: User[] - 用户列表
+ *   - loading: boolean - 加载状态
+ *   - error: string | null - 错误信息
+ *   - searchQuery: string - 搜索关键词
+ * - 衍生数据:
+ *   - filteredUsers - 根据搜索关键词过滤的用户列表
+ * - 数据接口:
+ *   - User - 用户数据结构
+ *     - id: string - 用户ID
+ *     - email: string - 邮箱地址
+ *     - first_name: string - 名
+ *     - last_name: string - 姓
+ *     - role: string - 角色 (admin, user)
+ *     - is_active: boolean - 激活状态
+ *     - created_at: string - 创建时间
+ *
+ * [PROTOCOL]
+ * - 初始化流程:
+ *   1. 组件挂载时调用 loadUsers()
+ *   2. 显示加载状态 (spinner + 文字提示)
+ *   3. 加载成功后渲染用户列表
+ * - 数据加载:
+ *   - 当前状态: 使用模拟数据 (mockUsers)
+ *   - TODO: 替换为真实API调用
+ *   - 错误处理: 显示错误卡片, 提供重试按钮
+ * - 搜索功能:
+ *   - 实时过滤: 监听 searchQuery 变化
+ *   - 搜索范围: 邮箱、姓名
+ *   - 大小写不敏感
+ * - 用户操作:
+ *   - 编辑用户: 按钮存在但功能待实现
+ *   - 邀请用户: 按钮存在但功能待实现
+ * - 角色显示:
+ *   - admin: 紫色标签 "管理员"
+ *   - user: 灰色标签 "普通用户"
+ * - 空状态处理:
+ *   - 无用户时显示空列表
+ * - 响应式布局:
+ *   - 统计卡片: 移动端1列, 桌面端3列
+ *   - 用户列表: 单列卡片布局
+ */
+
 'use client'
 
 import { useState, useEffect } from 'react'

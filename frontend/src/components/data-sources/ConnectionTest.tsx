@@ -1,3 +1,45 @@
+/**
+ * # ConnectionTest 数据库连接测试组件
+ *
+ * ## [MODULE]
+ * **文件名**: ConnectionTest.tsx
+ * **职责**: 提供数据库连接字符串的测试功能，验证连接有效性、响应时间和性能指标
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - **connectionString?: string** - 初始连接字符串
+ * - **dbType?: string** - 数据库类型，默认为 'postgresql'
+ * - **onTestComplete?: (result: TestResult) => void** - 测试完成回调函数
+ * - **showAdvanced?: boolean** - 是否显示高级信息，默认为 true
+ * - **compact?: boolean** - 是否使用紧凑模式，默认为 false
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 数据库连接测试界面，包含输入框、测试按钮和结果显示
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [@/store/dataSourceStore](../../store/dataSourceStore.ts) - 提供测试连接功能和状态管理
+ * - [@/components/ui/button](../ui/button.tsx) - 按钮组件
+ * - [@/components/ui/card](../ui/card.tsx) - 卡片容器组件
+ * - [@/components/ui/badge](../ui/badge.tsx) - 状态徽章组件
+ * - [@/components/ui/loading-spinner](../ui/loading-spinner.tsx) - 加载动画组件
+ *
+ * **下游依赖**:
+ * - [DataSourceForm.tsx](./DataSourceForm.tsx) - 在数据源表单中使用连接测试功能
+ *
+ * ## [STATE]
+ * - **connectionString: string** - 当前输入的连接字符串
+ * - **selectedDbType: string** - 选中的数据库类型
+ * - **testResult: TestResult | null** - 连接测试结果，包含成功状态、响应时间、错误信息等
+ * - **isTesting: boolean** - 是否正在执行测试
+ * - **showDetails: boolean** - 是否显示详细信息
+ *
+ * ## [SIDE-EFFECTS]
+ * - **API调用**: 调用 testConnection API 执行实际的数据库连接测试
+ * - **状态更新**: 更新本地测试结果状态，并可选地通过回调通知父组件
+ * - **用户交互**: 处理用户输入、数据库类型切换、测试按钮点击、详情展开/折叠等操作
+ */
 'use client'
 
 import { useState } from 'react'

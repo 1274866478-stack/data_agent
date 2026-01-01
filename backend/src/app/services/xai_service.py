@@ -1,6 +1,83 @@
 """
-XAI (可解释性AI) 服务
-提供推理过程透明化、答案溯源、决策树可视化等可解释性功能
+# [XAI_SERVICE] XAI (可解释性AI) 服务
+
+## [HEADER]
+**文件名**: xai_service.py
+**职责**: 提供AI推理过程透明化、答案溯源、决策树可视化等可解释性AI功能
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - XAI可解释性AI服务
+
+## [INPUT]
+- **query: str** - 原始查询
+- **answer: str** - 生成的答案
+- **fusion_result: Optional[FusionResult]** - 融合结果（可选）
+- **reasoning_steps: Optional[List[Any]]** - 推理步骤（可选）
+- **sources: Optional[List[Dict[str, Any]]]** - 数据源信息（可选）
+- **tenant_id: Optional[str]** - 租户ID
+
+## [OUTPUT]
+- **XAIExplanation**: XAI解释结果对象
+  - query, answer: 查询和答案
+  - explanation_steps: List[ExplanationStep] - 解释步骤列表
+  - source_traces: List[SourceTrace] - 源数据追踪列表
+  - decision_tree: Dict[str, DecisionNode] - 决策树
+  - uncertainty_quantification: UncertaintyQuantification - 不确定性量化
+  - alternative_answers: List[AlternativeAnswer] - 替代答案列表
+  - confidence_explanation: Dict[str, Any] - 置信度解释
+  - visualization_data: Dict[str, Any] - 可视化数据
+  - explanation_quality_score: float - 解释质量分数
+
+**上游依赖** (已读取源码):
+- Python标准库: asyncio, dataclasses, datetime, enum, json, logging, re, uuid
+- 项目服务: llm_service（LLM调用）, fusion_service（FusionResult, ConflictInfo）
+
+**下游依赖** (需要反向索引分析):
+- [llm_service.py](./llm_service.py) - LLM服务使用XAI生成解释
+- [agent_service.py](./agent_service.py) - Agent服务使用XAI增强可解释性
+
+**调用方**:
+- RAG-SQL链生成答案后调用XAI生成解释
+- 用户请求答案解释时调用
+- 前端可视化组件使用XAI数据渲染决策树和热力图
+
+## [STATE]
+- **解释类型**: ExplanationType枚举
+  - DATA_SOURCE, REASONING_PROCESS, CONFIDENCE, ALTERNATIVE, UNCERTAINTY, ASSUMPTION
+- **可视化类型**: VisualizationType枚举
+  - DECISION_TREE, EVIDENCE_CHAIN, TIMELINE, CONFIDENCE_HEATMAP, INTERACTIVE_EXPLORER
+- **数据结构**:
+  - ExplanationStep: 解释步骤（step_id, step_number, explanation_type, title, description, evidence, confidence, reasoning, assumptions, limitations）
+  - SourceTrace: 源数据追踪（source_id, source_type, source_name, content_snippet, relevance_score, confidence_contribution, trace_path）
+  - DecisionNode: 决策树节点（node_id, node_type, title, content, confidence, children, parent）
+  - UncertaintyQuantification: 不确定性量化（total_uncertainty, data_uncertainty, model_uncertainty, reasoning_uncertainty, uncertainty_sources, mitigation_suggestions）
+  - AlternativeAnswer: 替代答案（answer_id, title, content, reasoning_differences, confidence_comparison, scenario_description, pros, cons）
+- **解释模板**: explanation_templates字典（6种类型模板）
+- **置信度因素**: confidence_factors列表（6种因素）
+- **不确定性指标**: uncertainty_indicators列表（9个指标）
+- **LLM调用**: 生成替代答案时调用llm_service.chat_completion
+- **质量评分**: explanation_quality_score基于步骤完整性(30%) + 源数据追踪(25%) + 不确定性量化(25%) + 解释深度(20%)
+- **决策树结构**: 根节点(查询理解) → 数据源选择 → 推理过程 → 结论
+
+## [SIDE-EFFECTS]
+- **LLM调用**: llm_service.chat_completion生成替代答案（详细版和简化版）
+- **UUID生成**: str(uuid.uuid4())生成唯一ID
+- **正则匹配**: re.findall(r'\b\w+\b', query)提取关键词，re.split(r'[.!?。！？]', answer)分割句子
+- **字符串操作**: answer[:200] + "..."截断内容，len(query)计算长度
+- **列表推导式**: [complex for indicator in complex_indicators if indicator in query]计算复杂度
+- **字典操作**: defaultdict(int), defaultdict(list)统计冲突类型和策略
+- **时间戳**: datetime.utcnow()生成时间戳
+- **循环累加**: sum(s.get("confidence", 0.5) for s in sources) / len(sources)计算平均置信度
+- **条件判断**: 检查不确定性指标、答案长度决定是否生成替代答案
+- **异常处理**: 所有异步方法都有try-except捕获异常，返回基础解释
+- **字典构建**: 构建决策树节点、可视化数据、置信度解释字典
+- **质量计算**: 基于多个因子加权计算explanation_quality_score
+
+## [POS]
+**路径**: backend/src/app/services/xai_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 依赖llm_service和fusion_service
 """
 
 import logging

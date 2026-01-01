@@ -1,6 +1,41 @@
 """
-Agent Tools - 安全工具包装和自定义工具定义
-包括 SQL 安全执行工具和文件数据源工具
+# Agent Tools - 安全工具包装与自定义工具
+
+## [HEADER]
+**文件名**: tools.py
+**职责**: 定义LangGraph Agent的工具集，包括SQL安全执行、文件分析、数据查询等
+**作者**: Data Agent Team
+**版本**: 1.5.0
+**变更记录**:
+- v1.5.0 (2026-01-01): 增强路径解析和动态文件发现
+- v1.0.0 (2025-12-01): 初始版本，基础工具定义
+
+## [INPUT]
+- SQL查询: str - SELECT查询语句
+- 文件路径: str - Excel/CSV文件路径
+- Pandas查询: str - Python/Pandas分析代码
+- 表名: str - 数据库表名
+
+## [OUTPUT]
+- 查询结果: str - JSON格式的查询返回数据
+- 错误消息: str - 标准化的错误信息
+
+## [LINK]
+**上游依赖**:
+- [minio_client.py](../minio_client.py) - MinIO对象存储服务
+- [path_extractor.py](path_extractor.py) - 路径解析工具
+
+**下游依赖**:
+- [agent_service.py](agent_service.py) - Agent工具注册
+
+**调用方**:
+- LangGraph Agent - MCP工具调用
+- LangChain ToolExecutor - 工具执行器
+
+## [POS]
+**路径**: backend/src/app/services/agent/tools.py
+**模块层级**: Level 3 (Services → Agent → Tools)
+**依赖深度**: 2 层
 """
 import os
 import io

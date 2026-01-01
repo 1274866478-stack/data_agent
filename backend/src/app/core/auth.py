@@ -1,7 +1,44 @@
 """
-API认证中间件模块
-提供API Key和JWT Token认证机制
-支持Clerk托管认证服务集成
+# [AUTH] API认证中间件
+
+## [HEADER]
+**文件名**: auth.py
+**职责**: 提供API Key和JWT Token认证机制，支持Clerk托管认证服务集成，保护API端点安全
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 实现API Key和JWT认证中间件
+
+## [INPUT]
+- **request: Request** - FastAPI请求对象，包含HTTP请求信息
+- **api_key: str** - API密钥（从Authorization header或查询参数获取）
+- **jwt_token: str** - JWT令牌（从Authorization header获取）
+- **settings: Settings** - 配置对象，包含API密钥和JWT公钥配置
+
+## [OUTPUT]
+- **authenticated_request: Request** - 认证成功的请求对象
+- **error_response: JSONResponse** - 认证失败的错误响应（401 Unauthorized）
+- **auth_result: tuple** - 认证结果元组（tenant_id, user_id）
+- **exception: JWTValidationError** - JWT验证失败异常
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [./config.py](./config.py) - Settings类，配置对象（API密钥、JWT公钥等）
+- [./jwt_utils.py](./jwt_utils.py) - JWT工具函数（validate_api_key_and_token, JWTValidationError）
+
+**下游依赖** (已读取源码):
+- [../api/v1/endpoints/](../api/v1/endpoints/) - 使用认证的API端点
+- [../main.py](../main.py) - 应用入口，注册认证中间件
+
+**调用方**:
+- [../api/v1/endpoints/tenants.py](../api/v1/endpoints/tenants.py) - 租户管理端点
+- [../api/v1/endpoints/documents.py](../api/v1/endpoints/documents.py) - 文档管理端点
+- [../api/v1/endpoints/data_sources.py](../api/v1/endpoints/data_sources.py) - 数据源管理端点
+
+## [POS]
+**路径**: backend/src/app/core/auth.py
+**模块层级**: Level 2 - 核心模块
+**依赖深度**: 直接依赖 config.py, jwt_utils.py；被所有需要认证的API端点依赖
 """
 
 from fastapi import Request, status, Depends

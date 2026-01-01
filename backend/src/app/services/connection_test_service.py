@@ -1,6 +1,58 @@
 """
-连接测试服务
-用于测试数据库连接的有效性
+# [CONNECTION_TEST_SERVICE] 连接测试服务
+
+## [HEADER]
+**文件名**: connection_test_service.py
+**职责**: 测试数据库和文件连接的有效性，支持PostgreSQL/MySQL异步测试和MinIO文件验证
+**作者**: Data Agent Team
+**版本**: 1.0.0
+
+## [INPUT]
+- **connection_string: str** - 数据库连接字符串（明文）
+- **db_type: str** - 数据库类型（postgresql, mysql, xlsx, csv, sqlite）
+- **encrypted_connection_string: str** - 加密的连接字符串
+
+## [OUTPUT]
+- **ConnectionTestResult**: 连接测试结果对象
+  - success: bool - 连接是否成功
+  - message: str - 结果消息
+  - response_time_ms: int - 响应时间（毫秒）
+  - details: Dict - 详细信息
+  - error_code: str - 错误代码
+
+**上游依赖** (已读取源码):
+- [./encryption_service.py](./encryption_service.py) - 加密服务
+- [./minio_client.py](./minio_client.py) - MinIO服务
+
+**下游依赖** (需要反向索引分析):
+- [../api/v1/endpoints/data_sources.py](../api/v1/endpoints/data_sources.py) - 数据源API端点
+
+**调用方**:
+- 数据源连接测试API
+- 数据源创建验证
+- 数据源健康检查
+
+## [STATE]
+- **超时配置**: test_timeout=10秒
+- **可选驱动**: asyncpg（异步PostgreSQL）, psycopg2, mysql.connector
+- **错误代码**: DB_CONN_001（连接失败）, DB_CONN_002（认证失败）, DB_CONN_003（数据库不存在）, DB_CONN_004（超时）
+- **正则解析**: PostgreSQL和MySQL连接字符串解析
+- **异步测试**: PostgreSQL使用asyncpg异步连接
+- **线程池执行**: MySQL使用loop.run_in_executor执行同步测试
+
+## [SIDE-EFFECTS]
+- **数据库连接**: asyncpg.connect, mysql.connector.connect
+- **异步操作**: asyncio.wait_for超时控制
+- **MinIO操作**: check_connection, list_files, download_file（文件测试）
+- **线程池操作**: loop.run_in_executor（MySQL同步测试）
+- **查询执行**: SELECT 1测试查询
+- **数据库信息获取**: server_version, database_name, current_user
+- **响应时间计算**: time.time()差值×1000
+
+## [POS]
+**路径**: backend/src/app/services/connection_test_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 直接依赖 encryption_service, minio_client
 """
 
 import logging

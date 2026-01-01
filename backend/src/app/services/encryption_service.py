@@ -1,6 +1,61 @@
 """
-加密服务
-用于敏感数据（如数据库连接字符串）的加密和解密
+# [ENCRYPTION_SERVICE] 加密服务
+
+## [HEADER]
+**文件名**: encryption_service.py
+**职责**: 提供敏感数据（连接字符串）的加密解密服务，支持Fernet对称加密和PBKDF2密钥派生
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 加密服务
+
+## [INPUT]
+- **connection_string: str** - 明文连接字符串
+- **encrypted_connection_string: str** - 加密的连接字符串（Fernet token）
+- **value: str** - 要检查的值
+- **password: str** - 密码（用于密钥派生）
+- **salt: Optional[bytes]** - 盐值（16字节随机数）
+
+## [OUTPUT]
+- **str**: 加密后的连接字符串（encrypt_connection_string）
+- **str**: 解密后的明文连接字符串（decrypt_connection_string）
+- **bool**: 值是否已加密（is_encrypted）
+- **bytes**: 派生的密钥（generate_key_from_password）
+
+**上游依赖** (已读取源码):
+- cryptography.fernet.Fernet - Fernet对称加密
+- cryptography.hazmat.primitives - 哈希和KDF算法
+
+**下游依赖** (需要反向索引分析):
+- [data_source_service.py](./data_source_service.py) - 数据源服务（连接字符串加密）
+- [connection_test_service.py](./connection_test_service.py) - 连接测试服务（解密后测试）
+
+**调用方**:
+- 数据源创建时加密连接字符串
+- Agent查询时解密连接字符串
+- 连接测试时解密连接字符串
+
+## [STATE]
+- **可选依赖**: cryptography导入失败时CRYPTOGRAPHY_AVAILABLE=False，不阻塞应用
+- **密钥来源**: 优先环境变量ENCRYPTION_KEY，其次自动生成（Fernet.generate_key）
+- **密钥格式**: 44字符Base64编码字符串（代表32字节密钥）
+- **密钥验证**: 从环境变量加载时验证Fernet密钥格式
+- **降级策略**: 加密不可用时返回明文（记录警告）
+- **开发模式**: 开发环境记录生成的密钥到日志（便于添加到.env）
+
+## [SIDE-EFFECTS]
+- **环境变量读取**: os.getenv("ENCRYPTION_KEY")
+- **密钥生成**: Fernet.generate_key()（环境变量未配置时）
+- **加密操作**: Fernet.encrypt（UTF-8编码 → Base64 token）
+- **解密操作**: Fernet.decrypt（Base64 token → UTF-8解码）
+- **日志记录**: 开发环境记录生成的密钥（warning级别）
+- **Base64解码**: is_encrypted中尝试验证Base64格式
+- **异常抛出**: 空字符串、加密/解密失败时抛出ValueError/RuntimeError
+
+## [POS]
+**路径**: backend/src/app/services/encryption_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 外部依赖cryptography库
 """
 
 import base64

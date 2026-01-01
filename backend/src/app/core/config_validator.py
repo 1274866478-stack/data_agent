@@ -1,6 +1,100 @@
 """
-配置验证模块
-验证所有外部服务的连接状态和配置完整性
+# [CONFIG VALIDATOR] 配置验证模块
+
+## [HEADER]
+**文件名**: config_validator.py
+**职责**: 验证所有外部服务的连接状态和配置完整性 - 支持安全检查、服务连通性验证、环境变量验证
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 配置验证模块
+
+## [INPUT]
+### 类初始化参数
+- **ConfigValidator.__init__()**: 无参数
+
+### 验证方法参数
+- **validate_secure_defaults()**: 无参数
+- **validate_key_strength()**: 无参数
+- **validate_security_configuration()**: 无参数
+- **validate_database_connection()**: 无参数（从settings读取database_url）
+- **validate_minio_connection()**: 无参数（从settings读取minio配置）
+- **validate_chromadb_connection()**: 无参数（从settings读取chroma配置）
+- **validate_zhipu_api()**: 无参数（从settings读取zhipuai_api_key）
+- **validate_required_env_vars()**: 无参数（从settings读取环境变量）
+- **validate_all_configs()**: 无参数
+
+### 便捷函数参数
+- **validate_database()**: 无参数
+- **validate_minio()**: 无参数
+- **validate_chromadb()**: 无参数
+- **validate_zhipu()**: 无参数
+- **validate_all()**: 无参数
+- **validate_security()**: 无参数
+- **validate_defaults()**: 无参数
+- **validate_key_strength()**: 无参数
+
+## [OUTPUT]
+### ValidationResult 类
+- **service_name: str** - 服务名称
+- **success: bool** - 验证是否成功
+- **message: str** - 验证结果消息
+- **details: Dict[str, Any]** - 验证详情（错误信息、配置值等）
+- **timestamp: float** - 验证时间戳
+- **to_dict()**: 转换为字典格式
+
+### ConfigValidator 类返回值
+- **validate_secure_defaults()**: ValidationResult - 安全默认值验证结果
+- **validate_key_strength()**: ValidationResult - 密钥强度验证结果
+- **validate_security_configuration()**: ValidationResult - 综合安全配置验证结果
+- **validate_database_connection()**: ValidationResult - 数据库连接验证结果
+- **validate_minio_connection()**: ValidationResult - MinIO连接验证结果
+- **validate_chromadb_connection()**: ValidationResult - ChromaDB连接验证结果
+- **validate_zhipu_api()**: ValidationResult - 智谱API验证结果
+- **validate_required_env_vars()**: ValidationResult - 环境变量验证结果
+- **validate_all_configs()**: Dict[str, Any] - 全面配置验证摘要
+  - **overall_status: str** - 'success' | 'partial_success' | 'failed' | 'security_issues'
+  - **total_services: int** - 总服务数
+  - **successful: int** - 成功服务数
+  - **failed: int** - 失败服务数
+  - **security_issues: int** - 安全问题数
+  - **results: List[Dict]** - 所有验证结果详情
+  - **security_alert: bool** - 是否有安全警告
+  - **security_message: str** - 安全消息
+
+### 全局便捷函数返回值
+- **validate_database()**: ValidationResult - 数据库连接验证
+- **validate_minio()**: ValidationResult - MinIO连接验证
+- **validate_chromadb()**: ValidationResult - ChromaDB连接验证
+- **validate_zhipu()**: ValidationResult - 智谱API验证
+- **validate_all()**: Dict[str, Any] - 所有配置验证摘要
+- **validate_security()**: ValidationResult - 安全配置验证
+- **validate_defaults()**: ValidationResult - 安全默认值验证
+- **validate_key_strength()**: ValidationResult - 密钥强度验证
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [src/app/core/config.py](./config.py) - 应用配置（settings对象）
+- [src/app/services/zhipu_client.py](../services/zhipu_client.py) - 智谱AI服务（zhipu_service）
+- [src/app/core/config_audit.py](./config_audit.py) - 配置审计（log_config_change函数）
+
+**外部依赖**:
+- [psycopg2](https://www.psycopg.org/) - PostgreSQL数据库连接库
+- [minio](https://github.com/minio/minio-py) - MinIO Python SDK
+- [chromadb](https://www.trychroma.com/) - ChromaDB向量数据库客户端
+
+**下游依赖** (已读取源码):
+- [src/app/api/v1/endpoints/config.py](../api/v1/endpoints/config.py) - API配置端点调用
+- [src/app/main.py](../main.py) - 应用启动时配置验证
+
+**调用方**:
+- [src/app/api/v1/endpoints/config.py](../api/v1/endpoints/config.py) - API端点调用各个验证方法
+- [src/app/main.py](../main.py) - 应用生命周期管理中调用validate_all_configs()
+
+## [POS]
+**路径**: backend/src/app/core/config_validator.py
+**模块层级**: Level 3（Backend → src/app → core）
+**依赖深度**: 直接依赖 1 层（config.py, zhipu_client.py, config_audit.py）
 """
 
 import asyncio

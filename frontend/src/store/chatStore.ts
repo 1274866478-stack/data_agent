@@ -1,3 +1,78 @@
+/**
+ * # [CHAT_STORE] 聊天状态管理Store
+ *
+ * ## [MODULE]
+ * **文件名**: chatStore.ts
+ * **职责**: 管理聊天会话、消息历史、流式响应控制、离线缓存和同步，集成Zustand、API客户端和消息缓存服务
+ *
+ * ## [INPUT]
+ * Props (无 - Zustand Store):
+ * - 从messageCacheService恢复缓存数据
+ * - 从localStorage恢复持久化数据
+ * - 接收用户输入和数据源选择
+ *
+ * ## [OUTPUT]
+ * Store:
+ * - **sessions: ChatSession[]** - 聊天会话列表
+ * - **currentSession: ChatSession | null** - 当前活跃会话
+ * - **isLoading: boolean** - 加载状态
+ * - **isTyping: boolean** - AI输入状态
+ * - **error: string | null** - 错误信息
+ * - **isOnline: boolean** - 在线状态
+ * - **isSyncing: boolean** - 同步状态
+ * - **streamingStatus: StreamingStatus** - 流式响应状态
+ * - **currentAbortController: AbortController | null** - 流式取消控制器
+ * - **streamingMessageId: string | null** - 当前流式消息ID
+ * - **stats: object** - 统计信息
+ * Actions:
+ * - createSession(title) - 创建新会话
+ * - switchSession(sessionId) - 切换会话
+ * - deleteSession(sessionId) - 删除会话
+ * - deleteSessions(sessionIds) - 批量删除会话
+ * - updateSessionTitle(sessionId, title) - 更新会话标题
+ * - searchSessions(keyword) - 搜索会话
+ * - sendMessage(content, dataSourceIds, useStream) - 发送消息
+ * - addMessage(message) - 添加消息
+ * - updateMessage(messageId, updates) - 更新消息
+ * - deleteMessage(messageId) - 删除消息
+ * - clearHistory(sessionId) - 清空历史
+ * - stopStreaming() - 停止流式响应
+ * - loadFromCache() - 从缓存加载
+ * - syncPendingMessages() - 同步待发送消息
+ * - clearCache() - 清空缓存
+ * - loadFromStorage() - 从本地存储加载
+ * - saveToStorage() - 保存到本地存储
+ *
+ * **上游依赖**:
+ * - [zustand](https://github.com/pmndrs/zustand) - 状态管理库
+ * - [zustand/middleware](https://github.com/pmndrs/zustand#devtools) - devtools中间件
+ * - [../lib/api-client.ts](../lib/api-client.ts) - API客户端（api, apiClient, 类型定义）
+ * - [../types/chat.ts](../types/chat.ts) - 聊天类型定义（ProcessingStep, StreamCallbacks）
+ * - [../services/messageCacheService.ts](../services/messageCacheService.ts) - 消息缓存服务
+ *
+ * **下游依赖**:
+ * - 无（Store是叶子状态管理模块）
+ *
+ * **调用方**:
+ * - [../components/chat/ChatInterface.tsx](../components/chat/ChatInterface.tsx) - 聊天界面组件
+ * - [../components/chat/MessageList.tsx](../components/chat/MessageList.tsx) - 消息列表组件
+ * - [../components/chat/MessageInput.tsx](../components/chat/MessageInput.tsx) - 消息输入组件
+ *
+ * ## [STATE]
+ * - **会话管理**: 多会话支持，会话切换，会话搜索
+ * - **消息管理**: 消息增删改查，元数据扩展
+ * - **流式控制**: 流式响应状态跟踪，取消机制，回调处理
+ * - **离线支持**: 离线消息缓存，在线自动同步
+ * - **持久化策略**: localStorage存储会话和消息
+ *
+ * ## [SIDE-EFFECTS]
+ * - localStorage操作 (读写data-agent-chat-store)
+ * - IndexedDB操作 (messageCacheService缓存)
+ * - API调用 (发送消息，查询历史)
+ * - 网络状态监听 (online/offline事件)
+ * - 定时同步任务 (每30秒同步待发送消息)
+ */
+
 import { create } from 'zustand'
 import { devtools, subscribeWithSelector } from 'zustand/middleware'
 import { api, ChatQueryRequest, ChatCompletionRequest, StreamEvent } from '@/lib/api-client'

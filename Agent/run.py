@@ -1,6 +1,60 @@
 """
-Simple runner script for SQL Agent
-Supports both standalone mode and backend integration mode
+# [RUN] Agent启动脚本
+
+## [HEADER]
+**文件名**: run.py
+**职责**: SQL Agent的启动入口 - 支持独立模式和Backend集成模式，配置验证、命令行参数解析、交互模式启动
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - Agent启动脚本
+
+## [INPUT]
+### main() 函数输入
+- **命令行参数** (sys.argv):
+  - 无参数: 启动交互模式（interactive_mode）
+  - 有参数: 将参数拼接为问题字符串，执行单次查询（run_agent）
+
+### 环境变量
+- **DEEPSEEK_API_KEY**: DeepSeek API密钥（必需）
+- **DATABASE_URL**: PostgreSQL数据库连接URL（必需）
+- **DEEPSEEK_BASE_URL**: DeepSeek API基础URL（可选，默认https://api.deepseek.com）
+- **DEEPSEEK_MODEL**: DeepSeek模型名称（可选，默认deepseek-chat）
+
+## [OUTPUT]
+### main() 函数行为
+- **配置检测**: 检测Backend配置是否可用，输出配置来源信息
+- **配置验证**: 调用 config.validate_config() 验证必需配置
+  - 失败时打印错误信息和配置说明，退出码1
+- **命令行模式**: 传递问题参数给 run_agent(question)
+- **交互模式**: 启动 interactive_mode()，支持多轮对话
+- **错误处理**: 配置错误时输出详细的 .env 文件示例
+
+### 控制台输出
+- **配置信息**: ℹ️ 检测到后端配置 / 使用 .env 文件 / 未找到 .env 文件
+- **配置错误**: ❌ 配置错误 + 详细说明
+- **单次查询**: 📝 查询: {question}
+- **交互模式**: 💬 进入交互模式 (输入 'exit' 或 'quit' 退出)
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [python-asyncio](https://docs.python.org/3/library/asyncio.html) - 异步运行时（asyncio.run）
+- [python-sys](https://docs.python.org/3/library/sys.html) - 系统参数（sys.argv, sys.exit）
+- [python-os](https://docs.python.org/3/library/os.html) - 操作系统接口（os.path）
+- [python-pathlib](https://docs.python.org/3/library/pathlib.html) - 路径处理（Path）
+
+**下游依赖** (已读取源码):
+- [./sql_agent.py](./sql_agent.py) - Agent主程序（run_agent, interactive_mode）
+- [./config.py](./config.py) - 配置管理（config, config.validate_config）
+
+**调用方**:
+- **命令行**: python Agent/run.py [question]
+- **用户**: 直接运行脚本启动Agent
+
+## [POS]
+**路径**: Agent/run.py
+**模块层级**: Level 1（Agent根目录）
+**依赖深度**: 直接依赖 3 层（Python标准库 + 本地Agent模块）
 """
 import asyncio
 import sys

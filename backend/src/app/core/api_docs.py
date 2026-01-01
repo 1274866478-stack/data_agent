@@ -1,6 +1,38 @@
 """
-API文档配置
-自定义Swagger UI和ReDoc的样式和行为
+# Core API文档配置 - Swagger UI定制
+
+## [HEADER]
+**文件名**: api_docs.py
+**职责**: 自定义FastAPI的Swagger UI和OpenAPI Schema配置
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本，API文档配置和示例
+
+## [INPUT]
+- 无直接输入 - 配置常量和示例数据
+
+## [OUTPUT]
+- Swagger UI参数: Dict[str, Any] - UI配置字典
+- OpenAPI Schema覆盖: Dict[str, Any] - Schema覆盖配置
+- 响应示例: Dict - API响应示例集合
+- 请求示例: Dict - API请求示例集合
+
+## [LINK]
+**上游依赖**:
+- FastAPI - 自动API文档生成
+- Pydantic模型 - 示例数据定义
+
+**下游依赖**:
+- [main.py](../main.py) - FastAPI应用初始化
+
+**调用方**:
+- FastAPI应用配置 - 设置自定义文档
+
+## [POS]
+**路径**: backend/src/app/core/api_docs.py
+**模块层级**: Level 2 (Core → API Docs)
+**依赖深度**: 1 层
 """
 
 from typing import Dict, Any

@@ -1,17 +1,44 @@
 ﻿"""
-Agent Service V5 - Secure SQL Agent with LangGraph
-Integrates security firewall, business logic prompts, and golden examples.
+# Agent Service - LangGraph智能体编排服务
 
-Key Security Features:
-- SQL sanitization before execution (removes HTML, markdown, CSS pollution)
-- Validation layer (SELECT only, blacklist dangerous keywords)
-- Recursion limit to prevent infinite loops
-- Business logic enforcement via prompts and examples
+## [HEADER]
+**文件名**: agent_service.py
+**职责**: 集成LangGraph框架，提供SQL查询和文件数据分析的智能Agent服务
+**作者**: Data Agent Team
+**版本**: 5.1.0
+**变更记录**:
+- v5.1.0 (2026-01-01): 集成VisualizationResponse和MCP ECharts
+- v5.0.0 (2025-12-01): 初始版本，安全防火墙和业务逻辑提示
 
-V5.1 Updates:
-- Integrated VisualizationResponse for structured output
-- Added data transformer for MCP ECharts integration
-- Unified response format with chart configuration
+## [INPUT]
+- 用户问题: str - 自然语言查询
+- 数据源URL: str - PostgreSQL连接字符串或文件路径
+- Thread ID: str - 会话ID用于记忆管理
+
+## [OUTPUT]
+- VisualizationResponse对象: 包含answer, sql, data, chart, echarts_option
+- API响应字典: Dict[str, Any] - 前端可用的标准化响应
+
+## [LINK]
+**上游依赖**:
+- [prompts.py](prompts.py) - 系统提示词
+- [tools.py](tools.py) - SQL和文件工具
+- [models.py](models.py) - 数据模型
+- [data_transformer.py](data_transformer.py) - 数据转换
+- [response_formatter.py](response_formatter.py) - 响应格式化
+- [core/config.py](../../core/config.py) - 应用配置
+
+**下游依赖**:
+- API端点 - /api/v1/query, /api/v1/llm/chat
+
+**调用方**:
+- query.py端点 - 自然语言查询接口
+- llm.py端点 - AI对话接口
+
+## [POS]
+**路径**: backend/src/app/services/agent/agent_service.py
+**模块层级**: Level 3 (Services → Agent → Service)
+**依赖深度**: 2 层
 """
 import asyncio
 import json

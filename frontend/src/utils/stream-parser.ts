@@ -1,3 +1,50 @@
+/**
+ * # [STREAM_PARSER] SSE流式响应解析器
+ *
+ * ## [MODULE]
+ * **文件名**: stream-parser.ts
+ * **职责**: 解析Server-Sent Events (SSE)格式的流式响应数据，处理粘包问题，分发事件到回调函数
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - **reader: ReadableStreamDefaultReader<Uint8Array>** - fetch API的响应流reader
+ * - **callbacks: StreamCallbacks** - 各类事件的回调处理函数
+ *   - onContent: 内容增量回调
+ *   - onThinking: 思考过程回调
+ *   - onToolInput: 工具输入回调
+ *   - onToolResult: 工具结果回调
+ *   - onChartConfig: 图表配置回调
+ *   - onProcessingStep: 处理步骤回调
+ *   - onError: 错误回调
+ *   - onDone: 完成回调
+ * - **signal?: AbortSignal** - 可选的中断信号，用于取消流式读取
+ *
+ * ## [OUTPUT]
+ * - **返回值: Promise<void>** - 异步函数，通过callbacks分发事件
+ * - **副作用**: 调用各类回调函数，将解析的事件传递给UI层
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [../types/chat.ts](../types/chat.ts) - StreamEvent和StreamCallbacks类型定义
+ *
+ * **下游依赖**:
+ * - [../store/chatStore.ts](../store/chatStore.ts) - 聊天状态管理（调用parseStreamResponse）
+ * - [../components/chat/ChatInterface.tsx](../components/chat/ChatInterface.tsx) - 聊天界面组件
+ *
+ * **调用方**:
+ * - chatStore.sendMessage方法
+ *
+ * ## [STATE]
+ * - **buffer: string** - 缓存未处理完的字符串，用于处理粘包问题
+ *
+ * ## [SIDE-EFFECTS]
+ * - 读取并消耗ReadableStream
+ * - 调用回调函数（可能触发React状态更新）
+ * - 释放reader锁
+ * - 记录控制台日志
+ */
+
 // 流式响应解析器 - 处理 SSE 格式的流式数据
 import { StreamEvent, StreamCallbacks } from '../types/chat';
 

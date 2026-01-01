@@ -1,6 +1,44 @@
 """
-结构化日志配置模块
-提供统一的日志记录格式和监控功能
+# [LOGGING] 结构化日志配置
+
+## [HEADER]
+**文件名**: logging.py
+**职责**: 提供统一的日志记录格式和监控功能，支持JSON结构化日志输出
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 实现结构化日志格式化器和请求日志记录器
+
+## [INPUT]
+- **record: LogRecord** - Python日志记录对象
+- **settings: Settings** - 配置对象（应用名称、版本等）
+- **method: str** - HTTP请求方法（GET, POST等）
+- **path: str** - API请求路径
+- **client_ip: str** - 客户端IP地址
+- **user_agent: str** - 用户代理字符串（可选）
+- **request_id: str** - 请求唯一标识符（可选）
+
+## [OUTPUT]
+- **log_entry: str** - JSON格式的日志条目
+- **formatted_log: str** - 格式化后的日志字符串
+- **logger: logging.Logger** - 配置好的日志记录器实例
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [./config.py](./config.py) - Settings类，应用名称和版本配置
+
+**下游依赖** (已读取源码):
+- [../main.py](../main.py) - 应用入口，配置日志系统
+- [../api/v1/endpoints/*.py](../api/v1/endpoints/) - API端点使用日志记录
+
+**调用方**:
+- [../middleware/logging_middleware.py](../middleware/logging_middleware.py) - 日志中间件
+- 所有服务模块 - 业务日志记录
+
+## [POS]
+**路径**: backend/src/app/core/logging.py
+**模块层级**: Level 2 - 核心模块
+**依赖深度**: 直接依赖 config.py；被所有需要日志的模块依赖
 """
 
 import logging

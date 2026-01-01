@@ -1,6 +1,73 @@
 """
-LangGraph SQL Agent with MCP Integration
-Uses DeepSeek as LLM and PostgreSQL MCP Server for database operations
+# [SQL AGENT] LangGraph SQL智能代理主程序
+
+## [HEADER]
+**文件名**: sql_agent.py
+**职责**: 实现基于LangGraph和MCP的SQL智能查询代理 - 自然语言理解、Schema发现、SQL生成、图表可视化、多轮对话
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - LangGraph SQL Agent实现
+
+## [INPUT]
+### 主函数参数
+- **run_agent(question, thread_id, verbose)**:
+  - question: str - 用户问题（自然语言查询）
+  - thread_id: str - 会话ID（默认"1"）
+  - verbose: bool - 是否打印详细过程（默认True）
+
+### 配置依赖
+- **config** - 从config.py导入（DeepSeek API配置、数据库URL）
+- **ENABLE_ECHARTS_MCP** - 是否启用mcp-echarts服务（默认True）
+
+## [OUTPUT]
+### 主函数返回值
+- **run_agent()**: VisualizationResponse - 结构化的可视化响应
+  - answer: str - AI回复内容
+  - sql: str - 生成的SQL语句
+  - data: QueryResult - 查询结果数据
+  - chart: ChartConfig - 图表配置
+  - success: bool - 是否成功
+
+### 辅助函数返回值
+- **create_llm()**: ChatOpenAI - DeepSeek LLM实例
+- **parse_chart_config()**: Optional[Dict[str, Any]] - 解析出的JSON配置
+- **extract_tool_data()**: tuple[Optional[str], list] - (SQL语句, 原始数据列表)
+- **extract_chart_tool_call()**: Optional[Dict[str, Any]] - 图表工具调用信息
+- **call_mcp_chart_tool()**: Optional[str] - 保存的图片路径
+- **build_visualization_response()**: VisualizationResponse - 可视化响应对象
+- **_generate_chart_file()**: Optional[str] - 生成的图表文件路径
+- **_get_or_create_agent()**: tuple[agent, mcp_client] - 编译好的agent和MCP客户端
+- **interactive_mode()**: None - 交互模式循环
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [./config.py](./config.py) - 配置管理（config对象）
+- [./models.py](./models.py) - 数据模型（VisualizationResponse, QueryResult, ChartConfig, ChartType）
+- [./terminal_viz.py](./terminal_viz.py) - 终端可视化（render_response）
+- [./data_transformer.py](./data_transformer.py) - 数据转换（sql_result_to_echarts_data, sql_result_to_mcp_echarts_data）
+- [./chart_service.py](./chart_service.py) - 图表服务（ChartRequest, generate_chart_simple, ChartResponse）
+- [backend/src/app/services/agent/tools.py](../../backend/src/app/services/agent/tools.py) - 文件数据源工具（inspect_file, analyze_dataframe）
+
+**外部依赖**:
+- [langgraph](https://github.com/langchain-ai/langgraph) - LangGraph智能体框架（StateGraph, MessagesState, START, END）
+- [langchain-openai](https://github.com/langchain-ai/langchain-openai) - LangChain OpenAI集成（ChatOpenAI）
+- [langchain-core](https://github.com/langchain-ai/langchain-core) - LangChain核心（HumanMessage, SystemMessage, AIMessage, ToolMessage）
+- [langchain-mcp-adapters](https://github.com/langchain-ai/langchain-mcp-adapters) - MCP适配器（MultiServerMCPClient）
+- [mcp](https://modelcontextprotocol.io/) - Model Context Protocol（ClientSession, sse_client）
+
+**下游依赖** (已读取源码):
+- [./run.py](./run.py) - 启动脚本（调用interactive_mode）
+- [backend/src/app/api/v1/endpoints/query.py](../../backend/src/app/api/v1/endpoints/query.py) - 查询API端点（调用run_agent）
+
+**调用方**:
+- **run.py**: 启动脚本入口（if __name__ == "__main__"）
+- **查询API**: 通过API端点调用run_agent函数
+
+## [POS]
+**路径**: Agent/sql_agent.py
+**模块层级**: Level 1（Agent根目录）
+**依赖深度**: 直接依赖 5 层（config.py, models.py, terminal_viz.py, data_transformer.py, chart_service.py）
 """
 import asyncio
 import json

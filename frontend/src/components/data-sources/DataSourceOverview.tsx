@@ -1,3 +1,40 @@
+/**
+ * # DataSourceOverview 数据源概览组件
+ *
+ * ## [MODULE]
+ * **文件名**: DataSourceOverview.tsx
+ * **职责**: 展示数据源和文档的统计概览，包括连接状态、存储使用、健康指标和最近活动
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - 无直接 Props（通过 store 获取数据）
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 数据源概览仪表板，包含统计卡片、健康状态、存储使用和活动记录
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [@/store/dashboardStore](../../store/dashboardStore.ts) - 提供概览数据和状态管理
+ * - [@/components/ui/card](../ui/card.tsx) - 卡片容器组件
+ * - [@/components/ui/badge](../ui/badge.tsx) - 状态徽章组件
+ * - [@/components/ui/progress](../ui/progress.tsx) - 进度条组件
+ * - [lucide-react](https://lucide.dev) - 图标库
+ *
+ * **下游依赖**:
+ * - [../../app/(app)/page.tsx](../../app/(app)/page.tsx) - 在仪表板页面中使用
+ * - [DataSourceTabs.tsx](./DataSourceTabs.tsx) - 作为标签页的内容展示
+ *
+ * ## [STATE]
+ * - **overview: DashboardOverview | null** - 从 store 获取的概览数据，包含数据库、文档、存储和活动统计
+ * - **isLoading: boolean** - 加载状态
+ * - **error: string | null** - 错误信息
+ *
+ * ## [SIDE-EFFECTS]
+ * - **数据获取**: 组件挂载时自动调用 fetchOverview() 获取概览数据
+ * - **自动刷新**: 没有数据时自动触发数据获取
+ * - **响应式布局**: 根据屏幕尺寸调整网格列数
+ */
 'use client'
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'

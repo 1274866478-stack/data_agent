@@ -1,6 +1,84 @@
 """
-智谱AI配置验证工具
-用于验证智谱AI API连接和配置
+[HEADER]
+智谱AI配置验证工具 - ZhipuAI Configuration Validator
+用于验证智谱AI API连接和配置的正确性
+
+[MODULE]
+模块类型: 配置验证脚本 (Standalone Script)
+所属功能: 开发工具与配置验证
+技术栈: Python 3.8+, asyncio, logging
+
+[INPUT]
+- 命令行参数: 无
+- 环境变量依赖:
+  - ZHIPUAI_API_KEY: 智谱AI API密钥 (必需)
+  - ZHIPUAI_DEFAULT_MODEL: 默认模型名称 (可选, 默认glm-4-flash)
+- 配置来源:
+  - src.app.core.config.settings - 应用配置对象
+  - src.app.services.zhipu_client.ZhipuAIService - 智谱AI服务
+
+[OUTPUT]
+- 控制台输出:
+  - 验证进度和结果 (emoji标识)
+  - 问题列表和修复建议
+  - 最终验证状态 (成功/失败)
+- 退出码:
+  - 0: 验证通过
+  - 1: 验证失败
+- 验证项目:
+  1. API密钥格式检查
+  2. 模型配置检查
+  3. API连接测试
+  4. SQL生成功能测试
+  5. 模型可用性检查
+
+[LINK]
+- 依赖模块:
+  - src.app.core.config - 应用配置管理
+  - src.app.services.zhipu_client - 智谱AI服务客户端
+- 关联脚本:
+  - scripts/validate_cache_config.py - 缓存配置验证
+  - scripts/validate_database_support.py - 数据库支持验证
+- 文档参考:
+  - docs/setup/zhipu-ai-setup.md - 智谱AI配置指南
+
+[POS]
+- 文件路径: backend/scripts/validate_zhipu_config.py
+- 执行方式:
+  - 直接运行: python scripts/validate_zhipu_config.py
+  - Docker: docker-compose exec backend python scripts/validate_zhipu_config.py
+- 使用场景:
+  - 首次配置智谱AI后验证
+  - API连接问题排查
+  - CI/CD流程中的配置检查
+
+[PROTOCOL]
+- 执行流程:
+  1. 读取配置: 从 settings 加载智谱AI配置
+  2. API密钥验证: 检查密钥格式和长度
+  3. 连接测试: 调用 ZhipuAIService.check_connection()
+  4. 功能测试: 测试SQL生成能力
+  5. 模型信息: 获取模型状态和可用性
+  6. 结果汇总: 输出问题和建议
+- 验证规则:
+  - 密钥长度 >= 40 字符
+  - 密钥不能是占位符 (dev_placeholder, test_key)
+  - API连接必须成功
+  - SQL生成必须返回有效SQL语句
+- 错误处理:
+  - 捕获所有异常并记录
+  - 提供具体的错误信息和修复建议
+  - 区分严重问题 (❌) 和警告 (⚠️)
+- 退出策略:
+  - 有严重问题: 退出码 1
+  - 仅有警告: 退出码 0 (可用但建议修复)
+  - 全部通过: 退出码 0
+
+[SECURITY]
+- 安全考虑:
+  - 不输出完整API密钥
+  - 仅显示密钥长度和格式信息
+  - 使用测试用例验证, 避免生产数据影响
 """
 
 import asyncio

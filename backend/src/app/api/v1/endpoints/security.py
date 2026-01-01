@@ -1,5 +1,43 @@
 """
-安全配置和审计API端点
+# [SECURITY] 安全配置和审计API端点
+
+## [HEADER]
+**文件名**: security.py
+**职责**: 提供安全配置验证、审计报告、密钥轮换状态和推荐
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 安全端点实现
+
+## [INPUT]
+- **GET /security/validate**: 验证安全配置 - 需要认证
+- **GET /security/audit**: 生成审计报告 - 参数: days(int)
+- **GET /security/audit/history**: 获取审计历史 - 参数: limit(int)
+- **GET /security/keys/rotation**: 获取密钥轮换状态 - 需要认证
+- **GET /security/keys/report**: 密钥轮换报告 - 需要认证
+- **POST /security/keys/record**: 记录密钥轮换 - 需要认证
+
+## [OUTPUT]
+- **SecurityConfigResponse**: 安全配置验证结果
+- **AuditReportResponse**: 审计报告
+- **KeyRotationStatusResponse**: 密钥轮换状态
+- **KeyRotationReportResponse**: 密钥轮换报告
+
+## [LINK]
+**上游依赖**:
+- [../../core/config_validator.py](../../core/config_validator.py)
+- [../../core/config_audit.py](../../core/config_audit.py)
+- [../../core/key_rotation.py](../../core/key_rotation.py)
+
+**调用方**:
+- 安全管理员 - 查看安全状态
+- 审计系统 - 生成审计报告
+- 密钥管理系统 - 轮换密钥
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/security.py
+**模块层级**: Level 5
+**依赖深度**: 2层
 """
 
 from datetime import datetime, timedelta

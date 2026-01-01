@@ -1,6 +1,61 @@
 """
-配置验证 API 端点
-提供所有服务的配置验证和健康检查
+# [CONFIG] 配置验证API端点
+
+## [HEADER]
+**文件名**: config.py
+**职责**: 提供所有服务的配置验证和健康检查 - 数据库、MinIO、ChromaDB、智谱AI、环境变量
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 配置验证端点实现
+
+## [INPUT]
+### HTTP请求
+- **GET /config/validate**: 验证所有配置 - 参数: detailed(bool)
+- **POST /config/validate**: 验证特定服务 - ServiceValidationRequest {service_name, skip_detailed_checks}
+- **GET /config/health**: 配置模块健康检查 - 无参数
+- **GET /config/status**: 获取配置状态概览 - 无参数
+- **GET /config/services**: 获取支持的服务列表 - 无参数
+- **POST /config/test/all**: 快速测试所有服务 - 无参数
+
+### 依赖模块
+- **config_validator**: 配置验证器实例
+- **settings**: 应用配置对象
+
+## [OUTPUT]
+### 验证响应
+- **ValidationResponse**: 全局验证结果 - {overall_status, total_services, successful, failed, timestamp, results[]}
+- **ServiceResponse**: 单服务验证 - {service, status, message, details{}, timestamp}
+- **健康状态**: {status, service, timestamp, environment}
+- **配置状态**: {status, config{}, timestamp}
+- **服务列表**: {services[], total}
+
+### 验证功能
+- **并行验证**: 同时验证多个服务连接
+- **详细检查**: 可选择执行深度连接测试
+- **后台任务**: 快速模式失败时触发详细验证
+- **服务发现**: 列出所有支持验证的服务
+- **状态概览**: 提供配置的快速查看
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [../../core/config_validator.py](../../core/config_validator.py) - 配置验证器(config_validator, validate_*)
+- [../../core/config.py](../../core/config.py) - 配置对象(settings)
+
+**下游依赖**:
+- **前端配置页面**: 显示各服务的连接状态
+- **健康检查系统**: 定期验证所有服务
+- **安装向导**: 验证配置是否正确
+
+**调用方**:
+- **系统管理员**: 验证服务配置
+- **监控系统**: 定期健康检查
+- **安装程序**: 验证初始配置
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/config.py
+**模块层级**: Level 5 (Backend → src/app → api/v1 → endpoints → config)
+**依赖深度**: 1层 (core模块)
 """
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks

@@ -1,6 +1,147 @@
 """
-数据库适配器接口
-支持多种数据库类型的统一接口，为RAG-SQL服务提供数据库抽象层
+# [DATABASE_INTERFACE] 数据库适配器接口
+
+## [HEADER]
+**文件名**: database_interface.py
+**职责**: 支持多种数据库类型的统一接口，为RAG-SQL服务提供数据库抽象层
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 数据库适配器接口
+
+## [INPUT]
+- **connection_string: str** - 数据库连接字符串
+- **kwargs: Dict[str, Any]** - 额外连接参数
+- **query: str** - SQL查询语句
+- **params: Optional[Dict[str, Any]]** - 查询参数
+- **timeout: int** - 查询超时时间（秒）
+- **table_name: str** - 表名
+- **limit: int** - 限制数量
+
+## [OUTPUT]
+- **bool**: 连接/测试连接成功
+- **SchemaInfo**: 数据库schema信息
+  - database_name: 数据库名称
+  - database_type: DatabaseType枚举
+  - tables: 字典（表名→TableInfo）
+  - relationships: 关系列表
+  - version: 数据库版本
+  - last_updated: 最后更新时间
+- **QueryResult**: 查询结果
+  - data: 数据列表（字典列表）
+  - columns: 列名列表
+  - row_count: 行数
+  - execution_time: 执行时间（秒）
+  - affected_rows: 影响行数
+  - has_more: 是否有更多数据
+- **QueryPlan**: 查询执行计划
+  - plan_id: 计划ID
+  - query: 查询语句
+  - execution_plan: 执行计划（JSON格式）
+  - estimated_cost: 预估成本
+  - estimated_rows: 预估行数
+- **Tuple[bool, Optional[str]]**: 验证结果和错误消息
+- **List[Dict[str, Any]]**: 表样本数据
+- **Dict[str, Any]**: 表统计信息
+
+**上游依赖** (已读取源码):
+- 无（独立数据库适配器）
+
+**下游依赖** (需要反向索引分析):
+- [database_factory.py](./database_factory.py) - 数据库工厂使用适配器
+- [llm_service.py](./llm_service.py) - LLM服务执行SQL查询
+- [query_optimization_service.py](./query_optimization_service.py) - 查询优化服务获取schema
+
+**调用方**:
+- 数据库工厂创建适配器实例
+- LLM服务执行SQL查询和获取schema
+- 查询优化服务分析查询计划
+- 数据源服务测试连接
+
+## [STATE]
+- **数据库类型**: DatabaseType枚举（POSTGRESQL, MYSQL, SQLITE, SQLSERVER, ORACLE）
+- **数据类**: ColumnInfo, TableInfo, SchemaInfo, QueryResult, QueryPlan
+- **抽象基类**: DatabaseInterface（ABC）
+  - connect/disconnect/test_connection: 连接管理
+  - get_schema_info: 获取schema信息
+  - execute_query: 执行SQL查询
+  - explain_query: 获取执行计划
+  - validate_query: 验证SQL语法
+  - get_database_type: 获取数据库类型
+  - get_table_sample: 获取表样本
+  - get_table_statistics: 获取表统计
+- **PostgreSQL适配器**: PostgreSQLAdapter
+  - asyncpg连接池（min_size=1, max_size=10）
+  - 支持参数化查询（$1, $2...）
+  - EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS)
+  - information_schema查询表/列/主键/外键
+- **MySQL适配器**: MySQLAdapter
+  - aiomysql连接池（minsize=1, maxsize=10）
+  - 支持参数化查询（%s占位符）
+  - EXPLAIN FORMAT=JSON
+  - information_schema查询
+- **SQLite适配器**: SQLiteDatabaseAdapter
+  - aiosqlite连接（支持:memory:）
+  - 支持参数化查询（?占位符）
+  - EXPLAIN QUERY PLAN
+  - PRAGMA table_info/foreign_key_list/index_list
+  - sqlite_master查询
+- **连接池管理**: 连接复用和自动释放
+- **异步上下文管理器**: async with conn/acquire()自动释放连接
+- **错误处理**: 所有方法捕获异常并记录日志
+
+## [SIDE-EFFECTS]
+- **异步连接池**:
+  - asyncpg.create_pool创建PostgreSQL连接池
+  - aiomysql.create_pool创建MySQL连接池
+  - aiosqlite.connect创建SQLite连接
+- **连接获取/释放**:
+  - async with self._connection.acquire() as conn（PostgreSQL）
+  - async with self._pool.acquire() as conn（MySQL）
+  - 直接使用self._connection（SQLite单连接）
+- **游标操作**:
+  - async with conn.cursor(aiomysql.DictCursor) as cursor（MySQL）
+  - await cursor.execute/query/fetchone/fetchall
+- **参数化查询**:
+  - PostgreSQL: await conn.fetch(query, *params.values())（$1, $2占位符）
+  - MySQL: await cursor.execute(query, tuple(params.values()))（%s占位符）
+  - SQLite: await self._connection.execute(query, param_values)（?占位符）
+- **字典转换**: [dict(row) for row in result]转换Record为字典
+- **时间测量**: time.time()计算执行时间
+- **列名提取**: [key for key in result[0].keys()]提取列名
+- **条件过滤**: WHERE table_schema NOT IN ('information_schema', 'pg_catalog')过滤系统表
+- **字符串解析**: urllib.parse.urlparse解析MySQL连接字符串
+- **字典构建**: {**default_config, **model_config}合并配置
+- **列表推导式**: [row["column_name"] for row in await conn.fetch(pk_query)]提取主键列
+- **外键映射**: {row["column_name"]: {...} for row in fk_info}构建外键字典
+- **PRAGMA查询**:
+  - PRAGMA table_info('{table_name}')获取列信息
+  - PRAGMA foreign_key_list('{table_name}')获取外键
+  - PRAGMA index_list('{table_name}')获取索引
+- **数据类型映射**:
+  - PostgreSQL: information_schema.columns.data_type
+  - MySQL: information_schema.columns.data_type
+  - SQLite: PRAGMA table_info的type字段
+- **主键/外键检测**:
+  - PostgreSQL: information_schema.table_constraints
+  - MySQL: column_key == "PRI"/referenced_table_name IS NOT NULL
+  - SQLite: PRAGMA的pk字段（1=主键）/foreign_key_list
+- **行数统计**: SELECT COUNT(*) FROM {table_name}
+- **统计信息**:
+  - PostgreSQL: pg_stats, pg_size_pretty
+  - MySQL: information_schema.tables, information_schema.statistics
+  - SQLite: PRAGMA index_info, dbstat虚拟表
+- **字节格式化**: _format_bytes转换字节为可读单位（B/KB/MB/GB/TB/PB）
+- **路径解析**: _parse_connection_string解析sqlite:///路径
+- **外键启用**: PRAGMA foreign_keys = ON（SQLite）
+- **行工厂设置**: row_factory = aiosqlite.Row（SQLite返回字典）
+- **异常处理**: try-except捕获所有异常，logger.error记录错误，重新抛出
+- **日志记录**: logger.info记录连接成功，logger.error记录失败
+
+## [POS]
+**路径**: backend/src/app/services/database_interface.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 无外部依赖（数据库驱动按需导入）
 """
 
 from abc import ABC, abstractmethod

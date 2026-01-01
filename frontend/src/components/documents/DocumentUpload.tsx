@@ -1,4 +1,60 @@
 /**
+ * # [DOCUMENT_UPLOAD] 文档上传组件
+ *
+ * ## [MODULE]
+ * **文件名**: DocumentUpload.tsx
+ * **职责**: 提供文档上传功能，支持拖拽上传、批量上传、文件验证、进度显示和错误处理
+ *
+ * ## [INPUT]
+ * Props:
+ * - **onClose?: () => void** - 关闭回调
+ * - **onSuccess?: (files: File[]) => void** - 上传成功回调
+ * - **onError?: (error: string) => void** - 错误回调
+ * - **multiple?: boolean** - 是否支持多文件上传 (默认true)
+ * - **maxFiles?: number** - 最大文件数量 (默认10)
+ *
+ * ## [OUTPUT]
+ * UI组件:
+ * - **拖拽上传区域**: 支持拖拽文件或点击选择
+ * - **文件验证**:
+ *   - 文件类型检查 (PDF, DOCX)
+ *   - MIME类型验证
+ *   - 文件大小限制 (PDF 50MB, DOCX 25MB)
+ *   - 文件数量限制
+ * - **文件列表**: 显示已选择文件，支持移除
+ * - **上传进度**: 显示每个文件的上传进度
+ * - **错误提示**: 验证错误和上传错误的友好提示
+ * - **限制说明**: 显示上传格式和大小限制
+ *
+ * **上游依赖**:
+ * - [../../store/documentStore.ts](../../store/documentStore.ts) - 文档状态管理Store
+ * - [../ui/button.tsx](../ui/button.tsx) - 按钮组件
+ * - [../ui/alert.tsx](../ui/alert.tsx) - 警告提示组件
+ *
+ * **下游依赖**:
+ * - [../DocumentList.tsx](../DocumentList.tsx) - 文档列表 (上传后刷新列表)
+ * - [../../app/documents/page.tsx](../../app/documents/page.tsx) - 文档管理页面
+ *
+ * **调用方**:
+ * - [../../app/documents/page.tsx](../../app/documents/page.tsx) - 文档页面
+ * - 任何需要上传文档的模态框或对话框
+ *
+ * ## [STATE]
+ * - **文件列表状态**: selectedFiles (已选择文件数组)
+ * - **拖拽状态**: dragActive (拖拽悬停状态)
+ * - **验证状态**: validationErrors (验证错误数组)
+ * - **进度状态**: uploadProgress (从store读取上传进度)
+ * - **配置常量**: SUPPORTED_FILE_TYPES (PDF和DOCX配置)
+ *
+ * ## [SIDE-EFFECTS]
+ * - 调用documentStore.uploadDocument (单文件上传)
+ * - 调用documentStore.uploadMultipleDocuments (批量上传)
+ * - 文件系统操作 (文件选择和读取)
+ * - 定时器操作 (延迟关闭onClose回调)
+ * - 浏览器文件API (File, FileList)
+ */
+
+/**
  * 文档上传组件 - Story 2.4规范实现
  * 支持拖拽上传、文件验证、进度显示、批量上传
  */

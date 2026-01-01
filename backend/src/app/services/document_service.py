@@ -1,6 +1,93 @@
 """
-文档管理服务 - Story 2.4规范实现
-文档CRUD操作、状态管理、租户隔离、文件验证
+# [DOCUMENT_SERVICE] 文档管理服务
+
+## [HEADER]
+**文件名**: document_service.py
+**职责**: 实现文档的完整生命周期管理（Story 2.4规范），包括文件上传验证、MinIO存储、数据库记录、状态管理、租户隔离和查询优化
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 文档管理服务（Story 2.4规范）
+
+## [INPUT]
+- **db: Session / AsyncSession** - 数据库会话（同步或异步）
+- **tenant_id: str** - 租户ID（强制隔离）
+- **file_data: BinaryIO** - 文件二进制数据
+- **file_name: str** - 文件名
+- **file_size: int** - 文件大小（字节）
+- **mime_type: str** - 文件MIME类型
+- **document_id: uuid.UUID** - 文档唯一ID
+- **status: DocumentStatus** - 文档状态（PENDING, PROCESSING, READY, FAILED）
+- **file_type: Optional[str]** - 文件类型过滤器
+- **processing_error: Optional[str]** - 处理错误信息
+- **expires_in_hours: int** - 预签名URL过期时间（小时）
+- **search_query: Optional[str]** - 搜索查询（优化方法）
+- **sort_by: str** - 排序字段（优化方法）
+- **sort_order: str** - 排序顺序（优化方法）
+- **search_term: str** - 搜索词（搜索优化方法）
+- **limit: int** - 返回记录数限制
+- **cache_type: Optional[str]** - 缓存类型
+
+## [OUTPUT]
+- **Dict[str, Any]**: 操作结果（所有方法统一返回字典格式）
+  - **upload_document**: {success, document, message} 或 {success, error, message}
+  - **get_documents**: {success, documents, total, skip, limit, stats}
+  - **get_document_by_id**: {success, document} 或 {success, error, message}
+  - **update_document_status**: {success, document, old_status, new_status}
+  - **delete_document**: {success, message, deleted_document}
+  - **get_document_preview_url**: {success, preview_url, expires_in_hours, document}
+  - **get_documents_optimized**: {success, documents, total, query_time_ms, cached}
+  - **get_document_stats_optimized**: {success, stats, query_time_ms, cached}
+  - **search_documents_optimized**: {success, documents, total, query_time_ms, cached}
+  - **get_tenant_summary_optimized**: {success, summary, query_time_ms, cached}
+  - **get_performance_stats**: {cache_stats, query_stats}
+  - **clear_cache**: {success} 或 {success, error, message}
+
+**上游依赖** (已读取源码):
+- [./data/models.py](./data/models.py) - 数据模型（KnowledgeDocument, DocumentStatus, Tenant）
+- [./data/database.py](./data/database.py) - 数据库连接（get_db）
+- [./minio_client.py](./minio_client.py) - MinIO对象存储服务
+- [./query_optimization_service.py](./query_optimization_service.py) - 查询优化服务
+- [./core/config.py](./core/config.py) - 配置管理
+
+**下游依赖** (需要反向索引分析):
+- [../api/v1/endpoints/documents.py](../api/v1/endpoints/documents.py) - 文档API端点
+- [llm_service.py](./llm_service.py) - RAG文档检索
+
+**调用方**:
+- 文档上传流程（前端上传后）
+- 文档管理API（列表、详情、删除）
+- 文档状态更新（向量化完成后）
+- RAG检索（查询相关文档）
+- 性能监控和缓存管理
+
+## [STATE]
+- **文件类型验证**: supported_file_types配置（PDF, DOCX）
+  - PDF: max_size_mb=50, mime_types=['application/pdf']
+  - DOCX: max_size_mb=25, mime_types=['application/vnd.openxmlformats-officedocument.wordprocessingml.document']
+- **MinIO存储路径格式**: "dataagent-docs/tenant-{tenant_id}/documents/{document_id}/{file_name}"
+- **查询优化**: 集成query_optimization_service（缓存、性能统计）
+- **异步方法**: 使用AsyncSession的优化方法（后缀_optimized）
+- **错误代码**: UPLOAD_001（格式不支持）、UPLOAD_002（大小超限）、UPLOAD_004（上传失败）
+- **存储桶名称**: "knowledge-documents"（硬编码）
+- **租户隔离**: 所有查询强制过滤tenant_id
+
+## [SIDE-EFFECTS]
+- **文件I/O**: 读取文件二进制数据
+- **MinIO操作**: upload_file, delete_file, get_presigned_url（调用minio_service）
+- **数据库事务**: commit, rollback, refresh操作
+- **查询缓存**: query_optimization_service的LRU缓存操作
+- **文件验证**: 大小检查、MIME类型检查、扩展名检查
+- **UUID生成**: uuid.uuid4()生成文档ID
+- **正则匹配**: 文件扩展名提取（.pdf, .docx）
+- **性能统计**: query_time_ms记录、cached标志
+- **聚合查询**: sum(file_size), count(id), group_by（统计方法）
+- **预签名URL生成**: timedelta过期时间计算
+
+## [POS]
+**路径**: backend/src/app/services/document_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 直接依赖 data.models, minio_client, query_optimization_service
 """
 
 import uuid

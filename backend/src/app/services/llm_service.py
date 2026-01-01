@@ -1,24 +1,85 @@
 """
-统一LLM服务
-支持Zhipu AI和OpenRouter多模态模型
-提供租户隔离和流式输出功能
+# [LLM_SERVICE] 统一LLM服务
+
+## [HEADER]
+**文件名**: llm_service.py
+**职责**: 提供统一的多提供商LLM服务接口，支持DeepSeek、智谱AI和OpenRouter，实现租户隔离、流式输出、多模态处理和智能参数调整
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 实现多提供商LLM服务架构
+
+## [INPUT]
+- **tenant_id: str** - 租户ID（用于提供商注册和隔离）
+- **messages: List[LLMMessage]** - 对话消息列表
+  - role: 消息角色 ("user", "assistant", "system", "tool")
+  - content: 消息内容（字符串或多模态列表）
+  - tool_calls: 工具调用（assistant角色）
+  - tool_call_id: 工具调用ID（tool角色）
+- **provider: Optional[LLMProvider]** - LLM提供商（默认自动选择）
+- **model: Optional[str]** - 模型名称（默认各提供商默认模型）
+- **max_tokens: Optional[int]** - 最大输出tokens
+- **temperature: Optional[float]** - 温度参数（0.0-1.0）
+- **stream: bool** - 是否流式输出
+- **enable_thinking: Optional[bool]** - 是否启用思考模式（None表示智能判断）
+- **tools: Optional[List[Dict[str, Any]]]** - 工具定义列表（DeepSeek）
+
+## [OUTPUT]
+- **LLMResponse**: 非流式响应
+  - content: str - 回复内容
+  - thinking: Optional[str] - 思考过程（智谱AI）
+  - usage: Optional[Dict[str, int]] - token使用统计
+  - model: str - 使用的模型
+  - provider: str - 提供商名称
+  - finish_reason: str - 结束原因
+  - created_at: str - 创建时间（ISO格式）
+- **AsyncGenerator[LLMStreamChunk]**: 流式响应
+  - type: str - 块类型 ("thinking", "content", "tool_input", "done", "error")
+  - content: str - 内容
+  - provider: str - 提供商
+  - finished: bool - 是否完成
+
+**上游依赖** (已读取源码):
+- [./core/config.py](./core/config.py) - 配置管理（API keys、模型默认值）
+- [./multimodal_processor.py](./multimodal_processor.py) - 多模态内容处理器
+
+**下游依赖** (需要反向索引分析):
+- [../api/v1/endpoints/llm.py](../api/v1/endpoints/llm.py) - LLM API端点
+- [../api/v1/endpoints/query.py](../api/v1/endpoints/query.py) - 查询API端点
+- [../services/xai_service.py](../services/xai_service.py) - XAI服务（可能调用）
+
+**调用方**:
+- [../api/v1/endpoints/llm.py](../api/v1/endpoints/llm.py) - LLM API端点
+- [../services/conversation_service.py](../services/conversation_service.py) - 对话服务
+- [../services/agent_service.py](../services/agent_service.py) - Agent服务
+
+## [STATE]
+- **提供商管理**: providers字典维护租户和提供商的实例映射
+- **租户配置**: tenant_configs字典维护租户API密钥
+- **提供商优先级**: DeepSeek → Zhipu → OpenRouter（默认回退）
+- **智能模式**:
+  - 思考模式自动判断（ZhipuProvider.should_enable_thinking）
+  - 对话复杂度分析（analyze_conversation_complexity）
+- **多模态支持**: 图片、音频、视频内容处理（OpenRouter）
+
+## [SIDE-EFFECTS]
+- **HTTP请求**: 调用DeepSeek、智谱AI、OpenRouter的REST API
+- **流式响应**: 异步生成器yield流式数据块
+- **缓存**: 智能思考模式判断（基于关键词和复杂度）
+- **多模态处理**: 调用multimodal_processor处理非文本内容
+- **日志记录**: 详细记录流式响应、工具调用、错误信息
+
+## [POS]
+**路径**: backend/src/app/services/llm_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 直接依赖 core.config 和 multimodal_processor
 """
 
-import asyncio
-import json
 import logging
-from typing import Dict, Any, Optional, List, AsyncGenerator, Union
-from datetime import datetime
-from enum import Enum
-from dataclasses import dataclass
 from abc import ABC, abstractmethod
-
-import aiohttp
-from openai import OpenAI, AsyncOpenAI
-from zhipuai import ZhipuAI
-
-from src.app.core.config import settings
-from src.app.services.multimodal_processor import multimodal_processor
+from enum import Enum
+from typing import Any, Dict, List, Optional, Union, AsyncGenerator
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 

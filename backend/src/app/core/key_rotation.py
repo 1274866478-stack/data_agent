@@ -1,6 +1,42 @@
 """
-密钥轮换模块
-实现密钥轮换机制和提醒功能
+# [KEY_ROTATION] 密钥轮换管理器
+
+## [HEADER]
+**文件名**: key_rotation.py
+**职责**: 实现密钥轮换机制、提醒和记录功能 - 支持多种密钥类型
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 密钥轮换实现
+
+## [INPUT]
+- **密钥类型**: KeyType枚举 - MINIO_ACCESS, MINIO_SECRET, ZHIPU_API, DATABASE_PASSWORD
+- **轮换间隔**: rotation_interval_days - 默认90天
+- **数据文件**: data/key_rotation.json - 存储密钥信息
+
+## [OUTPUT]
+- **KeyRotationManager**: 密钥轮换管理器类
+- **get_rotation_status()**: 获取所有密钥轮换状态
+- **record_key_rotation()**: 记录密钥轮换
+- **check_upcoming_rotations()**: 检查即将到期的密钥
+- **generate_rotation_report()**: 生成轮换报告
+
+## [LINK]
+**上游依赖**:
+- Python标准库 - datetime, json, pathlib, dataclasses
+
+**下游依赖**:
+- [api/v1/endpoints/security.py](../api/v1/endpoints/security.py) - 安全API
+
+**调用方**:
+- 安全API端点
+- 定时任务
+- 管理工具
+
+## [POS]
+**路径**: backend/src/app/core/key_rotation.py
+**模块层级**: Level 3
+**依赖深度**: 0层(仅标准库)
 """
 
 import json

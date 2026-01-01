@@ -1,6 +1,74 @@
 """
-查询优化服务 - Story 2.4性能优化
-提供高效的数据库查询方法、缓存策略和性能监控
+# [QUERY_OPTIMIZATION_SERVICE] 查询优化服务
+
+## [HEADER]
+**文件名**: query_optimization_service.py
+**职责**: Story 2.4性能优化 - 提供高效的数据库查询方法、LRU缓存策略和性能监控
+**作者**: Data Agent Team
+**版本**: 1.0.0
+
+## [INPUT]
+- **db: AsyncSession** - 异步数据库会话
+- **tenant_id: str** - 租户ID
+- **status: Optional[DocumentStatus]** - 文档状态过滤器
+- **file_type: Optional[str]** - 文件类型过滤器
+- **search_query: Optional[str]** - 搜索查询
+- **skip: int** - 分页跳过记录数
+- **limit: int** - 分页限制记录数
+- **sort_by: str** - 排序字段
+- **sort_order: str** - 排序顺序
+- **search_term: str** - 搜索词
+- **query_type: Optional[QueryType]** - 缓存类型
+
+## [OUTPUT]
+- **QueryResult**: 查询结果封装
+  - success: bool - 查询是否成功
+  - data: Any - 结果数据
+  - total: int - 总记录数
+  - query_time_ms: float - 查询时间（毫秒）
+  - cached: bool - 是否来自缓存
+  - error: Optional[str] - 错误信息
+
+**上游依赖** (已读取源码):
+- [./data/models.py](./data/models.py) - 数据模型
+
+**下游依赖** (需要反向索引分析):
+- [./document_service.py](./document_service.py) - 文档服务（优化查询）
+
+**调用方**:
+- 文档列表查询优化
+- 文档统计查询优化
+- 租户摘要查询优化
+- 文档搜索优化
+
+## [STATE]
+- **缓存TTL配置**:
+  - DOCUMENT_LIST: 300秒（5分钟）
+  - DOCUMENT_STATS: 600秒（10分钟）
+  - TENANT_SUMMARY: 1800秒（30分钟）
+  - SEARCH: 120秒（2分钟）
+  - TREND_ANALYSIS: 3600秒（1小时）
+- **内存缓存**: Dict[str, CacheEntry]（生产环境应使用Redis）
+- **缓存统计**: hits, misses, evictions计数器
+- **查询性能监控**: query_stats记录每个查询的性能指标
+- **缓存键生成**: f"{query_type}:{tenant_id}:{params_hash}"
+- **数据类**: QueryResult, CacheEntry使用@dataclass
+
+## [SIDE-EFFECTS]
+- **缓存读写**: _get_from_cache, _set_cache操作
+- **缓存过期**: datetime.utcnow() - created_at < ttl检查
+- **缓存淘汰**: 超时项自动删除并记录evictions
+- **聚合查询**: func.count(), func.sum(), func.avg(), func.max()
+- **异步查询**: AsyncSession.execute, scalars().all()
+- **性能统计**: _record_query_stats记录count/time_ms/min/max
+- **相关性计算**: _calculate_relevance_score字符串匹配分数
+- **JSON序列化**: json.dumps(params, sort_keys=True)生成缓存键
+- **缓存清理**: clear_cache支持按query_type清理或全部清理
+
+## [POS]
+**路径**: backend/src/app/services/query_optimization_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 直接依赖 data.models
 """
 
 import asyncio

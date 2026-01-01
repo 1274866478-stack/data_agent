@@ -1,3 +1,59 @@
+/**
+ * # [REASONING_PATH] AI推理路径可视化组件
+ *
+ * ## [MODULE]
+ * **文件名**: ReasoningPath.tsx
+ * **职责**: 可视化展示AI的推理路径和决策过程 - 步骤流程、置信度、证据链、交互式展开
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * Props:
+ * - **steps: ReasoningStep[]** - 推理步骤数组
+ *   - step_number: number - 步骤编号
+ *   - title: string - 步骤标题
+ *   - description: string - 步骤描述
+ *   - reasoning?: string - 推理过程
+ *   - evidence?: string[] - 证据列表
+ *   - confidence: number - 置信度(0-1)
+ *   - step_type: string - 步骤类型
+ * - **showConfidence?: boolean** - 是否显示置信度（默认true）
+ * - **interactive?: boolean** - 是否支持交互式展开（默认true）
+ *
+ * ## [OUTPUT]
+ * UI组件:
+ * - **步骤流程图**: 展示推理步骤的时间线
+ * - **置信度指示器**: 进度条显示每步的置信度
+ * - **证据卡片**: 可展开的证据详情
+ * - **图标标识**: 根据步骤类型显示不同图标
+ * - **折叠/展开**: 支持步骤详情的折叠展开
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [../ui/card.tsx](../ui/card.tsx) - 卡片组件
+ * - [../ui/badge.tsx](../ui/badge.tsx) - 徽章组件
+ * - [../ui/progress.tsx](../ui/progress.tsx) - 进度条组件
+ * - [../ui/button.tsx](../ui/button.tsx) - 按钮组件
+ * - [../ui/collapsible.tsx](../ui/collapsible.tsx) - 折叠组件
+ * - lucide-react - 图标库
+ *
+ * **下游依赖**:
+ * - [./ChatInterface.tsx](../chat/ChatInterface.tsx) - 聊天界面
+ * - [AnswerExplanation.tsx](./AnswerExplanation.tsx) - 答案解释组件
+ *
+ * **调用方**:
+ * - AI分析结果展示
+ * - XAI可解释性界面
+ *
+ * ## [STATE]
+ * - **expandedSteps: Set<number>** - 已展开的步骤编号集合
+ * - **selectedEvidence: Map<string, boolean>** - 选中的证据项
+ *
+ * ## [SIDE-EFFECTS]
+ * - **副作用1**: 点击展开/折叠步骤详情
+ * - **副作用2**: 点击查看证据详情
+ */
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';

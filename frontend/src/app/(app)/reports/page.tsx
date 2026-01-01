@@ -1,3 +1,89 @@
+/**
+ * [HEADER]
+ * 报告中心页面 - Data Agent V4 Reports Center
+ * 提供系统性能报告与分析报告的查看和下载功能
+ *
+ * [MODULE]
+ * 模块类型: Next.js 14 App Router Page Component
+ * 所属功能: 报告管理与生成
+ * 技术栈: React, TypeScript, Lucide Icons
+ *
+ * [INPUT]
+ * - 无路由参数
+ * - 无依赖的全局状态 (当前使用模拟数据)
+ * - 未来将接入后端API:
+ *   - GET /api/v1/reports - 获取报告列表
+ *   - GET /api/v1/reports/{id} - 获取报告详情
+ *   - POST /api/v1/reports/generate - 生成新报告
+ *   - GET /api/v1/reports/{id}/download - 下载报告
+ *
+ * [OUTPUT]
+ * - 渲染内容:
+ *   - 统计卡片 (总报告数、平均响应时间)
+ *   - 报告列表 (标题、类型、创建时间、摘要)
+ *   - 报告指标展示 (总查询数、平均响应时间、成功率)
+ *   - 下载按钮
+ * - 用户交互:
+ *   - 生成新报告按钮 (功能待实现)
+ *   - 下载报告功能 (handleDownloadReport)
+ *   - 加载状态显示
+ *   - 错误重试机制
+ *
+ * [LINK]
+ * - 依赖组件:
+ *   - @/components/ui/card - Card组件族
+ *   - @/components/ui/button - Button组件
+ *   - @/components/ui/input - Input组件 (搜索框)
+ * - 图标库:
+ *   - lucide-react - FileText, Download, Calendar, TrendingUp, AlertCircle
+ * - 路由:
+ *   - /reports - 当前页面路由
+ * - 后端API (规划中):
+ *   - /api/v1/reports - 报告管理端点
+ *
+ * [POS]
+ * - 文件路径: frontend/src/app/(app)/reports/page.tsx
+ * - 访问URL: http://localhost:3000/reports
+ * - 布局位置: (app) 路由组, 继承主应用布局
+ * - 导航入口: 侧边栏 "报告中心" 菜单项
+ *
+ * [STATE]
+ * - 局部状态:
+ *   - reports: PerformanceReport[] - 报告列表
+ *   - loading: boolean - 加载状态
+ *   - error: string | null - 错误信息
+ * - 数据接口:
+ *   - PerformanceReport - 报告数据结构
+ *     - id: string - 报告ID
+ *     - title: string - 报告标题
+ *     - type: string - 报告类型 (performance, analytics等)
+ *     - created_at: string - 创建时间
+ *     - summary: string - 报告摘要
+ *     - metrics: - 性能指标
+ *       - total_queries: number - 总查询数
+ *       - avg_response_time: number - 平均响应时间
+ *       - success_rate: number - 成功率
+ *
+ * [PROTOCOL]
+ * - 初始化流程:
+ *   1. 组件挂载时调用 loadReports()
+ *   2. 显示加载状态 (spinner + 文字提示)
+ *   3. 加载成功后渲染报告列表
+ * - 数据加载:
+ *   - 当前状态: 使用模拟数据 (mockReports)
+ *   - TODO: 替换为真实API调用
+ *   - 错误处理: 显示错误卡片, 提供重试按钮
+ * - 用户操作:
+ *   - 下载报告: 控制台日志输出 (TODO: 实现实际下载)
+ *   - 生成报告: 按钮存在但功能待实现
+ * - 空状态处理:
+ *   - 无报告时显示空列表
+ * - 响应式布局:
+ *   - 移动端: 单列布局
+ *   - 平板: 双列布局
+ *   - 桌面: 三列布局
+ */
+
 'use client'
 
 import { useState, useEffect } from 'react'

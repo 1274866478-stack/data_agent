@@ -1,3 +1,43 @@
+/**
+ * # [HOME_PAGE] 应用主页组件
+ *
+ * ## [MODULE]
+ * **文件名**: page.tsx
+ * **职责**: Data Agent V4应用主页 - 欢迎页面和功能导航卡片
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - 无Props（页面组件）
+ *
+ * ## [OUTPUT]
+ * UI组件:
+ * - **欢迎标题**: 显示应用名称和简介
+ * - **功能卡片**:
+ *   - 数据源管理 - 连接和管理各种数据源
+ *   - AI智能分析 - 使用AI技术分析数据
+ *   - 文档管理 - 上传和管理文档
+ *   - 聊天助手 - AI对话式数据分析
+ * - **导航按钮**: 跳转到各功能页面
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [../../components/ui/button.tsx](../../components/ui/button.tsx) - 按钮组件
+ * - [../../components/ui/card.tsx](../../components/ui/card.tsx) - 卡片组件
+ *
+ * **下游依赖**:
+ * - 无（页面组件是叶子节点）
+ *
+ * **调用方**:
+ * - Next.js路由系统 (/app路径)
+ *
+ * ## [STATE]
+ * - 无（纯展示组件）
+ *
+ * ## [SIDE-EFFECTS]
+ * - 无（纯展示组件）
+ */
+
 'use client'
 
 import { Button } from '@/components/ui/button'

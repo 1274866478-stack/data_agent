@@ -1,7 +1,100 @@
 """
-查询上下文服务
-Story 3.1: 租户隔离的查询上下文管理
-包含完善的事务管理机制
+# [QUERY_CONTEXT] 查询上下文服务
+
+## [HEADER]
+**文件名**: query_context.py
+**职责**: Story 3.1租户隔离 - 查询上下文管理、事务管理、频率限制、查询日志和缓存
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 查询上下文服务（Story 3.1）
+
+## [INPUT]
+- **db: Session** - SQLAlchemy数据库会话
+- **tenant_id: str** - 租户ID
+- **user_id: str** - 用户ID
+- **tenant_config: Optional[Dict[str, Any]]** - 租户配置
+- **query_id: str** - 查询ID
+- **question: str** - 查询问题
+- **context/options/query_hash: Optional[Dict/str]** - 查询参数
+- **status: QueryStatus** - 查询状态
+- **page/page_size: int** - 分页参数
+- **query_hash: Optional[str]** - 查询哈希（可选）
+
+## [OUTPUT]
+- **List[DataSourceConnection]**: 租户的数据源列表（get_tenant_data_sources）
+- **List[KnowledgeDocument]**: 租户的文档列表（get_tenant_documents）
+- **tuple[bool, Optional[str]]**: (是否允许, 错误信息)（check_rate_limits）
+- **QueryLog**: 查询日志记录（log_query_request）
+- **bool**: 更新成功（update_query_status）
+- **Optional[QueryLog]**: 缓存的查询（get_cached_query）
+- **Dict[str, Any]**: 查询历史（get_query_history）
+  - queries, total_count, page, page_size, total_pages
+- **tuple[bool, str]**: (是否成功, 消息)（clear_query_cache）
+- **QueryContext**: 查询上下文实例（create_query_context, get_query_context）
+
+**上游依赖** (已读取源码):
+- 项目模型: Tenant, DataSourceConnection, KnowledgeDocument, QueryLog, QueryStatus
+- 项目中间件: tenant_context（get_current_tenant_id, get_current_tenant）
+- 项目配置: core.config（get_settings）
+- 外部库: structlog, sqlalchemy（and_, or_）
+
+**下游依赖** (需要反向索引分析):
+- [llm_service.py](./llm_service.py) - LLM服务检查频率限制
+- [agent_service.py](./agent_service.py) - Agent服务记录查询日志
+
+**调用方**:
+- 查询API检查频率限制
+- 查询API记录查询日志
+- 查询API获取查询历史
+- 事务管理
+
+## [STATE]
+- **事务管理器**: DatabaseTransactionManager
+  - _transaction_stack列表（支持嵌套事务）
+  - _savepoints字典（保存点）
+  - transaction上下文管理器（@contextmanager）
+  - safe_commit/safe_rollback安全提交/回滚
+  - is_in_transaction检查事务状态
+  - get_transaction_depth获取事务栈深度
+- **查询限制**: QueryLimits
+  - max_queries_per_hour: 100（每小时查询限制）
+  - max_concurrent_queries: 5（并发查询限制）
+  - max_query_length: 1000（查询长度限制）
+  - query_timeout_seconds: 60（查询超时）
+- **查询上下文**: QueryContext
+  - db, tenant_id, user_id
+  - tenant（租户信息）
+  - transaction_manager（事务管理器）
+  - limits（查询限制）
+- **Story 3.1要求**:
+  - 租户隔离（只返回当前租户的数据源和文档）
+  - 频率限制（每小时和并发限制）
+  - 查询日志记录（完整的状态跟踪）
+  - 查询结果缓存（1小时TTL）
+  - 事务管理（完整回滚机制）
+
+## [SIDE-EFFECTS]
+- **数据库查询**: db.query(Tenant/DataSourceConnection/KnowledgeDocument/QueryLog).filter(...).all()/first()/count()
+- **条件过滤**: and_组合过滤条件
+- **排序**: order_by(QueryLog.created_at.desc())
+- **分页**: offset(offset).limit(page_size)
+- **上下文管理器**: with self.transaction_manager.transaction() as db自动事务管理
+- **异常处理**: try-except捕获异常，回滚事务，抛出RuntimeError
+- **字典获取**: tenant.settings.get('key', default)获取租户配置
+- **时间计算**: datetime.utcnow() - timedelta(hours=1)计算1小时前
+- **计数器**: recent_queries/active_queries查询数量
+- **对象创建**: QueryLog(...)创建查询日志对象
+- **数据库操作**: db.add(query_log), db.commit(), db.rollback(), db.delete().delete()
+- **列表推导式**: [log for log in query_logs]转换查询日志为字典
+- **除法计算**: (total_count + page_size - 1) // page_size计算总页数
+- **中间件调用**: get_current_tenant_id(), get_current_tenant()获取当前租户
+- **全局函数**: create_query_context, get_query_context工厂和依赖注入函数
+
+## [POS]
+**路径**: backend/src/app/services/query_context.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 依赖项目模型和中间件
 """
 
 import asyncio

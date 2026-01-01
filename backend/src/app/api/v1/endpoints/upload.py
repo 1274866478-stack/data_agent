@@ -1,6 +1,40 @@
 """
-分块上传API端点 - Story 2.4性能优化
-提供大文件分块上传、断点续传API
+# [UPLOAD] 分块上传API端点
+
+## [HEADER]
+**文件名**: upload.py
+**职责**: 提供大文件分块上传、断点续传和会话管理 - Story 2.4性能优化
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 分块上传实现
+
+## [INPUT]
+- **POST /upload/initialize**: 初始化上传会话 - UploadFile
+- **POST /upload/chunk/{session_id}/{chunk_number}**: 上传分块 - chunk_data
+- **POST /upload/complete/{session_id}**: 完成上传 - checksum
+- **GET /upload/status/{session_id}**: 查询上传状态
+- **DELETE /upload/{session_id}**: 取消上传
+
+## [OUTPUT]
+- **UploadSessionResponse**: 会话信息 - session_id, total_chunks, chunk_size
+- **UploadStatusResponse**: 上传状态 - progress, uploaded_chunks
+- **CompletionResponse**: 完成结果 - success, document_id
+
+## [LINK]
+**上游依赖**:
+- [../../services/chunked_upload_service.py](../../services/chunked_upload_service.py)
+- [../../services/document_service.py](../../services/document_service.py)
+- [../../middleware/tenant_context.py](../../middleware/tenant_context.py)
+
+**调用方**:
+- 前端文件上传组件
+- 大文件上传功能
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/upload.py
+**模块层级**: Level 5
+**依赖深度**: 2层
 """
 
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks

@@ -1,6 +1,45 @@
 """
-文件上传API端点
-支持CSV、Excel、SQLite等文件格式上传并创建数据源
+# 文件上传API端点
+
+## [HEADER]
+**文件名**: file_upload.py
+**职责**: 提供CSV、Excel、SQLite文件上传、解析和导入PostgreSQL数据源的RESTful API
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本
+
+## [INPUT]
+- file: UploadFile - 上传的文件（支持.csv, .xlsx, .xls, .db, .sqlite, .sqlite3）
+- name: str - 数据源名称
+- description: Optional[str] - 数据源描述
+- tenant_info: tuple - 租户信息（通过依赖注入）
+- db: Session - 数据库会话（通过依赖注入）
+
+## [OUTPUT]
+- 上传成功响应: Dict[str, Any]（包含数据源ID、导入结果、文件信息）
+- 支持的文件类型列表: Dict[str, Any]
+
+## [LINK]
+**上游依赖**:
+- [../../core/auth.py](../../core/auth.py) - get_current_user_with_tenant依赖注入
+- [../../data/models.py](../../data/models.py) - Tenant模型
+- [../../data/database.py](../../data/database.py) - get_db依赖注入
+- [../../services/data_source_service.py](../../services/data_source_service.py) - data_source_service数据源服务
+- [../../services/database_interface.py](../../services/database_interface.py) - PostgreSQLAdapter数据库适配器
+
+**下游依赖**:
+- 无（API端点为最外层）
+
+**调用方**:
+- 前端文件上传界面
+- 数据导入工具
+- 数据源管理功能
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/file_upload.py
+**模块层级**: Level 3（API端点层）
+**依赖深度**: 2 层（依赖于services、data和core层）
 """
 
 import os

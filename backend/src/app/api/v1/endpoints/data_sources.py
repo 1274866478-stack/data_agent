@@ -1,6 +1,71 @@
 """
-数据源连接管理端点
-实现Story 2.3要求的完整API功能
+# [DATA_SOURCES] 数据源连接管理API端点
+
+## [HEADER]
+**文件名**: data_sources.py
+**职责**: 实现数据源连接的完整CRUD操作、文件上传、连接测试、批量管理和搜索功能，支持PostgreSQL/MySQL/SQLite和CSV/Excel文件类型，确保租户隔离和数据安全
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 实现Story 2.3要求的数据源管理API
+
+## [INPUT]
+- **tenant_id: str** - 租户ID（从查询参数获取，实际应从JWT提取）
+- **user_id: str** - 用户ID（用于权限验证和操作审计）
+- **connection_id: str** - 数据源连接ID（路径参数）
+- **request_data: DataSourceCreateRequest** - 创建数据源请求数据（Pydantic模型）
+  - name: 数据源名称
+  - connection_string: 数据库连接字符串
+  - db_type: 数据库类型
+  - create_db_if_not_exists: 是否自动创建数据库
+- **update_data: DataSourceUpdateRequest** - 更新数据源请求数据（Pydantic模型）
+- **file: UploadFile** - 上传的数据文件（CSV/Excel/SQLite）
+- **db: Session** - 数据库会话（通过依赖注入获取）
+
+## [OUTPUT]
+- **data_source_list: list** - 数据源连接列表
+  - id: 连接ID
+  - name: 数据源名称
+  - db_type: 数据库类型
+  - status: 连接状态
+  - host: 主机地址
+  - port: 端口号
+  - database_name: 数据库名称
+  - last_tested_at: 最后测试时间
+  - test_result: 测试结果详情
+- **overview_stats: dict** - 数据源概览统计
+  - databases: 数据库统计
+  - documents: 文档统计
+  - storage: 存储使用情况
+  - recent_activity: 最近活动记录
+- **test_result: dict** - 连接测试结果
+  - success: 测试是否成功
+  - message: 测试消息
+  - error_code: 错误代码
+  - response_time_ms: 响应时间
+- **error_response: HTTPException** - 错误响应（400, 403, 404, 500）
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [../../data/database.py](../../data/database.py) - get_db(), Session
+- [../../data/models.py](../../data/models.py) - DataSourceConnection, Tenant, DataSourceConnectionStatus, TenantStatus
+- [../../services/data_source_service.py](../../services/data_source_service.py) - data_source_service, 数据源CRUD操作
+- [../../services/connection_test_service.py](../../services/connection_test_service.py) - connection_test_service, 连接测试
+- [../../services/minio_client.py](../../services/minio_client.py) - minio_service, 文件存储
+
+**下游依赖** (已读取源码):
+- 无（API端点是叶子模块）
+
+**调用方**:
+- 前端数据源管理页面 - 调用数据源CRUD API
+- 前端数据连接表单 - 创建和测试数据源连接
+- 前端仪表板 - 显示数据源概览统计
+- 文件上传组件 - 上传CSV/Excel数据文件
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/data_sources.py
+**模块层级**: Level 3 - API端点层
+**依赖深度**: 直接依赖 data/*, services/*；被前端数据管理模块调用
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request

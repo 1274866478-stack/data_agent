@@ -1,4 +1,47 @@
 /**
+ * # DocumentCard 文档卡片组件
+ *
+ * ## [MODULE]
+ * **文件名**: DocumentCard.tsx
+ * **职责**: 显示单个文档的信息卡片，支持状态显示、快速操作、预览、下载、删除和批量选择
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - **document**: KnowledgeDocument - 文档对象
+ * - **isSelected**: boolean (可选) - 是否被选中
+ * - **onSelectionChange**: (selected: boolean) => void (可选) - 选中状态变化回调
+ * - **showSelection**: boolean (可选) - 是否显示选择框，默认false
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 文档卡片UI
+ * - **副作用**: 调用documentStore的方法（delete, process, preview, download）
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [react](https://react.dev) - React核心库
+ * - [date-fns](https://date-fns.org) - 日期格式化
+ * - [@/store/documentStore.ts](../../store/documentStore.ts) - 文档状态管理
+ * - [@/components/ui/*](../ui/) - UI基础组件（Button, Badge）
+ *
+ * **下游依赖**:
+ * - [./DocumentPreview.tsx](./DocumentPreview.tsx) - 预览时打开模态框
+ *
+ * **调用方**:
+ * - [./DocumentList.tsx](./DocumentList.tsx) - 文档列表中的卡片
+ *
+ * ## [STATE]
+ * - **isLoading**: boolean - 操作加载状态
+ * - **showActions**: boolean - 鼠标悬停时显示操作按钮
+ *
+ * ## [SIDE-EFFECTS]
+ * - 调用documentStore.deleteDocument()删除文档
+ * - 调用documentStore.processDocument()处理文档
+ * - 调用documentStore.openPreviewModal()打开预览
+ * - 调用documentStore.getDocumentDownloadUrl()下载文档
+ * - 确认删除弹窗（window.confirm）
+ */
+/**
  * 文档卡片组件 - Story 2.4规范实现
  * 显示文档信息、状态指示器、快速操作按钮、预览功能
  */

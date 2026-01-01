@@ -1,3 +1,68 @@
+/**
+ * # [DATA_SOURCE_FORM] 数据源表单组件
+ *
+ * ## [MODULE]
+ * **文件名**: DataSourceForm.tsx
+ * **职责**: 提供数据源创建和编辑表单，支持文件上传（CSV/Excel/SQLite）和数据库连接（PostgreSQL/MySQL）两种模式
+ *
+ * ## [INPUT]
+ * Props:
+ * - **tenantId: string** - 租户ID
+ * - **initialData?: Partial<CreateDataSourceRequest>** - 初始数据（编辑模式）
+ * - **onSubmit?: (data: CreateDataSourceRequest) => void** - 提交成功回调
+ * - **onCancel?: () => void** - 取消回调
+ * - **isLoading?: boolean** - 外部加载状态
+ *
+ * ## [OUTPUT]
+ * UI组件:
+ * - **模式切换**: 文件上传模式 / 数据库连接模式切换按钮
+ * - **文件上传表单**:
+ *   - 拖拽上传支持
+ *   - 文件类型和大小验证
+ *   - 文件信息显示（图标、名称、大小）
+ *   - 支持CSV (100MB), Excel (100MB), SQLite (500MB)
+ * - **数据库连接表单**:
+ *   - 数据源名称输入
+ *   - 数据库类型选择 (PostgreSQL, MySQL)
+ *   - 连接字符串输入（带格式提示）
+ *   - 自动创建数据库选项（仅PostgreSQL）
+ * - **表单验证**: 客户端和服务端双重验证
+ * - **错误提示**: 统一的错误消息显示
+ *
+ * **上游依赖**:
+ * - [../../store/dataSourceStore.ts](../../store/dataSourceStore.ts) - 数据源状态管理Store
+ * - react-hook-form - 表单管理库
+ * - [../ui/button.tsx](../ui/button.tsx) - 按钮组件
+ * - [../ui/input.tsx](../ui/input.tsx) - 输入框组件
+ * - [../ui/label.tsx](../ui/label.tsx) - 标签组件
+ * - [../ui/card.tsx](../ui/card.tsx) - 卡片组件
+ * - [../ui/loading-spinner.tsx](../ui/loading-spinner.tsx) - 加载指示器
+ * - [../ui/error-message.tsx](../ui/error-message.tsx) - 错误消息组件
+ * - lucide-react - 图标库 (FileUp, Database, Server)
+ *
+ * **下游依赖**:
+ * - [../DataSourceList.tsx](../DataSourceList.tsx) - 数据源列表 (可能调用此表单)
+ * - [../../app/data-sources/page.tsx](../../app/data-sources/page.tsx) - 数据源管理页面
+ *
+ * **调用方**:
+ * - [../../app/data-sources/page.tsx](../../app/data-sources/page.tsx) - 数据源页面
+ * - 任何需要创建/编辑数据源的模态框或对话框
+ *
+ * ## [STATE]
+ * - **模式状态**: mode (file | database)
+ * - **表单状态**: react-hook-form管理两个独立表单状态
+ * - **文件状态**: selectedFile, fileError, dragActive
+ * - **加载状态**: isLoading (从store), isLocalLoading, isSubmitting
+ * - **错误状态**: error (从store), localError
+ * - **配置常量**: SUPPORTED_DATABASE_TYPES, SUPPORTED_FILE_TYPES
+ *
+ * ## [SIDE-EFFECTS]
+ * - 调用dataSourceStore.createDataSource (创建数据源)
+ * - 文件系统操作 (文件选择和读取)
+ * - 浏览器confirm对话框 (删除会话确认，仅在组件内部)
+ * - console日志输出 (表单提交调试信息)
+ */
+
 'use client'
 
 import { useState, useRef } from 'react'

@@ -1,6 +1,74 @@
 """
-租户服务模块
-实现Story-2.2要求的租户业务逻辑
+# [TENANT_SERVICE] 租户管理服务
+
+## [HEADER]
+**文件名**: tenant_service.py
+**职责**: 实现租户CRUD操作、租户初始化、统计信息查询、状态管理和软删除功能（Story-2.2）
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 租户管理服务（Story-2.2要求）
+
+## [INPUT]
+- **tenant_id: str** - 租户唯一标识符
+- **email: str** - 租户邮箱地址
+- **display_name: Optional[str]** - 租户显示名称
+- **settings: Optional[Dict[str, Any]]** - 租户特定设置
+- **update_data: Dict[str, Any]** - 更新数据字典
+- **status: TenantStatus** - 租户状态枚举（ACTIVE, SUSPENDED, DELETED）
+- **db: Session** - SQLAlchemy数据库会话（依赖注入）
+
+## [OUTPUT]
+- **Tenant**: 租户对象（create_tenant, get_tenant_by_id, get_tenant_by_email, update_tenant）
+- **bool**: 操作成功/失败（delete_tenant, suspend_tenant, activate_tenant）
+- **Optional[Dict[str, Any]]**: 租户统计信息（get_tenant_stats）
+  - total_documents: int - 总文档数
+  - total_data_sources: int - 数据源连接数
+  - storage_used_mb: int - 已用存储（MB）
+  - processed_documents: int - 已处理文档数
+  - pending_documents: int - 待处理文档数
+  - storage_quota_mb: int - 存储配额（MB）
+  - storage_usage_percent: float - 存储使用百分比
+- **Dict[str, Any]**: 初始化结果（setup_new_tenant）
+  - success: bool - 是否成功
+  - tenant_id: str - 租户ID
+  - message: str - 结果消息
+  - tenant: Dict - 租户对象字典
+
+**上游依赖** (已读取源码):
+- [./data/models.py](./data/models.py) - 数据模型（Tenant, TenantStatus, DataSourceConnection, KnowledgeDocument）
+- [./data/database.py](./data/database.py) - 数据库连接（get_db）
+
+**下游依赖** (需要反向索引分析):
+- [../api/v1/endpoints/tenants.py](../api/v1/endpoints/tenants.py) - 租户API端点
+- [../api/v1/endpoints/auth.py](../api/v1/endpoints/auth.py) - 认证端点（租户创建）
+
+**调用方**:
+- 租户注册流程
+- 租户管理API
+- 租户统计查询
+- 租户状态管理
+
+## [STATE]
+- **数据库会话**: 通过__init__注入，所有操作使用self.db
+- **依赖注入**: get_tenant_service和get_tenant_setup_service函数使用FastAPI的Depends
+- **复合查询**: 统计信息需要关联查询DataSourceConnection和KnowledgeDocument
+- **软删除策略**: 使用status=DELETED标记，不物理删除数据
+- **设置合并**: update_tenant中settings采用合并策略而非完全替换
+- **存储计算**: storage_used_mb通过sum(file_size)聚合计算
+
+## [SIDE-EFFECTS]
+- **数据库事务**: commit操作持久化变更（create, update, delete, suspend, activate）
+- **刷新操作**: refresh操作获取最新数据（create, update后）
+- **查询过滤**: get操作自动过滤status=DELETED的租户
+- **统计聚合**: sum()和count()聚合查询（可能影响性能）
+- **异常抛出**: duplicate tenant/email时抛出ValueError
+- **时间戳更新**: 所有修改操作自动更新updated_at字段
+
+## [POS]
+**路径**: backend/src/app/services/tenant_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 直接依赖 data.models 和 data.database
 """
 
 from typing import Optional, Dict, Any

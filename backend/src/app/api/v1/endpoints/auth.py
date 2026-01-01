@@ -1,6 +1,64 @@
 """
-认证API端点
-提供用户认证、JWT验证和用户信息管理功能
+# [AUTH] 认证API端点
+
+## [HEADER]
+**文件名**: auth.py
+**职责**: 提供用户认证、JWT验证、租户管理和用户信息管理功能
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 认证端点实现
+
+## [INPUT]
+### HTTP请求
+- **POST /auth/verify**: Token验证请求 - TokenVerifyRequest {token: str}
+- **GET /auth/me**: 获取当前用户 - 需要有效JWT Token
+- **GET /auth/tenant**: 获取租户信息 - 需要有效JWT Token
+- **POST /auth/refresh-tenant**: 刷新租户信息 - 需要有效JWT Token
+- **GET /auth/status**: 获取认证状态 - 可选认证
+- **POST /auth/logout**: 用户登出 - 需要有效JWT Token
+- **GET /auth/config**: 获取认证配置 - 无需认证
+- **POST /auth/test-token**: 测试Token验证 - 可选认证 {token: str}
+
+### 依赖注入
+- **get_current_user_with_tenant**: 从JWT Token提取当前用户和租户信息
+- **get_current_user_optional**: 可选的用户认证依赖
+- **get_db**: SQLAlchemy数据库会话
+
+## [OUTPUT]
+### API响应
+- **TokenVerifyResponse**: Token验证结果 - {valid, user_info, expires_at, error_message}
+- **UserInfoResponse**: 用户信息 - {user_id, tenant_id, email, first_name, last_name, is_verified, created_at}
+- **TenantInfoResponse**: 租户信息 - {tenant_id, email, created_at, status}
+- **认证配置**: {auth_provider, jwt_issuer, supported_flows, token_validation, tenant_isolation}
+
+### 核心功能
+- **JWT Token验证**: 验证Clerk JWT Token有效性并提取用户信息
+- **租户自动创建**: 当租户不存在时自动创建租户记录
+- **用户信息获取**: 从Token中提取用户详细信息
+- **认证状态检查**: 检查当前请求的认证状态
+- **登出处理**: 记录登出事件(无状态JWT系统)
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [../../core/auth.py](../../core/auth.py) - 认证中间件(get_current_user_with_tenant, get_current_user_optional)
+- [../../core/jwt_utils.py](../../core/jwt_utils.py) - JWT工具(validate_clerk_token, get_token_expiration, create_tenant_for_user)
+- [../../data/models.py](../../data/models.py) - 数据模型(Tenant)
+- [../../data/database.py](../../data/database.py) - 数据库连接(get_db)
+
+**下游依赖**:
+- **前端应用**: 通过/api/v1/auth/*端点进行认证操作
+- **API文档**: FastAPI自动生成OpenAPI文档
+
+**调用方**:
+- **前端Clerk集成**: 验证Token并获取用户信息
+- **租户管理**: 自动创建和刷新租户记录
+- **API测试**: 使用test-token端点调试认证
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/auth.py
+**模块层级**: Level 5 (Backend → src/app → api/v1 → endpoints → auth)
+**依赖深度**: 2层 (core和data模块)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status

@@ -1,7 +1,114 @@
 /**
- * 消息缓存服务
- * 提供离线消息缓存和同步功能
- * 支持 IndexedDB 和 localStorage 双重存储策略
+ * # [MESSAGE_CACHE_SERVICE] 消息缓存服务
+ *
+ * ## [MODULE]
+ * **文件名**: messageCacheService.ts
+ * **职责**: 提供离线消息缓存和同步功能 - IndexedDB + localStorage 双重存储策略、冲突检测、事件通知
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ * **变更记录**:
+ * - v1.0.0 (2026-01-01): 初始版本 - 消息缓存服务
+ *
+ * ## [INPUT]
+ * - **session: CachedSession** - 要缓存的会话
+ * - **sessionId: string** - 会话ID
+ * - **message: Omit<CachedMessage, 'syncAttempted' | 'lastSyncAttempt'>** - 要缓存的消息
+ * - **messageId: string** - 消息ID
+ * - **status: CachedMessage['status']** - 消息状态
+ * - **sendMessage: (content, sessionId?) => Promise<void>** - 发送消息函数
+ * - **maxAge?: number** - 缓存最大年龄（毫秒，默认7天）
+ *
+ * ## [OUTPUT]
+ * - **CachedSession[]**: 缓存的会话列表
+ * - **CachedSession | null**: 单个缓存的会话
+ * - **CachedMessage[]**: 缓存的消息列表
+ * - **string[]**: 同步队列（消息ID列表）
+ * - **{sessionId, message}[]**: 待同步的消息详情
+ * - **SyncResult**: 同步结果
+ *   - success, syncedMessages[], failedMessages[], conflictMessages[], errorMessage?
+ * - **cacheStats**: 缓存统计
+ *   - totalSessions, totalMessages, pendingMessages, failedMessages, cacheSize
+ *
+ * **上游依赖**:
+ * - 无（独立服务）
+ *
+ * **下游依赖**:
+ * - 无（Service是叶子服务模块）
+ *
+ * **调用方**:
+ * - [../store/chatStore](../store/chatStore.ts) - 聊天Store缓存和同步消息
+ * - [../components/chat/ChatInterface.tsx](../components/chat/ChatInterface.tsx) - 聊天界面同步消息
+ *
+ * ## [STATE]
+ * - **IndexedDB数据库**:
+ *   - DB_NAME: 'data-agent-offline-cache'
+ *   - DB_VERSION: 1
+ *   - 存储对象: SESSIONS_STORE, MESSAGES_STORE, SYNC_QUEUE_STORE
+ *   - 索引: updatedAt, isActive（会话）；sessionId, status, timestamp（消息）
+ * - **IndexedDBHelper**: 封装数据库操作类
+ *     - openDatabase(): 打开或创建数据库
+ *     - getAllSessions(), saveSession(), getMessagesBySession(), saveMessage()
+ *     - getPendingMessages(), addToSyncQueue(), removeFromSyncQueue()
+ *     - deleteSession(), clearAll(), isSupported()
+ * - **缓存策略**: IndexedDB主存储 + localStorage备份
+ * - **同步队列**: 存储待发送的消息ID列表
+ * - **消息状态**:
+ *   - pending: 待发送
+ *   - sent: 已发送（本地）
+ *   - error: 发送失败
+ *   - synced: 已同步到服务器
+ * - **版本控制**: version字段用于冲突检测
+ * - **客户端ID**: clientId用于多设备同步
+ * - **重试机制**: maxRetries=3，syncRetryDelay=5000ms
+ * - **同步事件**: SyncEventType（start, progress, complete, error, conflict）
+ * - **事件监听**: SyncEventListener回调通知
+ * - **缓存过期**: cleanupExpiredCache()清理7天前的数据
+ * - **客户端ID生成**: localStorage存储或生成新ID（client-{timestamp}-{random}）
+ *
+ * ## [SIDE-EFFECTS]
+ * - **IndexedDB操作**:
+ *   - indexedDB.open()打开数据库
+ *   - db.createObjectStore()创建存储对象和索引
+ *   - objectStore.getAll()获取所有数据
+ *   - objectStore.put()保存数据
+ *   - objectStore.delete()删除数据
+ *   - objectStore.clear()清空数据
+ *   - index.getAll()通过索引查询
+ *   - transaction.oncomplete/onsuccess/onerror事件处理
+ * - **localStorage操作**:
+ *   - localStorage.getItem()获取缓存数据
+ *   - localStorage.setItem()保存缓存数据
+ *   - localStorage.removeItem()删除缓存数据
+ *   - JSON.parse()解析JSON字符串
+ *   - JSON.stringify()序列化对象
+ * - **日期转换**:
+ *   - new Date(string)转换ISO字符串为Date对象
+ *   - date.toISOString()转换Date为ISO字符串
+ * - **数组操作**:
+ *   - sessions.findIndex()查找会话索引
+ *   - session.messages.findIndex()查找消息索引
+ *   - messages.filter()过滤消息
+ *   - messages.push()添加消息
+ *   - messages.splice()删除消息
+ *   - syncQueue.indexOf()查找队列索引
+ *   - syncQueue.splice()删除队列项
+ *   - sessions.filter()过滤会话（过期清理）
+ * - **Set操作**: activeMessageIds.add()添加消息ID
+ * - **同步流程**:
+ *   - sendMessage(content, sessionId)发送消息到服务器
+ *   - 更新消息状态为'synced'
+ *   - 增加version版本号
+ *   - 从syncQueue移除消息ID
+ *   - emitSyncEvent()触发同步事件
+ * - **重试逻辑**:
+ *   - 同步失败时增加syncAttempted计数
+ *   - 超过maxRetries标记为'error'
+ *   - 从syncQueue移除
+ * - **进度计算**: Math.round((processedCount / total) * 100)
+ * - **try-catch**: 捕获IndexedDB和JSON解析错误
+ * - **Promise**: 封装异步IndexedDB操作为Promise
+ * - **单例模式**: messageCacheService全局实例
+ * - **便捷函数**: cacheSession, cacheMessage, getCachedSessions, getCachedSession, getCachedMessages, syncMessages, clearCache, getCacheStats, addSyncEventListener, removeSyncEventListener, retryFailedMessages
  */
 
 export interface CachedMessage {

@@ -1,6 +1,103 @@
 """
-对话管理服务
-管理多轮对话、上下文窗口、对话状态等
+# [CONVERSATION_SERVICE] 对话管理服务
+
+## [HEADER]
+**文件名**: conversation_service.py
+**职责**: 管理多轮对话、上下文窗口、对话状态、摘要生成和持久化
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 对话管理服务
+
+## [INPUT]
+- **tenant_id: str** - 租户ID
+- **user_id: str** - 用户ID
+- **conversation_id: Optional[str]** - 对话ID（可选）
+- **metadata: Optional[Dict[str, Any]]]** - 元数据
+- **role: str** - 消息角色（"user", "assistant", "system"）
+- **content: str** - 消息内容
+- **token_count: int** - Token数量
+- **state: ConversationState** - 对话状态
+- **limit: int** - 限制数量
+- **offset: int** - 偏移量
+- **archive: bool** - 是否归档
+- **days: int** - 保留天数
+
+## [OUTPUT]
+- **str**: 对话ID（create_conversation）
+- **bool**: 操作是否成功（add_message, update_conversation_state, clear_conversation）
+- **Optional[Dict[str, Any]]**: 对话上下文数据（get_conversation_context）
+  - conversation_id, tenant_id, user_id, state, context_window, message_count, created_at, updated_at, metadata, summary
+- **List[Dict[str, Any]]**: 消息历史列表（get_conversation_history）
+- **Dict[str, Any]**: 对话统计信息（get_conversation_statistics）
+  - total_conversations, active_conversations, total_messages, average_messages_per_conversation
+- **Dict[str, Any]**: 内存使用情况（get_memory_usage）
+  - active_conversations, total_messages, total_context_size, average_messages_per_conversation
+
+**上游依赖** (已读取源码):
+- Python标准库: logging, json, time, datetime, asyncio, dataclasses, enum, typing
+- 项目配置: src.app.core.config.settings
+- 项目数据: src.app.data.database.get_db
+
+**下游依赖** (需要反向索引分析):
+- [llm_service.py](./llm_service.py) - LLM服务使用对话上下文
+- [agent_service.py](./agent_service.py) - Agent服务使用对话管理
+
+**调用方**:
+- 聊天API创建对话和添加消息
+- 对话历史查询API
+- 对话清理任务
+
+## [STATE]
+- **对话状态**: ConversationState枚举（ACTIVE, PAUSED, COMPLETED, ARCHIVED）
+- **数据结构**:
+  - ConversationContext: 对话上下文（conversation_id, tenant_id, user_id, state, messages, context_window, summary, created_at, updated_at, metadata, max_context_messages=10, max_context_tokens=8000, context_compression_threshold=15, auto_summary_enabled=True）
+  - MessageTemplate: 消息模板（role, content, timestamp, token_count, metadata）
+- **默认配置**:
+  - max_context_messages: 10（上下文窗口最大消息数）
+  - max_context_tokens: 8000（上下文窗口最大Token数）
+  - context_compression_threshold: 15（上下文压缩阈值）
+  - auto_summary_enabled: True（自动摘要启用）
+  - summary_interval_minutes: 30（摘要间隔）
+- **存储**:
+  - conversations: Dict[conversation_id, ConversationContext] - 对话字典
+  - context_windows: Dict[conversation_id, List[Dict]] - 上下文窗口字典
+- **上下文更新**: 添加消息时自动更新上下文窗口
+  - 消息数量超过阈值时进行上下文压缩（_compress_context）
+  - Token数超过限制时按Token裁剪上下文（_trim_context_by_tokens）
+- **摘要生成**: 自动检测并生成对话摘要（_check_and_generate_summary）
+  - 消息数量 >= context_compression_threshold或时间超过30分钟时生成
+- **持久化**: 对话和消息持久化到数据库（_persist_conversation, _persist_message）
+- **清理**: 自动清理旧对话（cleanup_old_conversations，默认30天）
+- **统计**: 计算对话统计信息（total_conversations, active_conversations, total_messages）
+- **内存监控**: 计算内存使用情况（active_conversations, total_messages, total_context_size）
+- **全局单例**: conversation_manager全局对话管理器实例
+
+## [SIDE-EFFECTS]
+- **时间戳**: int(time.time())生成对话ID，datetime.utcnow()记录时间戳
+- **对象创建**: ConversationContext(...)创建对话上下文
+- **字典操作**: self.conversations[conversation_id] = context添加对话，del self.conversations[conversation_id]删除对话
+- **属性设置**: setattr(context, key, value)应用默认配置
+- **列表操作**: context.messages.append(message)添加消息，context.context_window = messages[-N:]获取最近N条消息
+- **持久化**: await self._persist_conversation(context)持久化对话
+- **上下文更新**: await self._update_context_window(context)更新上下文窗口
+- **摘要检查**: await self._check_and_generate_summary(context)检查并生成摘要
+- **消息持久化**: await self._persist_message(conversation_id, message)持久化消息
+- **列表推导式**: [msg for msg in context.messages if msg["role"] == "system"]过滤系统消息
+- **切片操作**: messages[-context.max_context_messages:]获取最近消息
+- **Token计算**: sum(msg.get("token_count", 0) for msg in context.context_window)计算总Token数
+- **循环删除**: while current_tokens > limit: context.context_window.pop(0)删除最老消息
+- **条件判断**: 检查消息数量、时间间隔决定是否生成摘要
+- **时间差计算**: (datetime.utcnow() - context.updated_at).total_seconds()计算时间差
+- **字符串操作**: msg[:50] + "..."截断消息，", ".join(messages)合并消息
+- **字典删除**: del self.context_windows[conversation_id]删除上下文窗口
+- **异常处理**: try-except捕获所有异常，记录日志
+- **全局单例**: conversation_manager全局实例
+
+## [POS]
+**路径**: backend/src/app/services/conversation_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 依赖项目配置和数据库
 """
 
 import logging

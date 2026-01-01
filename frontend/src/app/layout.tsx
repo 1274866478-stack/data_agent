@@ -1,3 +1,46 @@
+/**
+ * # [ROOT_LAYOUT] 根布局组件
+ *
+ * ## [MODULE]
+ * **文件名**: layout.tsx
+ * **职责**: 提供应用根布局，集成Clerk认证Provider、字体配置和开发模式认证支持
+ *
+ * ## [INPUT]
+ * Props:
+ * - **children: React.ReactNode** - 子页面或组件内容
+ *
+ * ## [OUTPUT]
+ * - **布局结构**: ClerkProvider/AuthProvider 包裹的 HTML 结构
+ * - **字体配置**: Inter 字体应用到整个应用
+ * - **元数据**: 页面标题和描述
+ * - **认证模式**:
+ *   - 生产模式: 使用ClerkProvider
+ *   - 开发模式: 使用AuthProvider (无需Clerk)
+ *   - 配置错误: 显示错误提示页面
+ *
+ * **上游依赖**:
+ * - [../components/auth/ClerkProvider.tsx](../components/auth/ClerkProvider.tsx) - Clerk认证Provider
+ * - [../components/auth/AuthContext.tsx](../components/auth/AuthContext.tsx) - 开发模式认证Provider
+ * - [globals.css](./globals.css) - 全局样式
+ * - next/font/google - Google字体 (Inter)
+ *
+ * **下游依赖**:
+ * - 所有应用页面和组件 (通过children)
+ *
+ * **调用方**:
+ * - Next.js App Router (自动应用此布局到所有页面)
+ *
+ * ## [STATE]
+ * - **环境变量检测**: 读取 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY 和 NODE_ENV
+ * - **认证模式选择**: 根据环境变量选择合适的Provider
+ * - **全局字体**: Inter字体配置
+ *
+ * ## [SIDE-EFFECTS]
+ * - 读取环境变量 (NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, NODE_ENV, NEXT_PUBLIC_ENVIRONMENT)
+ * - 全局字体注入 (Inter字体)
+ * - Clerk SDK初始化 (通过ClerkProviderWrapper)
+ */
+
 import './globals.css'
 import { Inter } from 'next/font/google'
 import { ClerkProviderWrapper } from '@/components/auth/ClerkProvider'

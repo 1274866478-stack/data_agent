@@ -1,6 +1,75 @@
 """
-数据源管理服务
-处理数据源的CRUD操作和租户隔离
+# [DATA_SOURCE_SERVICE] 数据源管理服务
+
+## [HEADER]
+**文件名**: data_source_service.py
+**职责**: 实现数据源连接的CRUD操作、租户隔离、连接字符串加密解密、连接解析和批量管理功能
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 数据源管理服务
+
+## [INPUT]
+- **tenant_id: str** - 租户ID（强制隔离）
+- **name: str** - 数据源名称
+- **connection_string: str** - 数据库连接字符串（明文，将被加密）
+- **db: Session** - SQLAlchemy数据库会话（依赖注入）
+- **db_type: str** - 数据库类型（postgresql, mysql等，默认postgresql）
+- **host: Optional[str]** - 主机地址
+- **port: Optional[int]** - 端口号
+- **database_name: Optional[str]** - 数据库名称
+- **update_data: Dict[str, Any]** - 更新数据字典
+- **active_only: bool** - 是否只获取活跃数据源（默认True）
+- **skip: int** - 分页跳过记录数（默认0）
+- **limit: int** - 分页限制记录数（默认100）
+
+## [OUTPUT]
+- **DataSourceConnection**: 数据源连接对象（create, get_by_id, update）
+- **List[DataSourceConnection]**: 数据源连接列表（get_data_sources）
+- **bool**: 操作成功/失败（delete_data_source）
+- **str**: 解密后的连接字符串（get_decrypted_connection_string）
+- **Dict[str, Any]**: 解析后的连接信息（_parse_connection_string）
+  - username: str - 用户名
+  - password: str - 密码
+  - host: str - 主机
+  - port: int - 端口
+  - database: str - 数据库名
+
+**上游依赖** (已读取源码):
+- [./data/models.py](./data/models.py) - 数据模型（DataSourceConnection, Tenant, DataSourceConnectionStatus）
+- [./encryption_service.py](./encryption_service.py) - 加密服务（connection_string加密解密）
+
+**下游依赖** (需要反向索引分析):
+- [../api/v1/endpoints/data_sources.py](../api/v1/endpoints/data_sources.py) - 数据源API端点
+- [connection_test_service.py](./connection_test_service.py) - 连接测试服务
+
+**调用方**:
+- 数据源创建流程
+- 数据源管理API
+- 连接测试操作
+- Agent查询（需要解密连接字符串）
+
+## [STATE]
+- **加密服务**: 通过encryption_service加密连接字符串
+- **租户隔离**: 所有操作强制过滤tenant_id
+- **软删除策略**: 使用status=INACTIVE标记删除
+- **名称唯一性**: 同一租户下名称唯一检查
+- **连接解析**: 自动解析PostgreSQL和MySQL连接字符串
+- **数据库会话**: 通过依赖注入的db参数管理事务
+
+## [SIDE-EFFECTS]
+- **数据库事务**: commit操作持久化变更（create, update, delete）
+- **加密操作**: encryption_service.encrypt_connection_string（存储前）
+- **解密操作**: 连接字符串属性访问时自动解密（模型层混合属性）
+- **连接解析**: 正则匹配提取连接信息（PostgreSQL/MySQL）
+- **查询过滤**: 自动过滤INACTIVE状态的记录（active_only=True时）
+- **异常抛出**: 租户不存在、名称重复、数据源不存在时抛出ValueError
+- **时间戳更新**: updated_at自动更新
+
+## [POS]
+**路径**: backend/src/app/services/data_source_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 直接依赖 data.models 和 encryption_service
 """
 
 import logging

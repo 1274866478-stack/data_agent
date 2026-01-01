@@ -1,6 +1,62 @@
 """
-AI 服务测试 API 端点
-专门用于测试智谱 AI API 的各种功能
+# [TEST] AI服务测试API端点
+
+## [HEADER]
+**文件名**: test.py
+**职责**: 提供智谱AI API的测试和调试功能 - 连接测试、聊天测试、嵌入测试、语义搜索、文本分析、模型信息
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 智谱AI测试端点实现
+
+## [INPUT]
+### HTTP请求
+- **POST /test/zhipu**: 测试智谱AI连接 - 无参数
+- **POST /test/zhipu/chat**: 聊天测试 - ChatTestRequest {message, model, max_tokens, temperature}
+- **POST /test/zhipu/embedding**: 嵌入测试 - EmbeddingTestRequest {texts[], model}
+- **POST /test/zhipu/semantic-search**: 语义搜索 - SemanticSearchRequest {query, documents[], top_k}
+- **POST /test/zhipu/text-analysis**: 文本分析 - TextAnalysisRequest {text, analysis_type}
+- **GET /test/zhipu/models**: 获取模型信息 - 无参数
+- **GET /test/zhipu/comprehensive**: 综合测试 - 并行执行所有测试
+
+### 依赖服务
+- **zhipu_service**: 智谱AI客户端服务实例
+
+## [OUTPUT]
+### 测试响应
+- **连接测试**: {service, test_type, status, message, model_info?, timestamp}
+- **聊天测试**: {service, test_type, status, request{}, response{}, timestamp}
+- **嵌入测试**: {service, test_type, status, request{}, response{}, timestamp}
+- **语义搜索**: {service, test_type, status, request{}, response[], timestamp}
+- **文本分析**: {service, test_type, status, request{}, response{}, timestamp}
+- **模型信息**: {service, test_type, status, default_model{}, tested_models[], supported_models[], timestamp}
+- **综合测试**: {service, test_type, overall_status, successful_tests, total_tests, results{}, timestamp}
+
+### 测试功能
+- **连接验证**: 测试智谱AI API连接状态
+- **模型调用**: 测试GLM系列模型的聊天和嵌入功能
+- **语义搜索**: 测试向量化搜索能力
+- **文本分析**: 测试文本摘要、关键词、情感分析等功能
+- **性能监控**: 记录各功能的响应时间和成功率
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [../../services/zhipu_client.py](../../services/zhipu_client.py) - 智谱AI服务(zhipu_service)
+
+**下游依赖**:
+- **开发调试工具**: 通过API测试智谱AI功能
+- **监控面板**: 查看AI服务健康状态
+- **集成测试**: 验证智谱AI集成正确性
+
+**调用方**:
+- **开发者**: 调试智谱AI功能
+- **监控系统**: 定期检查AI服务可用性
+- **CI/CD**: 自动化测试智谱AI集成
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/test.py
+**模块层级**: Level 5 (Backend → src/app → api/v1 → endpoints → test)
+**依赖深度**: 1层 (services模块)
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks

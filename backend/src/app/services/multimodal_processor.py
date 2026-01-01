@@ -1,6 +1,96 @@
 """
-多模态内容处理器
-处理图片、音频、视频等多媒体内容，集成MinIO存储
+# [MULTIMODAL_PROCESSOR] 多模态内容处理器
+
+## [HEADER]
+**文件名**: multimodal_processor.py
+**职责**: 处理图片、音频、视频等多媒体内容，集成MinIO存储和外部URL下载
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 多模态内容处理器
+
+## [INPUT]
+- **file_data: bytes** - 文件二进制数据
+- **original_filename: str** - 原始文件名
+- **tenant_id: str** - 租户ID
+- **media_type: Optional[str]** - 媒体类型（image/audio/video），如果不指定则自动检测
+- **content_list: List[Dict[str, Any]]** - 内容列表（包含image_url, input_audio, video_url等）
+- **object_name: str** - MinIO对象名称
+- **expires_hours: int** - 预签名URL有效期（小时）
+- **url: str** - 外部URL
+- **content_type: str** - 内容类型
+
+## [OUTPUT]
+- **Optional[Dict[str, Any]]**: 上传结果信息
+  - object_name: MinIO对象名称
+  - original_filename: 原始文件名
+  - media_type: 媒体类型
+  - size: 文件大小
+  - mime_type: MIME类型
+  - presigned_url: 预签名URL（24小时有效）
+  - tenant_id: 租户ID
+  - uploaded_at: 上传时间
+- **List[Dict[str, Any]]**: 处理后的内容列表
+- **Optional[Dict[str, Any]]**: 文件信息
+- **bool**: 操作成功标识
+- **Optional[str]**: 预签名URL
+- **int**: 清理数量
+
+**上游依赖** (已读取源码):
+- 项目配置: src.app.core.config.settings
+
+**下游依赖** (需要反向索引分析):
+- [llm_service.py](./llm_service.py) - LLM服务处理多模态内容
+- [document_service.py](./document_service.py) - 文档服务处理多媒体附件
+
+**调用方**:
+- LLM服务处理多模态输入
+- 文档上传服务处理图片/视频附件
+- Agent服务处理多媒体内容
+
+## [STATE]
+- **MinIO客户端**: minio_client（Minio实例）
+- **存储桶名称**: bucket_name（默认multimodal-content）
+- **最大文件大小**: max_file_size（默认50MB）
+- **允许的扩展名**: allowed_extensions字典
+  - image: .jpg, .jpeg, .png, .gif, .webp, .bmp
+  - audio: .wav, .mp3, .ogg, .flac, .aac, .m4a
+  - video: .mp4, .avi, .mov, .mkv, .webm, .flv
+- **MIME类型检测**: mimetypes.guess_type
+- **媒体类型判断**: get_media_type（根据扩展名）
+- **文件命名**: {tenant_id}/{media_type}/{uuid}.{ext}
+- **预签名URL有效期**: 24小时
+- **外部URL下载**: _download_and_upload（aiohttp.ClientSession）
+- **内容列表处理**: process_content_list（自动转换image_url, input_audio, video_url）
+- **文件信息获取**: get_file_info（MinIO stat_object）
+- **文件删除**: delete_file（MinIO remove_object）
+- **过期清理**: cleanup_expired_urls（待实现）
+
+## [SIDE-EFFECTS]
+- **MinIO操作**: minio_client.bucket_exists检查桶，minio_client.make_bucket创建桶
+- **MinIO上传**: minio_client.put_object上传文件到multimodal-content桶
+- **预签名URL**: minio_client.presigned_get_object生成24小时有效URL
+- **MinIO下载**: minio_client.stat_object获取文件信息
+- **MinIO删除**: minio_client.remove_object删除文件
+- **文件大小检查**: len(file_data) > self.max_file_size验证
+- **路径分割**: os.path.splitext提取文件扩展名
+- **MIME检测**: mimetypes.guess_type猜测文件类型
+- **UUID生成**: uuid.uuid4()生成唯一文件名
+- **字节流**: io.BytesIO(file_data)包装文件数据
+- **HTTP下载**: aiohttp.ClientSession().get()下载外部URL
+- **异步读取**: await response.read()读取文件数据
+- **URL解析**: os.path.basename提取文件名
+- **字典操作**: url_info.get("url")获取URL
+- **条件判断**: original_url.startswith(("http://", "https://"))判断外部URL
+- **列表追加**: processed_content.append添加处理后的内容
+- **异常处理**: try-except捕获所有异常，返回None或保留原始内容
+- **日志记录**: logger.info/error/warning记录操作
+- **全局单例**: multimodal_processor全局实例
+
+## [POS]
+**路径**: backend/src/app/services/multimodal_processor.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 依赖项目配置settings
 """
 
 import os

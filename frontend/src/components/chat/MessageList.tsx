@@ -1,3 +1,57 @@
+/**
+ * # [MESSAGE_LIST] 消息列表组件
+ *
+ * ## [MODULE]
+ * **文件名**: MessageList.tsx
+ * **职责**: 渲染聊天消息列表，支持Markdown渲染、图表显示、流式响应、高亮定位、错误提示和停止生成
+ *
+ * ## [INPUT]
+ * Props:
+ * - **className?: string** - 可选的CSS类名
+ * - **messages: ChatMessage[]** - 要显示的消息数组
+ * - **highlightedMessageId?: string | null** - 需要高亮显示的消息ID
+ *
+ * ## [OUTPUT]
+ * UI组件:
+ * - **消息气泡**: 用户消息（蓝色右侧）和助手消息（灰色左侧）
+ * - **Markdown渲染**: 支持富文本格式、代码块、列表等
+ * - **图表显示**: 解析并渲染ECharts图表配置（从[CHART_START]标记或metadata）
+ * - **结构化结果**: 显示表格数据和图表（通过ChatQueryResultView）
+ * - **推理步骤**: 显示AI处理步骤（通过ProcessingSteps）
+ * - **错误提示**: 显示数据源连接失败警告（AlertTriangle图标）
+ * - **工具调用状态**: 显示工具调用成功/失败状态
+ * - **停止生成按钮**: 流式响应时显示停止按钮
+ * - **高亮效果**: 搜索结果高亮显示（3秒后自动清除）
+ * - **Ref方法**: scrollToMessage, scrollToBottom
+ *
+ * **上游依赖**:
+ * - [../../store/chatStore.ts](../../store/chatStore.ts) - 聊天状态管理Store
+ * - [./EChartsRenderer.tsx](./EChartsRenderer.tsx) - ECharts图表渲染器
+ * - [./ChatQueryResultView.tsx](./ChatQueryResultView.tsx) - 查询结果视图
+ * - [./ProcessingSteps.tsx](./ProcessingSteps.tsx) - 处理步骤显示
+ * - [../ui/markdown.tsx](../ui/markdown.tsx) - Markdown渲染器
+ * - [../ui/card.tsx](../ui/card.tsx) - 卡片组件
+ * - lucide-react - 图标库 (User, Bot, AlertTriangle, Square)
+ *
+ * **下游依赖**:
+ * - [./ChatInterface.tsx](./ChatInterface.tsx) - 聊天界面（调用此组件的ref方法）
+ *
+ * **调用方**:
+ * - [ChatInterface.tsx](./ChatInterface.tsx) - 聊天主界面
+ *
+ * ## [STATE]
+ * - **Ref管理**: messagesEndRef（滚动到底部）, messageRefs（消息位置映射）
+ * - **本地高亮**: localHighlightId（本地高亮状态，3秒后清除）
+ * - **流式状态**: streamingStatus, streamingMessageId（从chatStore读取）
+ *
+ * ## [SIDE-EFFECTS]
+ * - 自动滚动到底部（messages变化时）
+ * - 高亮消息自动滚动（highlightedMessageId变化时）
+ * - 定时器操作（高亮3秒后自动清除）
+ * - 调用stopStreaming（用户点击停止生成按钮）
+ * - console日志输出（调试图表解析和processing_steps）
+ */
+
 'use client'
 
 import { useEffect, useRef, useImperativeHandle, forwardRef, useState } from 'react'

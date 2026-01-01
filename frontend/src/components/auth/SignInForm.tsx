@@ -1,3 +1,46 @@
+/**
+ * # SignInForm 用户登录表单
+ *
+ * ## [MODULE]
+ * **文件名**: SignInForm.tsx
+ * **职责**: 提供Clerk集成的登录界面，支持动态加载Clerk SDK和备用登录表单
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - 无Props输入，组件内部管理状态
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 完整的登录界面（Clerk表单 + 备用表单 + 错误提示）
+ * - **副作用**: 调用Clerk SDK登录，成功后调用AuthContext.login()并重定向
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [react](https://react.dev) - React核心库
+ * - [next/navigation](https://nextjs.org/docs/app/navigation) - Next.js导航
+ * - [next/link](https://nextjs.org/docs/app/linking) - Next.js链接
+ * - [@/components/ui/*](../ui/) - UI基础组件（Button, Input, Label, Card, Alert）
+ * - [lucide-react](https://lucide.dev) - 图标库
+ * - [./AuthContext.tsx](./AuthContext.tsx) - 认证上下文
+ *
+ * **下游依赖**:
+ * - 无直接下游组件
+ *
+ * **调用方**:
+ * - [../../app/(auth)/sign-in/page.tsx](../../app/(auth)/sign-in/page.tsx) - 登录页面
+ *
+ * ## [STATE]
+ * - **error**: string - 手动登录表单的错误信息
+ * - **clerkError**: string - Clerk SDK的错误信息
+ * - **isAuthenticated**: boolean - 从AuthContext获取，用于重定向判断
+ *
+ * ## [SIDE-EFFECTS]
+ * - 动态加载Clerk SDK并挂载登录表单到 `#clerk-sign-in` DOM节点
+ * - 监听Clerk的 `sign-in.completed` 和 `sign-in.failed` 事件
+ * - 登录成功后获取token并调用AuthContext.login()
+ * - 已认证时自动重定向到首页
+ * - 组件卸载时清理Clerk事件监听器
+ */
 'use client'
 
 import { useState, useEffect } from 'react'

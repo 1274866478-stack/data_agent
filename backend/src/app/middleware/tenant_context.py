@@ -1,7 +1,79 @@
 """
-租户上下文中间件
-实现Story-2.2要求的从JWT提取tenant_id和租户隔离
-线程安全版本 - 防止并发请求时的上下文污染
+# [TENANT CONTEXT] 租户上下文中间件
+
+## [HEADER]
+**文件名**: tenant_context.py
+**职责**: 实现多租户SaaS架构的租户上下文管理和租户隔离 - 从JWT提取tenant_id、线程安全的上下文管理、请求级别的租户隔离、数据库查询自动过滤
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 实现Story-2.2要求的租户隔离中间件
+
+## [INPUT]
+### TenantContext类初始化参数
+- **TenantContext.__init__()**: 无参数
+
+### 函数参数
+- **set_tenant(tenant_id, tenant, request_id)**: 租户ID、租户对象、请求ID
+- **extract_tenant_from_jwt(token)**: JWT token字符串
+- **get_current_tenant_from_request(request, credentials, db)**: FastAPI请求对象、HTTP认证凭证、数据库会话
+- **with_tenant_context(tenant_id, tenant, request_id)**: 租户ID、租户对象、请求ID
+- **with_tenant_isolation(func)**: 被装饰的函数
+- **create_tenant_context_middleware()**: 无参数
+- **add_tenant_filter(query, tenant_id_field_name)**: SQLAlchemy查询对象、租户ID字段名
+- **filter_by_tenant(data_list, tenant_id_field)**: 数据列表、租户ID字段名
+
+## [OUTPUT]
+### TenantContext类返回值
+- **set_tenant()**: None（设置上下文变量）
+- **get_tenant_id()**: Optional[str] - 当前租户ID
+- **get_tenant()**: Optional[Tenant] - 当前租户对象
+- **get_request_id()**: Optional[str] - 当前请求ID
+- **clear()**: None（清除所有上下文变量）
+- **__enter__()**: self（上下文管理器入口）
+- **__exit__()**: None（上下文管理器出口，自动清理）
+
+### 函数返回值
+- **extract_tenant_from_jwt()**: Optional[str] - tenant_id或None（解析失败）
+- **get_current_tenant_from_request()**: Tenant - 当前租户对象
+  - **Raises**: HTTPException (401 Unauthorized, 404 Not Found, 403 Forbidden, 500 Internal Server Error)
+- **get_current_tenant_id()**: Optional[str] - 当前租户ID
+- **get_current_tenant()**: Optional[Tenant] - 当前租户对象
+- **get_tenant_from_token()**: str - tenant_id
+- **with_tenant_context()**: decorator - 装饰器函数
+- **with_tenant_isolation()**: wrapper - 包装后的异步函数
+- **create_tenant_context_middleware()**: middleware - FastAPI中间件函数
+- **add_tenant_filter()**: query - 添加了租户过滤的SQLAlchemy查询对象
+- **filter_by_tenant()**: list - 过滤后的数据列表
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [../data/database.py](../data/database.py) - get_db(), Session（数据库会话依赖注入）
+- [../data/models.py](../data/models.py) - Tenant, TenantStatus（租户模型和状态枚举）
+- [../core/config.py](../core/config.py) - get_settings(), settings（应用配置，environment, CLERK_JWT_PUBLIC_KEY）
+
+**外部依赖**:
+- [fastapi](https://fastapi.tiangolo.com/) - FastAPI框架（Request, Depends, HTTPException）
+- [jose](https://python-jose.readthedocs.io/) - JWT解码库（jwt.decode, JWTError）
+- [contextvars](https://docs.python.org/3/library/contextvars.html) - 上下文变量（ContextVar，线程安全）
+- [structlog](https://www.structlog.org/) - 结构化日志
+
+**下游依赖** (已读取源码):
+- [../api/v1/endpoints/tenants.py](../api/v1/endpoints/tenants.py) - 租户管理API（使用get_current_tenant, get_current_tenant_id）
+- [../api/v1/endpoints/data_sources.py](../api/v1/endpoints/data_sources.py) - 数据源管理API（使用租户隔离）
+- [../api/v1/endpoints/documents.py](../api/v1/endpoints/documents.py) - 文档管理API（使用租户隔离）
+- [../api/v1/endpoints/query.py](../api/v1/endpoints/query.py) - 查询API（使用租户隔离）
+- [../main.py](../main.py) - FastAPI应用（注册中间件）
+
+**调用方**:
+- **API端点**: 使用Depends(get_current_tenant_from_request)进行租户认证
+- **服务层**: 使用get_current_tenant_id()获取当前租户ID
+- **中间件系统**: 通过create_tenant_context_middleware()注册到FastAPI应用
+
+## [POS]
+**路径**: backend/src/app/middleware/tenant_context.py
+**模块层级**: Level 3（Backend → src/app → middleware）
+**依赖深度**: 直接依赖 2 层（database.py, models.py, config.py）
 """
 
 from typing import Optional

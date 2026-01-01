@@ -1,7 +1,84 @@
 """
-文档处理服务 - Story 2.4规范实现
-文档解析、文本提取、元数据处理、状态更新
-为后续RAG功能做准备
+# [DOCUMENT_PROCESSOR] 文档处理服务
+
+## [HEADER]
+**文件名**: document_processor.py
+**职责**: Story 2.4规范实现 - 文档解析、文本提取、元数据处理、状态更新，为后续RAG功能做准备
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 文档处理服务（Story 2.4）
+
+## [INPUT]
+- **db: Session** - SQLAlchemy数据库会话
+- **tenant_id: str** - 租户ID
+- **document_id: uuid.UUID** - 文档ID
+- **document_ids: List[uuid.UUID]** - 批量文档ID列表
+
+## [OUTPUT]
+- **Dict[str, Any]**: 处理结果对象（process_document_async, get_processing_status）
+  - success: bool - 是否成功
+  - document_id: str - 文档ID
+  - processing_result: Dict - 处理结果（text_length, metadata, vector_preparation, processing_time_seconds）
+  - message: str - 结果消息
+  - error: str - 错误代码
+  - status: str - 文档状态
+  - processing_error: str - 处理错误信息
+  - indexed_at: str - 索引完成时间
+- **Dict[str, Any]**: 批量处理结果（batch_process_documents）
+  - success: bool
+  - batch_results: List - 每个文档的处理结果
+  - summary: Dict - 汇总统计（total_documents, success_count, error_count, success_rate）
+
+**上游依赖** (已读取源码):
+- 项目模型: KnowledgeDocument, DocumentStatus（从..data.models导入）
+- 项目服务: minio_service（MinIO文件下载）, document_service（文档管理）
+
+**下游依赖** (需要反向索引分析):
+- [document_service.py](./document_service.py) - 文档服务调用文档处理
+- [chromadb_client.py](./chromadb_client.py) - 向量化服务（未来版本）
+
+**调用方**:
+- 文档上传后自动触发处理
+- 批量文档处理任务
+- 文档状态查询API
+
+## [STATE]
+- **处理超时**: processing_timeout=300秒（5分钟）
+- **处理流程**（7步）:
+  1. 验证文档存在和权限
+  2. 更新状态为INDEXING
+  3. 验证文件格式和完整性（PDF: %PDF开头, DOCX: PK\x03\x04开头）
+  4. 提取文档文本内容（简化实现，返回元数据）
+  5. 处理文档元数据（合并file_info, extraction_metadata, text_analysis, processing_info）
+  6. 准备向量化（文本分块，chunk_size=1000, overlap=100）
+  7. 更新文档状态为READY
+- **文件验证**: PDF文件头验证（%PDF），DOCX文件头验证（ZIP格式PK\x03\x04）
+- **文本分块**: _split_text_into_chunks（chunk_size=1000字符, overlap=100字符）
+- **向量化准备**: 生成集合名（tenant_{tenant_id}_docs），统计文本块数量
+- **MVP限制**: 当前版本只记录元数据，不实际向量化（等待ChromaDB集成）
+- **数据库操作**: Session查询和更新文档状态，commit提交
+
+## [SIDE-EFFECTS]
+- **数据库查询**: db.query(KnowledgeDocument).filter(...).first()
+- **文档状态更新**: document.status = DocumentStatus.INDEXING/READY/ERROR
+- **错误信息记录**: document.processing_error = error_message
+- **索引时间记录**: document.indexed_at = datetime.now(timezone.utc)
+- **数据库提交**: db.commit()保存状态变更
+- **数据库回滚**: db.rollback()异常处理
+- **MinIO下载**: minio_service.download_file(bucket_name, object_name)
+- **文件大小验证**: len(file_data) != document.file_size
+- **文本提取**: _extract_text_from_pdf/docx（简化实现）
+- **元数据处理**: _process_document_metadata合并元数据
+- **文本分块**: _split_text_into_chunks分割文本为列表
+- **处理时间计算**: (indexed_at - created_at).total_seconds()
+- **批量处理**: 循环处理document_ids列表，统计成功/失败数量
+- **异常捕获**: try-except捕获所有异常，回滚数据库，更新文档状态为ERROR
+
+## [POS]
+**路径**: backend/src/app/services/document_processor.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 依赖项目模型和MinIO服务
 """
 
 import uuid

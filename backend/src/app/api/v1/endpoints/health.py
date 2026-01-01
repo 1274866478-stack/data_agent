@@ -1,5 +1,46 @@
 """
-健康检查端点
+# [HEALTH] 健康检查API端点
+
+## [HEADER]
+**文件名**: health.py
+**职责**: 提供API健康检查端点，检查数据库、MinIO、ChromaDB、智谱AI等服务状态
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 实现健康检查端点
+
+## [INPUT]
+- **db: Session** - 数据库会话（通过依赖注入获取）
+- **api_keys: dict** - 各服务的API密钥配置（从settings获取）
+- **service_checkers: list** - 服务检查器列表（MinIO、ChromaDB、智谱AI等）
+
+## [OUTPUT]
+- **health_status: dict** - 健康状态响应
+  - status: "healthy" | "unhealthy"
+  - services: 各服务连接状态
+  - timestamp: 检查时间戳
+  - version: API版本号
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [../../data/database.py](../../data/database.py) - get_db(), check_database_connection()
+- [../../services/minio_client.py](../../services/minio_client.py) - MinIO服务检查
+- [../../services/chromadb_client.py](../../services/chromadb_client.py) - ChromaDB服务检查
+- [../../services/zhipu_client.py](../../services/zhipu_client.py) - 智谱AI服务检查
+- [../../core/config.py](../../core/config.py) - 配置对象（API密钥等）
+
+**下游依赖** (已读取源码):
+- 无（健康检查是叶子端点）
+
+**调用方**:
+-监控系统 - 定期健康检查
+-负载均衡器 - 健康检查路由
+-运维工具 - 服务状态监控
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/health.py
+**模块层级**: Level 3 - API端点层
+**依赖深度**: 直接依赖 data/*, services/*；被监控系统和负载均衡器调用
 """
 
 from fastapi import APIRouter, Depends

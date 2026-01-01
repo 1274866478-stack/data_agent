@@ -1,6 +1,104 @@
 /**
- * 文件上传服务
- * 支持分块上传和常规上传，与后端API集成
+ * # [FILE_UPLOAD_SERVICE] 文件上传服务
+ *
+ * ## [MODULE]
+ * **文件名**: fileUploadService.ts
+ * **职责**: Story 2.4性能优化 - 支持分块上传和常规上传，与后端API集成，进度跟踪
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ * **变更记录**:
+ * - v1.0.0 (2026-01-01): 初始版本 - 文件上传服务
+ *
+ * ## [INPUT]
+ * - **file: File** - 要上传的文件
+ * - **onProgress?: (progress: UploadProgress) => void** - 进度回调函数
+ * - **preferChunked?: boolean** - 是否优先使用分块上传（默认false）
+ * - **sessionId: string** - 上传会话ID
+ *
+ * ## [OUTPUT]
+ * - **UploadResult**: 上传结果
+ *   - success: boolean - 是否成功
+ *   - document?: any - 文档信息
+ *   - message?: string - 成功消息
+ *   - error?: string - 错误信息
+ * - **UploadProgress**: 上传进度
+ *   - loaded: number - 已上传字节数
+ *   - total: number - 总字节数
+ *   - percentage: number - 百分比（0-100）
+ *   - status: 'pending' | 'uploading' | 'processing' | 'completed' | 'error'
+ *   - message?: string - 状态消息
+ *
+ * **上游依赖**:
+ * - 无（独立服务）
+ *
+ * **下游依赖**:
+ * - 无（Service是叶子服务模块）
+ *
+ * **调用方**:
+ * - [../components/documents/DocumentUpload.tsx](../components/documents/DocumentUpload.tsx) - 文档上传组件
+ * - [../store/documentStore](../store/documentStore.ts) - 文档Store调用uploadFile
+ *
+ * ## [STATE]
+ * - **上传方式选择**:
+ *   - 常规上传（XMLHttpRequest）: 文件≤10MB或preferChunked=false
+ *   - 分块上传（fetch + FormData）: 文件>10MB或preferChunked=true
+ * - **支持的文件类型**:
+ *   - MIME类型: application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/msword
+ *   - 扩展名: .pdf, .docx, .doc
+ * - **文件大小限制**: 最大100MB
+ * - **分块上传流程**:
+ *   1. initializeChunkedUpload() - 初始化上传会话（POST /upload/initialize）
+ *   2. uploadChunk() - 上传单个分块（POST /upload/chunk/{sessionId}/{chunkNumber}）
+ *   3. completeChunkedUpload() - 完成上传（POST /upload/complete/{sessionId}）
+ * - **常规上传流程**:
+ *   - XMLHttpRequest上传（POST /documents/upload）
+ *   - progress事件监听上传进度
+ *   - load事件处理响应
+ * - **进度回调**:
+ *   - pending: 初始化阶段
+ *   - uploading: 上传中（更新percentage）
+ *   - processing: 处理中
+ *   - completed: 上传完成
+ *   - error: 上传失败
+ * - **认证**: localStorage.getItem('token')获取Bearer token
+ * - **校验和**: calculateFileChecksum()简化实现（32位hex）
+ * - **分块计算**: file.slice(offset, end)切片
+ *
+ * ## [SIDE-EFFECTS]
+ * - **HTTP请求**:
+ *   - fetch()调用分块上传API
+ *   - XMLHttpRequest调用常规上传API
+ * - **FormData**: new FormData()包装文件和分块数据
+ *   - **fetch**:
+ *     - POST /upload/initialize（初始化）
+ *     - POST /upload/chunk/{sessionId}/{chunkNumber}（上传分块）
+ *     - POST /upload/complete/{sessionId}（完成上传）
+ *     - GET /upload/status/{sessionId}（获取状态）
+ *     - DELETE /upload/abort/{sessionId}（取消上传）
+ *   - **XMLHttpRequest**:
+ *     - POST /documents/upload（常规上传）
+ *     - upload.progress事件监听进度
+ *     - load/error/abort事件处理结果
+ * - **localStorage**: localStorage.getItem('token')获取认证令牌
+ * - **文件操作**:
+ *   - file.name.lastIndexOf('.')提取扩展名
+ *   - file.name.toLowerCase()转换小写
+ *   - file.size检查文件大小
+ *   - file.slice(offset, end)切片
+ *   - file.arrayBuffer()读取文件内容
+ * - **回调函数**: onProgress({loaded, total, percentage, status, message})更新进度
+ * - **分块逻辑**:
+ *   - for循环遍历分块（offset += chunkSize）
+ *   - Math.min(offset + chunkSize, file.size)计算结束位置
+ *   - chunks数组存储所有分块
+ * - **进度计算**:
+ *   - Math.round((loaded / file.size) * 100)计算百分比
+ *   - Math.min((i + 1) * chunkSize, file.size)计算已上传字节数
+ * - **try-catch**: 捕获网络错误和JSON解析错误
+ * - **response.ok**: 检查HTTP状态码
+ * - **异常处理**: try-catch捕获fetch和XMLHttpRequest错误，返回UploadResult（success=false）
+ * - **单例模式**: fileUploadService全局实例
+ * - **便捷函数**: uploadFile, getUploadStatus, abortUpload
  */
 
 export interface UploadProgress {

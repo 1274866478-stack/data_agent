@@ -1,8 +1,77 @@
 """
-本地图表生成服务 - 模拟 mcp-echarts 的 get-chart 功能
-使用 pyecharts 在本地生成图表，保存为 PNG 文件
+# [CHART SERVICE] ECharts 图表生成服务
 
-后续可以替换为真正的 MCP 服务器调用
+## [HEADER]
+**文件名**: chart_service.py
+**职责**: 本地图表生成服务 - 使用 PyEcharts 模拟 MCP ECharts 服务，支持多种图表类型（柱状图、折线图、饼图、散点图、漏斗图）的生成，导出为 PNG/HTML 文件
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 本地图表生成服务
+
+## [INPUT]
+### generate_chart() 函数参数
+- **request: ChartRequest** - 图表请求对象
+  - type: str - 图表类型（"bar", "line", "pie", "scatter", "funnel"）
+  - data: List[List[Any]] - 二维数组数据 [[name, value], ...]
+  - title: str - 图表标题
+  - series_name: str - 系列名称
+  - x_axis_name: Optional[str] - X轴名称（默认None）
+  - y_axis_name: Optional[str] - Y轴名称（默认None）
+- **output_dir: str** - 输出目录路径（默认"./charts"）
+
+### generate_chart_simple() 函数参数
+- **request: ChartRequest** - 图表请求对象（同上）
+- **output_dir: str** - 输出目录路径（默认"./charts"）
+
+## [OUTPUT]
+### EChartType 枚举类
+- **BAR = "bar"** - 柱状图
+- **LINE = "line"** - 折线图
+- **PIE = "pie"** - 饼图
+- **SCATTER = "scatter"** - 散点图
+- **FUNNEL = "funnel"** - 漏斗图
+
+### ChartRequest 数据类
+- **type: str** - 图表类型
+- **data: List[List[Any]]** - 二维数组数据
+- **title: str** - 图表标题
+- **series_name: str** - 系列名称
+- **x_axis_name: Optional[str]** - X轴名称
+- **y_axis_name: Optional[str]** - Y轴名称
+
+### ChartResponse 数据类
+- **success: bool** - 是否成功
+- **image_path: Optional[str]** - 本地文件路径（PNG/HTML）
+- **image_url: Optional[str]** - 云端URL（预留，阶段2）
+- **error: Optional[str]** - 错误信息
+
+### generate_chart() 返回值
+- **ChartResponse** - 图表生成响应对象
+  - success=True 时包含 image_path
+  - success=False 时包含 error
+
+### generate_chart_simple() 返回值
+- **ChartResponse** - 图表生成响应对象（仅生成HTML，无需selenium）
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [pyecharts](https://github.com/pyecharts/pyecharts) - Python ECharts 库（Bar, Line, Pie, Scatter, Funnel）
+- [snapshot-selenium](https://github.com/pyecharts/snapshot-selenium) - Selenium 快照库（make_snapshot, snapshot）
+- [python-os](https://docs.python.org/3/library/os.html) - 文件系统操作（os.makedirs, os.path）
+- [python-dataclasses](https://docs.python.org/3/library/dataclasses.html) - 数据类装饰器（@dataclass）
+
+**下游依赖** (已读取源码):
+- [./sql_agent.py](./sql_agent.py) - Agent主程序（调用图表生成服务）
+- [./data_transformer.py](./data_transformer.py) - 数据转换模块（准备 ChartRequest）
+
+**调用方**:
+- **sql_agent.py**: 在生成图表时调用 generate_chart() 或 generate_chart_simple()
+
+## [POS]
+**路径**: Agent/chart_service.py
+**模块层级**: Level 1（Agent根目录）
+**依赖深度**: 直接依赖 2 层（pyecharts, snapshot-selenium）
 """
 import os
 from typing import List, Tuple, Optional, Any

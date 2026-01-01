@@ -1,6 +1,46 @@
 """
-安全监控和审计模块
-提供敏感信息过滤、安全事件记录和威胁检测功能
+# [SECURITY_MONITOR] 安全监控和审计
+
+## [HEADER]
+**文件名**: security_monitor.py
+**职责**: 提供敏感信息过滤、安全事件记录和威胁检测功能，保护系统安全
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 实现安全监控和审计功能
+
+## [INPUT]
+- **log_data: str** - 原始日志数据
+- **event_type: SecurityEventType** - 安全事件类型枚举
+- **level: SecurityEventLevel** - 安全事件级别枚举
+- **source_ip: str** - 事件来源IP地址
+- **user_id: str** - 用户ID（可选）
+- **tenant_id: str** - 租户ID（可选）
+- **details: dict** - 事件详情字典（可选）
+
+## [OUTPUT]
+- **filtered_log: str** - 过滤敏感信息后的日志
+- **security_event: SecurityEvent** - 安全事件记录对象
+- **threat_score: float** - 威胁评分（0-1）
+- **alert: dict** - 安全告警信息
+- **audit_log: dict** - 审计日志记录
+
+## [LINK]
+**上游依赖** (已读取源码):
+- 无外部依赖（仅使用Python标准库）
+
+**下游依赖** (已读取源码):
+- [../middleware/security_middleware.py](../middleware/security_middleware.py) - 安全中间件
+- [../main.py](../main.py) - 应用入口，注册安全监控
+
+**调用方**:
+- [../api/v1/endpoints/](../api/v1/endpoints/) - API端点使用安全监控
+- [logging handler](../) - 日志处理器使用敏感信息过滤
+
+## [POS]
+**路径**: backend/src/app/core/security_monitor.py
+**模块层级**: Level 2 - 核心模块
+**依赖深度**: 无直接依赖；被所有需要安全监控的模块依赖
 """
 
 import json

@@ -1,6 +1,83 @@
 """
-数据库适配器工厂
-提供统一的数据库连接管理、适配器创建和验证功能
+# [DATABASE_FACTORY] 数据库适配器工厂
+
+## [HEADER]
+**文件名**: database_factory.py
+**职责**: 提供统一的数据库连接管理、适配器创建、验证和测试功能，支持PostgreSQL/MySQL/SQLite
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 数据库适配器工厂
+
+## [INPUT]
+- **connection_string: str** - 数据库连接字符串
+- **connection_id: str** - 连接ID
+- **query: str** - SQL查询语句
+- **db_type: DatabaseType** - 数据库类型枚举
+- **adapter_class: Type[DatabaseInterface]** - 适配器类
+- **kwargs: Dict[str, Any]** - 额外配置参数
+
+## [OUTPUT]
+- **bool**: 验证结果（validate_connection_string, add_connection, remove_connection）
+- **Optional[DatabaseCredentials]**: 解析后的连接凭据（parse_connection_string）
+- **tuple[bool, Optional[str]]**: (是否安全, 错误信息)（validate_sql_safety, test_connection）
+- **DatabaseInterface**: 数据库适配器实例（create_adapter, create_and_connect, get_connection）
+- **List[DatabaseType]**: 支持的数据库类型列表（get_supported_types）
+- **List[str]**: 连接ID列表（list_connections）
+- **Dict[str, tuple[bool, Optional[str]]]**: 测试结果字典（test_all_connections）
+- **Optional[Dict[str, Any]]]**: 连接信息（get_connection_info）
+- **DatabaseManager**: 数据库管理器实例（initialize_database_manager）
+
+**上游依赖** (已读取源码):
+- Python标准库: urllib.parse（urlparse）, re（正则）, logging, dataclasses, typing
+- 项目接口: DatabaseInterface, DatabaseType, PostgreSQLAdapter, MySQLAdapter, SQLiteDatabaseAdapter（从database_interface导入）
+
+**下游依赖** (需要反向索引分析):
+- [data_source_service.py](./data_source_service.py) - 数据源服务使用工厂创建连接
+- [connection_test_service.py](./connection_test_service.py) - 连接测试服务使用工厂
+
+**调用方**:
+- 数据源创建时验证连接字符串
+- 数据源连接测试
+- Agent查询时创建数据库连接
+- 数据库连接管理
+
+## [STATE]
+- **支持数据库**: PostgreSQL（默认端口5432）, MySQL（默认端口3306）, SQLite（文件路径）
+- **连接字符串解析**: urlparse解析scheme, hostname, port, path, username, password, query参数
+- **连接验证**: validate_connection_string检查scheme, hostname, path是否存在
+- **凭据解析**: parse_connection_string提取连接参数，生成DatabaseCredentials对象
+- **SQL安全验证**: validate_sql_safety检查
+  - 只允许SELECT查询
+  - 禁止危险关键词（DROP, DELETE, UPDATE, INSERT, ALTER, CREATE, TRUNCATE, EXEC, EXECUTE）
+  - 检查UNION注入
+  - 检查多语句注入（;）
+  - 限制复杂度（SELECT<=5, JOIN<=10）
+- **适配器注册**: _adapters字典注册DatabaseType到适配器类的映射
+- **工厂模式**: create_adapter根据connection_string的scheme选择适配器类
+- **管理器模式**: DatabaseManager管理多个数据库连接（_connections字典）
+- **异步连接**: create_and_connect创建并连接数据库
+- **连接测试**: test_connection异步测试连接
+- **连接信息获取**: get_connection_info获取schema_info（database_name, table_count, version）
+
+## [SIDE-EFFECTS]
+- **URL解析**: urlparse(connection_string)解析连接字符串
+- **字典查询**: parsed.query.split('&')分割查询参数，key=value分割参数值
+- **字符串操作**: parsed.path.lstrip('/')移除前导斜杠，parsed.hostname提取主机名
+- **对象创建**: DatabaseCredentials(...)创建凭据对象
+- **正则匹配**: re.search(pattern, query_upper)检测危险SQL模式
+- **字典操作**: cls._adapters[db_type] = adapter_class注册适配器
+- **列表转换**: list(cls._adapters.keys())返回支持的数据库类型
+- **异常抛出**: ValueError("无效的数据库连接字符串")
+- **字典读写**: self._connections[connection_id] = adapter添加连接，del self._connections[connection_id]删除连接
+- **异步调用**: await adapter.connect()连接数据库，await adapter.test_connection()测试连接
+- **异常处理**: try-except捕获连接失败异常
+- **全局单例**: _db_manager全局数据库管理器实例
+
+## [POS]
+**路径**: backend/src/app/services/database_factory.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 依赖database_interface模块
 """
 
 from typing import Dict, Any, Optional, List, Type

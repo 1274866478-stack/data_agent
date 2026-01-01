@@ -1,3 +1,44 @@
+/**
+ * # SignUpForm 用户注册表单
+ *
+ * ## [MODULE]
+ * **文件名**: SignUpForm.tsx
+ * **职责**: 提供Clerk集成的注册界面，展示服务特性和注册入口
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - 无Props输入，组件内部管理状态
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 完整的注册界面（Clerk表单 + 服务介绍 + 服务条款）
+ * - **副作用**: 调用Clerk SDK注册，成功后调用AuthContext.login()并重定向
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [react](https://react.dev) - React核心库
+ * - [next/navigation](https://nextjs.org/docs/app/navigation) - Next.js导航
+ * - [next/link](https://nextjs.org/docs/app/linking) - Next.js链接
+ * - [@/components/ui/*](../ui/) - UI基础组件（Button, Input, Label, Card, Alert, Checkbox）
+ * - [./AuthContext.tsx](./AuthContext.tsx) - 认证上下文
+ *
+ * **下游依赖**:
+ * - 无直接下游组件
+ *
+ * **调用方**:
+ * - [../../app/(auth)/sign-up/page.tsx](../../app/(auth)/sign-up/page.tsx) - 注册页面
+ *
+ * ## [STATE]
+ * - **error**: string - 注册错误信息
+ * - **clerkError**: string - Clerk SDK的错误信息
+ *
+ * ## [SIDE-EFFECTS]
+ * - 动态加载Clerk SDK并挂载注册表单到 `#clerk-sign-up` DOM节点
+ * - 监听Clerk的 `sign-up.completed` 和 `sign-up.failed` 事件
+ * - 注册成功后获取token并调用AuthContext.login()
+ * - 展示四大服务特性卡片（安全认证、即时可用、智能分析、灵活配置）
+ * - 组件卸载时清理Clerk事件监听器
+ */
 'use client'
 
 import { useState, useEffect } from 'react'

@@ -1,4 +1,52 @@
 /**
+ * # SearchPanel 对话搜索面板组件
+ *
+ * ## [MODULE]
+ * **文件名**: SearchPanel.tsx
+ * **职责**: 提供全文搜索功能，支持会话和消息搜索、模糊匹配、搜索建议和热门关键词
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - **isOpen**: boolean - 面板打开状态
+ * - **onClose**: () => void - 关闭回调
+ * - **onResultClick**: (sessionId: string, messageId?: string) => void (可选) - 结果点击回调
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 侧边搜索面板或null
+ * - **副作用**: 调用onResultClick跳转到指定消息，调用onClose关闭面板
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [react](https://react.dev) - React核心库
+ * - [lucide-react](https://lucide.dev) - 图标库
+ * - [@/components/ui/*](../ui/) - UI基础组件（Button, Input, Card, Badge, ScrollArea, Popover）
+ * - [@/store/chatStore.ts](../../store/chatStore.ts) - 聊会话和消息状态
+ * - [@/services/searchService.ts](../../services/searchService.ts) - 搜索核心逻辑
+ * - [@/lib/utils.ts](../../lib/utils.ts) - 工具函数
+ *
+ * **下游依赖**:
+ * - 无直接下游组件
+ *
+ * **调用方**:
+ * - [./ChatInterface.tsx](./ChatInterface.tsx) - 聊天界面中的搜索侧边栏
+ *
+ * ## [STATE]
+ * - **query**: string - 搜索查询文本
+ * - **searchOptions**: SearchOptions - 搜索配置（类型、模糊搜索、上下文等）
+ * - **searchResults**: 搜索结果对象（包含结果列表和统计）
+ * - **suggestions**: string[] - 搜索建议列表
+ * - **popularKeywords**: Array<{keyword: string; count: number}> - 热门关键词
+ * - **showSuggestions**: boolean - 是否显示搜索建议
+ *
+ * ## [SIDE-EFFECTS]
+ * - 300ms防抖自动搜索
+ * - 实时更新搜索建议和热门关键词
+ * - 点击搜索结果触发页面跳转
+ * - 支持会话分组和上下文显示
+ * - 显示搜索耗时统计
+ */
+/**
  * 搜索面板组件
  */
 

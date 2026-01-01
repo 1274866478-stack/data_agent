@@ -1,6 +1,96 @@
 """
-查询性能监控服务
-为RAG-SQL链提供详细的性能分析、监控和优化建议
+# [QUERY_PERFORMANCE_MONITOR] 查询性能监控服务
+
+## [HEADER]
+**文件名**: query_performance_monitor.py (命名实际为performance_monitor.py)
+**职责**: 为RAG-SQL链提供详细的性能分析、监控、优化建议和性能统计
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 查询性能监控服务
+
+## [INPUT]
+- **tenant_id: str** - 租户ID
+- **user_query: str** - 用户查询
+- **generated_sql: str** - 生成的SQL语句
+- **database_type: str** - 数据库类型
+- **query_id: str** - 查询ID
+- **stage: str** - 阶段名称（schema_discovery, sql_generation, sql_validation, sql_execution, result_processing）
+- **duration: float** - 持续时间（秒）
+- **result_rows: Optional[int]** - 结果行数
+- **result_size_bytes: Optional[int]** - 结果大小（字节）
+- **cache_hit: bool** - 是否缓存命中
+- **cache_key: Optional[str]** - 缓存键
+- **error_message: str** - 错误信息
+- **error_type: str** - 错误类型
+- **time_range: str** - 时间范围（"1h", "24h", "7d", "30d"）
+- **limit: int** - 返回数量限制
+- **before_date: Optional[datetime]** - 清理此日期之前的数据
+- **max_history_size: int** - 最大历史记录数
+
+## [OUTPUT]
+- **str**: 查询ID（start_query_monitoring）
+- **QueryMetrics**: 查询指标对象（get_query_metrics）
+- **PerformanceSummary**: 性能汇总统计对象（get_performance_summary）
+- **List[QueryMetrics]**: 最慢查询列表（get_slow_queries）
+- **Dict[str, Any]**: 错误分析结果（get_error_analysis）
+- **List[Dict[str, Any]]**: 优化建议列表（get_optimization_suggestions）
+- **Dict[str, Any]**: 监控统计信息（get_monitoring_stats）
+- **PerformanceMonitor**: 性能监控器实例（initialize_performance_monitor）
+
+**上游依赖** (已读取源码):
+- Python标准库: asyncio, collections（defaultdict, deque）, dataclasses（asdict）, datetime, enum, json, logging, statistics, time, uuid
+
+**下游依赖** (需要反向索引分析):
+- [llm_service.py](./llm_service.py) - LLM服务使用性能监控
+- [agent_service.py](./agent_service.py) - Agent服务使用性能监控
+
+**调用方**:
+- RAG-SQL链执行查询时记录性能指标
+- 性能分析API调用时获取统计信息
+- 优化建议API调用时生成建议
+
+## [STATE]
+- **查询状态**: QueryStatus枚举（PENDING, EXECUTING, COMPLETED, FAILED, CANCELLED, TIMEOUT）
+- **性能等级**: PerformanceLevel枚举（EXCELLENT <0.5s, GOOD <1s, AVERAGE <3s, POOR <10s, CRITICAL >=10s）
+- **数据结构**:
+  - QueryMetrics: 查询性能指标（query_id, tenant_id, user_query, generated_sql, database_type, start_time, end_time, total_duration, 分段时间, 资源使用, 查询复杂度, 状态和错误, 缓存信息, 性能等级）
+  - PerformanceSummary: 性能汇总统计（time_range, total_queries, successful_queries, failed_queries, avg/median/p95/max/min执行时间, status_counts, performance_distribution, 资源使用统计, 最慢查询, 错误统计）
+- **历史存储**: deque(maxlen=10000)保留最近10000条历史记录
+- **活跃查询**: Dict[query_id, QueryMetrics]当前执行中的查询
+- **性能分析器**: PerformanceAnalyzer提供静态分析方法
+  - calculate_performance_level(): 根据执行时间和复杂度计算性能等级
+  - calculate_query_complexity(): 分析SQL复杂度（JOIN, 子查询, 聚合函数, 窗口函数, CTE, UNION）
+  - analyze_sql_pattern(): 分析SQL模式（has_join, has_subquery, has_aggregation等）
+  - generate_optimization_suggestions(): 生成性能优化建议
+- **统计缓存**: _summary_cache字典缓存汇总统计（5分钟TTL）
+- **性能等级阈值**:
+  - EXCELLENT: <0.5s, GOOD: <1s, AVERAGE: <3s, POOR: <10s, CRITICAL: >=10s
+- **SQL复杂度计算**: 基础关键词(0.1) + JOIN(0.3*count) + 子查询(0.5*count) + 聚合函数(0.2*count) + 窗口函数(0.5) + CTE(0.4*count) + UNION(0.3*count)，最大值10.0
+
+## [SIDE-EFFECTS]
+- **UUID生成**: str(uuid.uuid4())生成唯一查询ID
+- **复杂度计算**: calculate_query_complexity分析SQL，calculate_query_complexity(generated_sql)
+- **模式分析**: analyze_sql_pattern(generated_sql)提取SQL特征
+- **对象创建**: QueryMetrics(创建查询指标对象，添加到active_queries字典
+- **时间记录**: datetime.now()记录开始和结束时间，(end_time - start_time).total_seconds()计算持续时间
+- **属性更新**: metrics.schema_discovery_time = duration等分段时间记录
+- **状态转换**: QueryStatus.PENDING → EXECUTING → COMPLETED/FAILED
+- **性能等级计算**: calculate_performance_level(total_duration, query_complexity_score)
+- **deque操作**: metrics_history.append(metrics)添加到历史记录
+- **字典删除**: del self.active_queries[query_id]从活跃查询中移除
+- **统计计算**: statistics.mean/median/quantiles计算执行时间统计
+- **列表推导式过滤**: [m for m in self.metrics_history if conditions]过滤指标
+- **排序**: sorted(queries, key=lambda x: x.total_duration, reverse=True)按时间排序
+- **缓存操作**: _summary_cache[cache_key] = summary缓存结果
+- **清理操作**: clear_history()清理历史数据，metrics_history.clear()
+- **全局单例**: _performance_monitor全局实例
+- **异常处理**: 所有方法都有try-except捕获异常，记录日志
+
+## [POS]
+**路径**: backend/src/app/services/performance_monitor.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 外部依赖无，使用Python标准库
 """
 
 import time

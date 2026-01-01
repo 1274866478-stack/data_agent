@@ -1,13 +1,79 @@
 """
-数据转换模块 - 将 SQL 查询结果转换为 ECharts 数据格式
+# [DATA TRANSFORMER] SQL结果到图表数据转换模块
 
-SQL 返回格式: [{"col1": val1, "col2": val2}, ...]
+## [HEADER]
+**文件名**: data_transformer.py
+**职责**: 将SQL查询结果转换为ECharts图表数据格式 - 支持二维数组格式和MCP ECharts格式，自动推断图表类型，智能字段映射
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - SQL结果数据转换
 
-mcp-echarts 需要的格式:
-- 柱状图/饼图: [{"category": "xxx", "value": 123}, ...]
-- 折线图: [{"time": "xxx", "value": 123}, ...]
+## [INPUT]
+### sql_result_to_echarts_data() 函数参数
+- **sql_result: List[Dict[str, Any]]** - SQL查询返回的字典列表
+- **x_field: Optional[str]** - X轴对应的字段名（可选，默认取第一列）
+- **y_field: Optional[str]** - Y轴对应的字段名（可选，默认取第二列）
 
-旧格式 (本地 PyEcharts): [[val1, val2], [val1, val2], ...]
+### sql_result_to_mcp_echarts_data() 函数参数
+- **sql_result: List[Dict[str, Any]]** - SQL查询返回的字典列表
+- **chart_type: str** - 图表类型（"bar", "pie", "line"等，默认"bar"）
+- **x_field: Optional[str]** - X轴/分类字段名（可选）
+- **y_field: Optional[str]** - Y轴/数值字段名（可选）
+
+### infer_chart_type() 函数参数
+- **sql: str** - SQL查询语句
+- **data: List[Dict[str, Any]]** - 查询结果
+
+### prepare_chart_request() 函数参数
+- **sql_result: List[Dict[str, Any]]** - SQL查询结果
+- **sql: str** - SQL语句
+- **title: Optional[str]** - 图表标题（可选）
+- **x_field: Optional[str]** - X轴字段（可选）
+- **y_field: Optional[str]** - Y轴字段（可选）
+- **chart_type: Optional[str]** - 图表类型（可选，不传则自动推断）
+
+## [OUTPUT]
+### sql_result_to_echarts_data() 返回值
+- **Tuple[List[List[Any]], str, str]** - (data, x_field_name, y_field_name) 元组
+  - data: [[x1, y1], [x2, y2], ...] 格式的二维数组
+  - x_field_name: 实际使用的X字段名
+  - y_field_name: 实际使用的Y字段名
+
+### sql_result_to_mcp_echarts_data() 返回值
+- **Tuple[List[Dict[str, Any]], str, str]** - (data, x_field_name, y_field_name) 元组
+  - data: mcp-echarts格式（柱状图/饼图用category/value，折线图用time/value）
+  - x_field_name: 实际使用的分类字段名
+  - y_field_name: 实际使用的数值字段名
+
+### infer_chart_type() 返回值
+- **str** - 推荐的图表类型（"bar", "line", "pie", "table"）
+
+### prepare_chart_request() 返回值
+- **Dict[str, Any]** - 符合mcp-echarts get-chart输入格式的字典
+  - type: 图表类型
+  - data: 二维数组数据
+  - title: 图表标题
+  - seriesName: 系列名称
+  - xAxisName: X轴名称
+  - yAxisName: Y轴名称
+  - 或 skip_chart: True（如果数据不适合图表）
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [python-typing](https://docs.python.org/3/library/typing.html) - 类型注解（List, Dict, Any, Tuple, Optional）
+
+**下游依赖** (已读取源码):
+- [./sql_agent.py](./sql_agent.py) - Agent主程序（使用数据转换函数）
+- [./chart_service.py](./chart_service.py) - 图表服务（接收转换后的数据）
+
+**调用方**:
+- **sql_agent.py**: 在extract_tool_data()和build_visualization_response()中调用数据转换函数
+
+## [POS]
+**路径**: Agent/data_transformer.py
+**模块层级**: Level 1（Agent根目录）
+**依赖深度**: 无外部依赖（仅使用Python标准库）
 """
 from typing import List, Dict, Any, Tuple, Optional
 

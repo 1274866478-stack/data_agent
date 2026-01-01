@@ -1,3 +1,46 @@
+/**
+ * # OfflineStatusIndicator 离线状态与同步指示器
+ *
+ * ## [MODULE]
+ * **文件名**: OfflineStatusIndicator.tsx
+ * **职责**: 显示在线/离线状态、同步进度、缓存统计，支持手动触发同步
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - **className**: string (可选) - 自定义样式类名
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - Popover触发按钮和详情面板
+ * - **副作用**: 手动同步时调用chatStore.syncPendingMessages()
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [react](https://react.dev) - React核心库
+ * - [lucide-react](https://lucide.dev) - 图标库
+ * - [@/components/ui/*](../ui/) - UI基础组件（Button, Badge, Popover, Progress）
+ * - [@/store/chatStore.ts](../../store/chatStore.ts) - 在线状态和同步方法
+ * - [@/services/messageCacheService.ts](../../services/messageCacheService.ts) - 缓存统计和同步事件
+ * - [@/lib/utils.ts](../../lib/utils.ts) - 工具函数
+ *
+ * **下游依赖**:
+ * - 无直接下游组件
+ *
+ * **调用方**:
+ * - [./ChatInterface.tsx](./ChatInterface.tsx) - 聊天界面顶部的状态指示器
+ *
+ * ## [STATE]
+ * - **syncProgress**: number - 同步进度百分比
+ * - **syncMessage**: string | null - 同步状态消息
+ * - **cacheStats**: 缓存统计（待同步、失败、总会话、总消息）
+ *
+ * ## [SIDE-EFFECTS]
+ * - 监听同步事件（start, progress, complete, error）
+ * - 每5秒自动更新缓存统计
+ * - 支持手动触发同步和重试失败消息
+ * - 根据状态自动切换图标（在线/离线/同步中/有失败/待同步）
+ * - 有待处理消息时显示脉冲动画
+ */
 'use client'
 
 import { useEffect, useState } from 'react'

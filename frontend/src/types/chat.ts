@@ -1,3 +1,42 @@
+/**
+ * # [CHAT_TYPES] 聊天相关TypeScript类型定义
+ *
+ * ## [MODULE]
+ * **文件名**: chat.ts
+ * **职责**: 定义聊天功能相关的所有TypeScript类型和接口 - 流式响应事件、处理步骤、ECharts配置、回调函数
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - 无（此文件为类型定义文件，仅导出类型）
+ *
+ * ## [OUTPUT]
+ * - **StreamEventType** - 流式响应事件类型联合
+ * - **ProcessingStep** - AI处理步骤接口
+ * - **StreamEvent** - 流式响应事件接口
+ * - **EChartsOption** - ECharts图表配置接口
+ * - **StreamCallbacks** - 流式响应回调函数接口
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - 无（独立类型定义文件）
+ *
+ * **下游依赖**:
+ * - [../store/chatStore.ts](../store/chatStore.ts) - 聊天状态管理
+ * - [../components/chat/ChatInterface.tsx](../components/chat/ChatInterface.tsx) - 聊天界面组件
+ * - [../lib/api-client.ts](../lib/api-client.ts) - API客户端
+ * - [../utils/stream-parser.ts](../utils/stream-parser.ts) - 流式解析器
+ *
+ * **调用方**:
+ * - 所有需要处理流式响应的组件和服务
+ *
+ * ## [STATE]
+ * - 无（类型定义文件）
+ *
+ * ## [SIDE-EFFECTS]
+ * - 无（类型定义文件）
+ */
+
 // 流式响应事件类型定义
 
 export type StreamEventType = 

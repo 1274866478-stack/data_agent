@@ -1,3 +1,40 @@
+/**
+ * # DashboardPage 仪表板页面
+ *
+ * ## [MODULE]
+ * **文件名**: app/(app)/dashboard/page.tsx
+ * **职责**: 提供系统概览仪表板，展示数据源统计、快捷操作和导航入口
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - 无直接 Props（页面组件）
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 仪表板页面，包含数据源概览和快捷操作卡片
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [@/store/dashboardStore](../../../store/dashboardStore.ts) - 提供概览数据和刷新功能
+ * - [@/components/data-sources/DataSourceOverview](../../components/data-sources/DataSourceOverview.tsx) - 数据源概览组件
+ * - [@/components/ui/button](../../components/ui/button.tsx) - 按钮组件
+ * - [@/components/ui/card](../../components/ui/card.tsx) - 卡片容器组件
+ * - [lucide-react](https://lucide.dev) - 图标库
+ *
+ * **下游依赖**:
+ * - [/data-sources/page.tsx](./data-sources/page.tsx) - 数据源管理页面
+ * - [/documents/page.tsx](./documents/page.tsx) - 文档管理页面
+ * - [/ai-assistant/page.tsx](./ai-assistant/page.tsx) - AI助手页面
+ * - [/reports/page.tsx](./reports/page.tsx) - 报告页面
+ *
+ * ## [STATE]
+ * - **isLoading: boolean** - 数据加载状态（从 store 获取）
+ *
+ * ## [SIDE-EFFECTS]
+ * - **数据获取**: 组件挂载时自动调用 fetchOverview() 获取概览数据
+ * - **手动刷新**: 点击刷新按钮重新获取最新数据
+ * - **页面导航**: 提供快捷操作卡片跳转到其他功能页面
+ */
 'use client'
 
 import { useEffect } from 'react'

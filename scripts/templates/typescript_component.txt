@@ -1,0 +1,34 @@
+/**
+ * # [COMPONENT_NAME] 简短描述
+ *
+ * ## [MODULE]
+ * **文件名**: filename.tsx
+ * **职责**: 核心职责描述
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - **prop1**: 类型 - 描述
+ * - **prop2**: 类型 - 描述
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 描述
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [./relative/path.ts](./relative/path.ts) - 依赖说明
+ *
+ * **下游依赖**:
+ * - [./relative/path.tsx](./relative/path.tsx) - 被依赖说明
+ *
+ * **调用方**:
+ * - [../path/to/caller.tsx](../path/to/caller.tsx) - 调用方说明
+ *
+ * ## [STATE]
+ * - **state1**: 类型 - 描述
+ * - **state2**: 类型 - 描述
+ *
+ * ## [SIDE-EFFECTS]
+ * - 副作用1: 描述
+ * - 副作用2: 描述
+ */

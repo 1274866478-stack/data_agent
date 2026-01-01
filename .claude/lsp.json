@@ -1,0 +1,17 @@
+{
+  "lsp": {
+    "python": {
+      "command": "pyright-langserver",
+      "args": ["--stdio"],
+      "enabled": true,
+      "filetypes": [".py", ".pyi"]
+    },
+    "typescript": {
+      "command": "typescript-language-server",
+      "args": ["--stdio"],
+      "enabled": true,
+      "filetypes": [".ts", ".tsx", ".js", ".jsx"],
+      "rootPatterns": ["package.json", "tsconfig.json", "jsconfig.json"]
+    }
+  }
+}

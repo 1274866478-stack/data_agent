@@ -1,6 +1,75 @@
 """
-LLM API端点
-提供统一的聊天完成、流式输出和多模态支持
+# [LLM] LLM服务API端点
+
+## [HEADER]
+**文件名**: llm.py
+**职责**: 提供统一的LLM聊天完成、流式输出、SQL查询和多模态支持API，集成智谱AI和DeepSeek服务，支持数据源连接和自然语言查询，确保租户隔离
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 实现LLM服务API端点
+
+## [INPUT]
+- **tenant: Tenant** - 租户对象（通过依赖注入获取）
+- **user_with_tenant: dict** - 用户和租户信息（从JWT token中提取）
+- **chat_request: ChatRequest** - 聊天请求模型（Pydantic模型）
+  - messages: 消息列表
+  - model: 模型名称
+  - temperature: 温度参数
+  - max_tokens: 最大token数
+  - stream: 是否流式输出
+- **sql_query_request: SQLQueryRequest** - SQL查询请求模型
+  - query: 自然语言查询
+  - connection_id: 数据源连接ID
+  - data_source_id: 数据源ID
+- **data_source_id: str** - 数据源ID（路径参数）
+- **db: Session** - 数据库会话（通过依赖注入获取）
+
+## [OUTPUT]
+- **chat_response: LLMResponse** - LLM聊天响应
+  - content: 生成内容
+  - role: 角色名称
+  - usage: token使用统计
+  - model: 模型名称
+- **stream_response: StreamingResponse** - 流式响应
+  - 分块返回生成的文本
+- **sql_query_result: dict** - SQL查询结果
+  - success: 查询是否成功
+  - sql: 生成的SQL语句
+  - results: 查询结果数据
+  - row_count: 结果行数
+  - error: 错误信息（如果失败）
+- **data_source_info: dict** - 数据源信息
+  - id: 数据源ID
+  - name: 数据源名称
+  - db_type: 数据库类型
+  - status: 连接状态
+- **error_response: HTTPException** - 错误响应（400, 404, 500）
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [../../data/database.py](../../data/database.py) - get_db(), Session
+- [../../data/models.py](../../data/models.py) - Tenant, DataSourceConnection, DataSourceConnectionStatus
+- [../../services/llm_service.py](../../services/llm_service.py) - llm_service, LLMProvider, LLMMessage, LLMResponse
+- [../../services/data_source_service.py](../../services/data_source_service.py) - data_source_service, 数据源服务
+- [../../services/minio_client.py](../../services/minio_client.py) - minio_service, 对象存储
+- [../../services/zhipu_client.py](../../services/zhipu_client.py) - zhipu_service, 智谱AI服务
+- [../../services/database_interface.py](../../services/database_interface.py) - PostgreSQLAdapter, 数据库适配器
+- [../../core/auth.py](../../core/auth.py) - get_current_user_with_tenant, 用户认证
+
+**下游依赖** (已读取源码):
+- 无（API端点是叶子模块）
+
+**调用方**:
+- 前端聊天界面 - LLM对话交互
+- 前端SQL查询工具 - 自然语言生成SQL
+- 前端数据分析模块 - 智能数据查询
+- 流式响应客户端 - 实时文本生成
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/llm.py
+**模块层级**: Level 3 - API端点层
+**依赖深度**: 直接依赖 data/*, services/*, core/*；被前端聊天和查询模块调用
 """
 
 import json

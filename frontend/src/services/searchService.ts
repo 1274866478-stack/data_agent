@@ -1,6 +1,85 @@
 /**
- * 会话搜索服务
- * 提供会话和消息的搜索功能
+ * # [SEARCH_SERVICE] 会话搜索服务
+ *
+ * ## [MODULE]
+ * **文件名**: searchService.ts
+ * **职责**: 提供会话和消息的搜索功能 - 全文搜索、模糊搜索、搜索建议、热门关键词、结果分组
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ * **变更记录**:
+ * - v1.0.0 (2026-01-01): 初始版本 - 会话搜索服务
+ *
+ * ## [INPUT]
+ * - **sessions: ChatSession[]** - 会话列表（包含messages数组）
+ * - **options: SearchOptions** - 搜索选项
+ *   - query: string - 搜索关键词
+ *   - type?: 'all' | 'sessions' | 'messages' - 搜索类型
+ *   - sessionId?: string - 限定会话ID
+ *   - limit?: number - 结果数量限制（默认50）
+ *   - includeContext?: boolean - 是否包含上下文
+ *   - fuzzySearch?: boolean - 是否模糊搜索（默认true）
+ * - **query: string** - 搜索关键词（建议）
+ * - **limit?: number** - 建议数量限制（默认5）
+ *
+ * ## [OUTPUT]
+ * - **results: SearchResult[]** - 搜索结果列表
+ *   - type: 'session' | 'message'
+ *   - sessionId, id, title?, content, timestamp, score, highlights[]
+ *   - context?: { beforeMessage?, afterMessage? }
+ * - **stats: SearchStats** - 搜索统计
+ *   - totalResults, sessionResults, messageResults, searchTime
+ * - **suggestions: string[]** - 搜索建议列表
+ * - **keywords: Array<{keyword, count}>** - 热门关键词列表
+ * - **grouped: Record<string, SearchResult[]>** - 按会话分组的结果
+ *
+ * **上游依赖**:
+ * - [../store/chatStore](../store/chatStore.ts) - ChatSession, ChatMessage类型
+ *
+ * **下游依赖**:
+ * - 无（Service是叶子服务模块）
+ *
+ * **调用方**:
+ * - [../components/chat/SearchBar.tsx](../components/chat/SearchBar.tsx) - 搜索栏
+ * - [../components/chat/SearchResults.tsx](../components/chat/SearchResults.tsx) - 搜索结果
+ * - [../components/chat/SearchSuggestions.tsx](../components/chat/SearchSuggestions.tsx) - 搜索建议
+ *
+ * ## [STATE]
+ * - **搜索类型**: 'all'（会话+消息）, 'sessions'（仅会话）, 'messages'（仅消息）
+ * - **搜索算法**:
+ *   - 精确匹配得分：100（标题150）
+ *   - 包含查询得分：80（标题120）
+ *   - 模糊搜索得分：fuzzyScore（标题150）
+ *   - 单词匹配得分：50（标题75）
+ * - **模糊搜索算法**: fuzzyScore（连续字符匹配，递增得分）
+ * - **文本高亮**: highlightText提取所有匹配项
+ * - **上下文提取**: getMessageContext获取前后消息（默认2条）
+ * - **结果排序**: 先按得分降序，再按时间降序
+ * - **搜索建议**: getSuggestions提取标题和消息中的词汇（长度>2）
+ * - **热门关键词**: getPopularKeywords统计词频（长度>2，非常见词）
+ * - **中文分词**: extractChineseWords提取连续中文字符（每2-4字符）
+ * - **常见词过滤**: isCommonWord过滤中英文常见词
+ *
+ * ## [SIDE-EFFECTS]
+ * - **正则表达式**: new RegExp(`(${this.escapeRegex(query)})`, 'gi')匹配查询
+ *   - escapeRegex转义特殊字符（[.*+?^${}()|[\]\\）
+ * - **数组操作**:
+ *   - results.push添加搜索结果
+ *   - results.sort排序（得分降序，时间降序）
+ *   - results.slice(0, limit)限制结果数量
+ *   - filter过滤结果类型（r.type === 'session'）
+ * - **字符串操作**:
+ *   - toLowerCase()小写转换
+ *   - trim()去除首尾空格
+ *   - split(/\s+/)分词
+ *   - includes()包含判断
+ *   - substring()截取字符串
+ * - **对象操作**: Object.entries(), Array.from(), Map
+ * - **时间测量**: Date.now()计算搜索时间
+ * - **条件判断**: 检查query长度、类型筛选、sessionId筛选
+ * - **中文匹配**: /[\u4e00-\u9fff]+/g匹配中文字符
+ * - **异常处理**: try-catch捕获正则错误（实际不会抛出）
+ * - **单例模式**: searchService全局实例
+ * - **便捷函数**: searchSessions, getSearchSuggestions, getPopularKeywords, groupResultsBySession
  */
 
 import { ChatSession, ChatMessage } from '@/store/chatStore'

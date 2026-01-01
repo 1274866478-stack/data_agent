@@ -1,6 +1,114 @@
 """
-融合引擎服务
-实现SQL查询结果、RAG检索结果的多源数据融合和答案生成
+# [FUSION_SERVICE] 融合引擎服务
+
+## [HEADER]
+**文件名**: fusion_service.py
+**职责**: 实现SQL查询结果、RAG检索结果的多源数据融合、冲突检测与解决、答案生成
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 融合引擎服务
+
+## [INPUT]
+- **query: str** - 用户原始查询
+- **query_analysis: Optional[QueryAnalysis]** - 查询分析结果
+- **sql_results: Optional[List[Dict[str, Any]]]** - SQL查询结果列表
+- **rag_results: Optional[List[Dict[str, Any]]]** - RAG检索结果列表
+- **documents: Optional[List[Dict[str, Any]]]** - 文档数据列表
+- **context: Optional[List[Dict[str, Any]]]** - 上下文信息
+- **tenant_id: Optional[str]** - 租户ID
+- **data_list: List[SourceData]** - 源数据列表
+- **conflict: ConflictInfo** - 冲突信息对象
+- **answer: str** - 融合后的答案
+- **fused_content: Dict[str, Any]** - 融合后的内容
+- **explanation_log: List[FusionExplanation]** - 融合解释日志
+
+## [OUTPUT]
+- **FusionResult**: 融合结果对象（fuse_multi_source_data）
+  - answer: str - 最终答案
+  - sources: List - 源引用信息
+  - reasoning_log: List[FusionExplanation] - 融合解释步骤
+  - confidence: float - 整体置信度
+  - fusion_metadata: Dict - 融合元数据
+  - conflicts: List[ConflictInfo] - 检测到的冲突
+  - processing_time: float - 处理时间（秒）
+  - answer_quality_score: float - 答案质量分数
+- **List[SourceData]**: 标准化后的源数据列表（_standardize_input_data）
+- **List[SourceData]**: 预处理后的数据列表（_preprocess_data）
+- **List[ConflictInfo]**: 检测到的冲突列表（_detect_conflicts）
+- **List[SourceData]**: 冲突解决后的数据列表（_resolve_conflicts）
+- **Dict[str, Any]**: 融合后的内容（_perform_fusion）
+- **str**: 融合后的答案（_generate_fused_answer）
+- **List[FusionExplanation]**: 融合解释日志（_build_fusion_explanation）
+- **float**: 答案质量分数（_calculate_answer_quality）
+- **str**: 冲突解决结果（_resolve_by_recency/confidence/sql_priority/consensus/weighted_average）
+
+**上游依赖** (已读取源码):
+- Python标准库: asyncio, json, logging, re, datetime, dataclasses, enum, typing
+- 项目服务: reasoning_service（reasoning_engine, QueryAnalysis, ReasoningResult, ReasoningStep）, llm_service（llm_service, LLMMessage）
+
+**下游依赖** (需要反向索引分析):
+- [llm_service.py](./llm_service.py) - LLM服务生成融合答案
+- [xai_service.py](./xai_service.py) - XAI服务使用融合结果生成解释
+- [agent_service.py](./agent_service.py) - Agent服务使用融合引擎
+
+**调用方**:
+- RAG-SQL链执行后调用融合引擎
+- 多源数据查询时调用
+- 答案生成时调用
+
+## [STATE]
+- **数据源类型**: DataSourceType枚举
+  - SQL_QUERY, RAG_RETRIEVAL, DOCUMENT, API_RESPONSE, UNSTRUCTURED_TEXT, EXTERNAL_KNOWLEDGE
+- **冲突解决策略**: ConflictResolutionStrategy枚举
+  - TRUST_MOST_RECENT, TRUST_HIGHEST_CONFIDENCE, TRUST_SQL_OVER_RAG, TRUST_CONSENSUS, MANUAL_REVIEW, WEIGHTED_AVERAGE
+- **数据结构**:
+  - SourceData: 源数据（source_id, source_type, content, metadata, confidence, timestamp, relevance_score, factual_reliability）
+  - FusionExplanation: 融合解释步骤（step_number, description, action, evidence, confidence, decision_factors）
+  - ConflictInfo: 冲突信息（conflict_type, conflicting_sources, conflict_description, resolution_strategy, resolution_result, confidence_impact）
+  - FusionResult: 融合结果（answer, sources, reasoning_log, confidence, fusion_metadata, conflicts, processing_time, answer_quality_score）
+- **融合策略**: fusion_strategies字典（SQL_QUERY, RAG_RETRIEVAL, DOCUMENT）
+- **冲突解决处理器**: conflict_resolution_handlers字典（5种策略）
+- **融合流程**（8步）:
+  1. 标准化输入数据（_standardize_input_data）
+  2. 数据预处理和质量评估（_preprocess_data）
+  3. 冲突检测（_detect_conflicts）
+  4. 冲突解决（_resolve_conflicts）
+  5. 信息融合（_perform_fusion）
+  6. 生成答案（_generate_fused_answer）
+  7. 构建融合解释（_build_fusion_explanation）
+  8. 计算质量分数（_calculate_answer_quality）
+- **冲突检测**: 数值冲突、事实冲突、时间冲突
+- **内容清洗**: 移除多余空白、特殊字符、截断过长内容（10000字符）
+- **关键信息提取**: 数字、日期、百分比、内容统计
+- **质量评分**: 答案完整性(30%) + 数据源融合度(25%) + 解释完整性(25%) + 整体置信度(20%)
+- **LLM调用**: _generate_fused_answer使用llm_service.chat_completion生成融合答案
+- **全局单例**: fusion_engine全局融合引擎实例
+
+## [SIDE-EFFECTS]
+- **对象创建**: SourceData(...)创建源数据对象
+- **JSON序列化**: json.dumps(result, ensure_ascii=False)序列化数据
+- **列表推导式**: [data for data in source_data_list]过滤数据
+- **内容清洗**: re.sub(r'\s+', ' ', content)移除多余空白
+- **正则提取**: re.findall(r'\d+(?:\.\d+)?', content)提取数字
+- **字符串操作**: content[:10000]截断内容，len(content)计算长度
+- **时间戳**: datetime.utcnow()记录时间
+- **字典操作**: {**data.metadata, **key_info}合并元数据
+- **异常处理**: try-except捕获预处理失败，保留原始数据
+- **列表操作**: context.messages.append(message)添加消息
+- **循环累加**: sum(data.confidence for data in processed_data) / len(processed_data)计算平均置信度
+- **LLM调用**: llm_service.chat_completion生成融合答案
+- **时间计算**: (datetime.utcnow() - start_time).total_seconds()计算处理时间
+- **正则检测**: re.search(pattern, data.content)检测冲突模式
+- **字典构建**: 构建融合结果对象、融合解释步骤
+- **质量计算**: 加权计算answer_quality_score
+- **列表转换**: list(cls._adapters.keys())返回支持的数据库类型
+- **全局单例**: fusion_engine全局实例
+
+## [POS]
+**路径**: backend/src/app/services/fusion_service.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 依赖reasoning_service和llm_service
 """
 
 import logging

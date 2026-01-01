@@ -1,6 +1,62 @@
 """
-RAG (Retrieval-Augmented Generation) API Endpoints
-for Data Agent V4 Backend
+# RAG (Retrieval-Augmented Generation) API端点
+
+## [HEADER]
+**文件名**: rag.py
+**职责**: 提供RAG查询、文档处理、语义检索、嵌入向量生成和会话管理的RESTful API
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本
+
+## [INPUT]
+- query: str - 用户查询文本
+- request: RAGQueryRequest - RAG查询请求模型
+- file: UploadFile - 上传的文档文件
+- document_id: int - 文档ID
+- collection_id: str - 集合ID
+- chunking_strategy: str - 分块策略（semantic, fixed_size, overlap等）
+- chunk_size: int - 目标分块大小
+- overlap_ratio: float - 重叠比例
+- retrieval_mode: str - 检索模式（semantic, keyword, hybrid, exact）
+- max_results: int - 最大返回结果数
+- threshold: float - 相似度阈值
+- tenant_id: str - 租户ID（通过依赖注入）
+
+## [OUTPUT]
+- RAG查询响应: RAGQueryResponse（包含答案、检索结果、推理步骤）
+- 文档处理结果: Dict[str, Any]（包含分块信息、向量数量）
+- 语义搜索结果: Dict[str, Any]（包含检索到的文档片段）
+- 嵌入向量: List[float]（文本的向量表示）
+- 集合列表: List[Dict[str, Any]]
+- 会话历史: List[Dict[str, Any]]
+- 反馈提交结果: Dict[str, Any]
+- 服务统计信息: Dict[str, Any]
+- 健康检查状态: Dict[str, Any]
+- 缓存状态: Dict[str, Any]
+- RAG配置信息: Dict[str, Any]
+
+## [LINK]
+**上游依赖**:
+- [../../core/auth.py](../../core/auth.py) - get_current_tenant_id依赖注入
+- [../../core/config.py](../../core/config.py) - get_settings配置获取
+- [../../services/rag_service.py](../../services/rag_service.py) - RAGService核心服务
+- [../../models/rag_models.py](../../models/rag_models.py) - RAG请求/响应模型
+- [../../services/embedding_service.py](../../services/embedding_service.py) - 嵌入向量生成服务
+
+**下游依赖**:
+- 无（API端点为最外层）
+
+**调用方**:
+- 前端知识库检索界面
+- 文档上传处理流程
+- 智能问答系统
+- 语义搜索功能
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/rag.py
+**模块层级**: Level 3（API端点层）
+**依赖深度**: 2 层（依赖于services、models和core层）
 """
 
 import logging

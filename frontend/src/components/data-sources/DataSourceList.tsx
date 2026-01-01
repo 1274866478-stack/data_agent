@@ -1,3 +1,53 @@
+/**
+ * # [DATA_SOURCE_LIST] 数据源列表组件
+ *
+ * ## [MODULE]
+ * **文件名**: DataSourceList.tsx
+ * **职责**: 数据源列表管理 - 展示、筛选、批量操作、测试连接、创建和编辑数据源
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * Props:
+ * - **tenantId: string** - 租户ID（必需）
+ * - **onDataSourceSelect?: (dataSource: DataSourceConnection) => void** - 数据源选择回调
+ *
+ * ## [OUTPUT]
+ * UI组件:
+ * - **数据源列表**: 展示所有数据源，支持搜索和状态筛选
+ * - **批量操作**: 多选删除数据源
+ * - **创建/编辑对话框**: 弹窗表单
+ * - **连接测试**: 测试数据库连接
+ * - **确认对话框**: 批量删除确认
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [../../store/dataSourceStore.ts](../../store/dataSourceStore.ts) - 数据源状态管理
+ * - [../../store/authStore.ts](../../store/authStore.ts) - 认证状态管理
+ * - [./DataSourceForm.tsx](./DataSourceForm.tsx) - 数据源表单组件
+ * - [./ConnectionTest.tsx](./ConnectionTest.tsx) - 连接测试组件
+ * - [../ui/](../ui/) - UI基础组件
+ *
+ * **下游依赖**:
+ * - [../app/(app)/data-sources/page.tsx](../app/(app)/data-sources/page.tsx) - 数据源页面
+ *
+ * **调用方**:
+ * - 数据源管理页面
+ *
+ * ## [STATE]
+ * - **searchQuery: string** - 搜索关键词
+ * - **filterStatus: string** - 状态筛选
+ * - **selectedIds: string[]** - 选中的数据源ID列表
+ * - **showCreateDialog: boolean** - 是否显示创建对话框
+ * - **showDeleteDialog: boolean** - 是否显示删除确认对话框
+ *
+ * ## [SIDE-EFFECTS]
+ * - **副作用1**: 调用dataSourceStore获取和操作数据源
+ * - **副作用2**: 调用dataSourceStore批量删除数据源
+ * - **副作用3**: 触发onDataSourceSelect回调
+ * - **副作用4**: 打开/关闭对话框
+ */
+
 'use client'
 
 import { useMemo, useState, useEffect } from 'react'

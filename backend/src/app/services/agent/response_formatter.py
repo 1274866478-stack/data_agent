@@ -1,6 +1,41 @@
 """
-API 响应格式化模块
-将 VisualizationResponse 转换为前端期望的格式
+# Agent 响应格式化器 - API响应标准化
+
+## [HEADER]
+**文件名**: response_formatter.py
+**职责**: 将内部VisualizationResponse模型转换为前端API期望的响应格式
+**作者**: Data Agent Team
+**版本**: 1.1.0
+**变更记录**:
+- v1.1.0 (2026-01-01): 增强Pydantic模型兼容性处理
+- v1.0.0 (2025-12-01): 初始版本
+
+## [INPUT]
+- VisualizationResponse对象: 包含answer, sql, data, chart等字段
+- 错误消息: str - 错误情况下的错误文本
+
+## [OUTPUT]
+- API响应字典: Dict[str, Any] - 前端可用的标准化响应
+  - answer: str - LLM文字回答
+  - table: Dict - 表格数据(可选)
+  - chart: Dict - 图表配置(可选)
+  - sql: str - SQL语句(可选)
+  - echarts_option: Dict - ECharts配置(可选)
+
+## [LINK]
+**上游依赖**:
+- [models.py](models.py) - VisualizationResponse定义
+
+**下游依赖**:
+- [agent_service.py](agent_service.py) - API响应构建
+
+**调用方**:
+- API端点 - /api/v1/query, /api/v1/llm/chat等
+
+## [POS]
+**路径**: backend/src/app/services/agent/response_formatter.py
+**模块层级**: Level 3 (Services → Agent → Response Formatter)
+**依赖深度**: 2 层
 """
 from typing import Dict, Any, Optional
 import logging

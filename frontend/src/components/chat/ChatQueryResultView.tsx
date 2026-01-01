@@ -1,3 +1,43 @@
+/**
+ * # ChatQueryResultView 聊天查询结果视图组件
+ *
+ * ## [MODULE]
+ * **文件名**: ChatQueryResultView.tsx
+ * **职责**: 展示AI聊天查询的结果数据，包括图表可视化和数据表格
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - **table?: ChatQueryResultTable** - 查询结果表格数据，包含列名、行数据和总行数
+ * - **chart?: ChatQueryChart** - 查询结果图表数据，包含图表类型、标题和图片URL
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element | null - 查询结果展示界面，包含图表卡片和数据表格卡片
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [@/lib/api-client](../../lib/api-client.ts) - 提供查询结果类型定义
+ * - [@/components/ui/card](../ui/card.tsx) - 卡片容器组件
+ * - [@/components/ui/scroll-area](../ui/scroll-area.tsx) - 滚动区域组件
+ * - [@/lib/utils](../../lib/utils.ts) - cn() 工具函数
+ *
+ * **下游依赖**:
+ * - [MessageList.tsx](./MessageList.tsx) - 在消息列表中展示查询结果
+ * - [ChatInterface.tsx](./ChatInterface.tsx) - 在聊天界面中集成查询结果展示
+ *
+ * ## [STATE]
+ * - **MAX_ROWS: 20** - 表格最大显示行数
+ * - **MAX_COLUMNS: 8** - 表格最大显示列数
+ * - **limitedColumns: string[]** - 限制后的列名数组
+ * - **limitedRows: Record<string, any>[]** - 限制后的行数据数组
+ * - **chartType: string** - 图表类型（小写）
+ *
+ * ## [SIDE-EFFECTS]
+ * - **数据限制**: 自动截断过大的表格数据（最多20行×8列）
+ * - **样式适配**: 根据是否有图表调整表格卡片样式
+ * - **响应式展示**: 图表图片自适应宽度，表格支持滚动查看
+ * - **空状态处理**: 无数据时显示"查询未返回数据"提示
+ */
 'use client'
 
 import React from 'react'

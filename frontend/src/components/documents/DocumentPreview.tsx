@@ -1,4 +1,48 @@
 /**
+ * # DocumentPreview 文档预览模态框组件
+ *
+ * ## [MODULE]
+ * **文件名**: DocumentPreview.tsx
+ * **职责**: 全屏模态框预览PDF和Word文档，支持缩放、旋转、下载等操作
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - **document**: KnowledgeDocument - 要预览的文档对象
+ * - **onClose**: () => void (可选) - 关闭预览的回调
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - 全屏固定定位的预览模态框
+ * - **副作用**: 调用documentStore获取预览URL和下载URL
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [react](https://react.dev) - React核心库
+ * - [@/store/documentStore.ts](../../store/documentStore.ts) - 文档状态管理
+ * - [@/components/ui/*](../ui/) - UI基础组件（Button, Alert）
+ *
+ * **下游依赖**:
+ * - 无直接下游组件
+ *
+ * **调用方**:
+ * - [./DocumentCard.tsx](./DocumentCard.tsx) - 点击预览按钮时打开
+ * - [@/store/documentStore.ts](../../store/documentStore.ts) - openPreviewModal方法调用
+ *
+ * ## [STATE]
+ * - **previewUrl**: string - 文档预览URL
+ * - **isLoading**: boolean - 加载状态
+ * - **error**: string - 错误信息
+ * - **zoom**: number - 缩放百分比（25-200）
+ * - **rotation**: number - 旋转角度（0/90/180/270）
+ *
+ * ## [SIDE-EFFECTS]
+ * - 调用documentStore.getDocumentPreviewUrl()获取预览链接（2小时有效期）
+ * - 调用documentStore.getDocumentDownloadUrl()下载文档
+ * - 使用iframe渲染PDF内容
+ * - Word文档显示下载提示（浏览器不支持直接预览）
+ * - ESC键关闭预览
+ */
+/**
  * 文档预览组件 - Story 2.4规范实现
  * PDF和Word文档预览、缩放控制、下载功能
  */

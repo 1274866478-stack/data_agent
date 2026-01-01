@@ -1,6 +1,51 @@
 """
-性能监控API端点
-提供查询性能监控和统计信息
+# 性能监控API端点
+
+## [HEADER]
+**文件名**: performance_monitoring.py
+**职责**: 提供实时性能统计、租户性能报告、慢查询分析、告警管理和系统资源监控的RESTful API
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本
+
+## [INPUT]
+- hours: int - 时间范围（小时，1-168）
+- limit: int - 返回数量限制
+- format: str - 导出格式（json, csv）
+- tenant_id: Optional[str] - 租户ID（可选过滤）
+- confirm: bool - 确认标志（用于危险操作）
+
+## [OUTPUT]
+- 实时性能统计: Dict[str, Any]
+- 租户性能报告: Dict[str, Any]
+- 慢查询列表: List[Dict[str, Any]]
+- 查询类型性能分析: Dict[str, Any]
+- 性能警告列表: List[Dict[str, Any]]
+- 导出的性能指标数据: PlainTextResponse（JSON/CSV）
+- 活跃告警列表: List[Dict[str, Any]]
+- 告警历史记录: List[Dict[str, Any]]
+- 系统资源指标: Dict[str, Any]
+- 详细健康状态报告: Dict[str, Any]
+
+## [LINK]
+**上游依赖**:
+- [../../core/auth.py](../../core/auth.py) - get_current_user_with_tenant依赖注入
+- [../../services/query_performance_monitor.py](../../services/query_performance_monitor.py) - query_perf_monitor单例服务
+
+**下游依赖**:
+- 无（API端点为最外层）
+
+**调用方**:
+- 前端性能监控仪表板
+- 运维管理平台
+- 性能分析工具
+- 告警通知系统
+
+## [POS]
+**路径**: backend/src/app/api/v1/endpoints/performance_monitoring.py
+**模块层级**: Level 3（API端点层）
+**依赖深度**: 2 层（依赖于services和core层）
 """
 
 import logging

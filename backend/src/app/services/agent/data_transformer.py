@@ -1,13 +1,40 @@
 """
-数据转换模块 - 将 SQL 查询结果转换为 ECharts 数据格式
+# Agent 数据转换器 - SQL结果到ECharts格式转换
 
-SQL 返回格式: [{"col1": val1, "col2": val2}, ...]
+## [HEADER]
+**文件名**: data_transformer.py
+**职责**: 将SQL查询结果转换为ECharts可视化所需的数据格式
+**作者**: Data Agent Team
+**版本**: 1.2.0
+**变更记录**:
+- v1.2.0 (2026-01-01): 支持图表类型自动推断
+- v1.0.0 (2025-12-01): 初始版本，基础数据转换逻辑
 
-mcp-echarts 需要的格式:
-- 柱状图/饼图: [{"category": "xxx", "value": 123}, ...]
-- 折线图: [{"time": "xxx", "value": 123}, ...]
+## [INPUT]
+- SQL查询结果: List[Dict[str, Any]] - 原始数据库返回
+- SQL语句: str - 原始SQL查询
+- 图表类型: str - 可选的图表类型指定
+- 用户问题: str - 用于图表类型推断
 
-旧格式 (本地 PyEcharts): [[val1, val2], [val1, val2], ...]
+## [OUTPUT]
+- ECharts数据: List[Dict] - MCP ECharts工具所需格式
+- ChartConfig对象: 包含图表类型、轴字段等配置
+- ECharts Option: 完整的ECharts配置JSON
+
+## [LINK]
+**上游依赖**:
+- [models.py](models.py) - ChartType和ChartConfig定义
+
+**下游依赖**:
+- [agent_service.py](agent_service.py) - 图表生成逻辑
+
+**调用方**:
+- Agent服务 - 数据查询后的可视化转换
+
+## [POS]
+**路径**: backend/src/app/services/agent/data_transformer.py
+**模块层级**: Level 3 (Services → Agent → Data Transformer)
+**依赖深度**: 2 层
 """
 from typing import List, Dict, Any, Tuple, Optional
 

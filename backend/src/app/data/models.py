@@ -1,6 +1,50 @@
 """
-SQLAlchemy 数据模型定义
-Tenant, DataSourceConnection, KnowledgeDocument 模型
+# [MODELS] SQLAlchemy数据模型定义
+
+## [HEADER]
+**文件名**: models.py
+**职责**: 定义所有数据库ORM模型，包括Tenant、DataSourceConnection、KnowledgeDocument等核心实体
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - 实现核心数据模型
+
+## [INPUT]
+- **Base: DeclarativeMeta** - SQLAlchemy基础模型类（从database.py导入）
+- **tenant_id: str** - 租户ID，用于多租户数据隔离
+- **connection_string: str** - 数据库连接字符串（加密存储）
+- **document_data: dict** - 文档元数据和内容
+
+## [OUTPUT]
+- **Tenant: Model** - 租户模型类
+- **DataSourceConnection: Model** - 数据源连接模型类
+- **KnowledgeDocument: Model** - 知识文档模型类
+- **TenantStatus: Enum** - 租户状态枚举
+- **DocumentStatus: Enum** - 文档状态枚举
+- **model_instance: ORM实例** - 数据库记录的Python对象表示
+
+## [LINK]
+**上游依赖** (已读取源码):
+- [./database.py](./database.py) - Base类和数据库引擎
+- [../services/encryption_service.py](../services/encryption_service.py) - 加密服务
+- [../services/database_factory.py](../services/database_factory.py) - 数据库工厂
+
+**下游依赖** (已读取源码):
+- [../api/v1/endpoints/tenants.py](../api/v1/endpoints/tenants.py) - 租户管理API
+- [../api/v1/endpoints/data_sources.py](../api/v1/endpoints/data_sources.py) - 数据源API
+- [../api/v1/endpoints/documents.py](../api/v1/endpoints/documents.py) - 文档管理API
+- [../services/tenant_service.py](../services/tenant_service.py) - 租户服务层
+- [../services/data_source_service.py](../services/data_source_service.py) - 数据源服务层
+- [../services/document_service.py](../services/document_service.py) - 文档服务层
+
+**调用方**:
+- 所有服务层和API层 - 使用数据模型进行CRUD操作
+- Alembic迁移 - 基于模型生成数据库迁移
+
+## [POS]
+**路径**: backend/src/app/data/models.py
+**模块层级**: Level 2 - 数据层核心
+**依赖深度**: 直接依赖 database.py；被所有服务层和API层依赖
 """
 
 from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Enum, BigInteger, JSON

@@ -1,6 +1,97 @@
 """
-数据库支持验证工具
-验证不同数据库类型的支持和配置
+[HEADER]
+数据库支持验证工具 - Database Support Validator
+验证不同数据库类型的适配器支持、方言差异和连接能力
+
+[MODULE]
+模块类型: 配置验证脚本 (Standalone Script)
+所属功能: 开发工具与数据库适配器验证
+技术栈: Python 3.8+, asyncio, logging, typing
+
+[INPUT]
+- 命令行参数: 无
+- 配置来源:
+  - src.services.database_adapters.DatabaseAdapterFactory - 适配器工厂
+  - src.services.database_adapters.DatabaseType - 数据库类型枚举
+  - src.services.database_adapters.DatabaseCapability - 数据库能力
+- 测试连接: 可在代码中添加 test_connections 列表进行实际连接测试
+- 测试用例: 内置SQL方言测试用例 (LIMIT, JSON_AGG, UPSERT)
+
+[OUTPUT]
+- 控制台输出:
+  - 支持的数据库列表 (状态、描述、功能)
+  - SQL方言差异对比
+  - 连接字符串验证结果
+  - 实际数据库连接测试 (如果提供)
+  - 支持总结统计
+- 退出码:
+  - 0: 验证成功
+  - 1: 验证失败 (脚本默认不检查测试结果)
+- 验证项目:
+  1. 数据库功能支持列表
+  2. SQL方言差异 (LIMIT, JSON_AGG, UPSERT等)
+  3. 连接字符串格式验证
+  4. 实际数据库连接 (可选)
+
+[LINK]
+- 依赖模块:
+  - src.services.database_adapters - 数据库适配器系统
+  - src.services.database_adapters.postgresql_adapter - PostgreSQL适配器
+  - src.services.database_adapters.mysql_adapter - MySQL适配器
+  - src.services.database_adapters.sqlite_adapter - SQLite适配器
+- 关联脚本:
+  - scripts/validate_zhipu_config.py - 智谱AI配置验证
+  - scripts/validate_cache_config.py - 缓存配置验证
+- 文档参考:
+  - docs/database/database-support.md - 数据库支持文档
+
+[POS]
+- 文件路径: backend/scripts/validate_database_support.py
+- 执行方式:
+  - 直接运行: python scripts/validate_database_support.py
+  - Docker: docker-compose exec backend python scripts/validate_database_support.py
+- 使用场景:
+  - 验证新增数据库类型的支持
+  - SQL方言差异对比学习
+  - 连接字符串格式验证
+  - CI/CD流程中的数据库兼容性检查
+
+[PROTOCOL]
+- 执行流程:
+  1. 测试数据库功能支持:
+     - 获取所有支持的数据库类型
+     - 显示每个数据库的状态和功能列表
+  2. 测试SQL方言差异:
+     - LIMIT查询: PostgreSQL/MySQL/SQLite对比
+     - JSON聚合: JSON_AGG实现差异
+     - UPSERT操作: INSERT ON CONFLICT vs ON DUPLICATE KEY UPDATE
+  3. 测试连接字符串验证:
+     - 测试有效格式 (postgresql://, mysql://, sqlite://)
+     - 测试无效格式 (不完整、不支持的类型)
+  4. 测试实际连接 (可选):
+     - 如果提供 test_connections, 执行实际连接测试
+     - 测试连接、schema获取、基本查询
+- 验证标准:
+  - 完全支持 (fully_supported): 所有功能可用
+  - 计划支持 (planned): 部分功能或开发中
+- 连接字符串规则:
+  - PostgreSQL: postgresql://或postgresql+asyncpg://开头
+  - MySQL: mysql://开头
+  - SQLite: sqlite://开头, 路径不能为空
+- 错误处理:
+  - 捕获所有异常并记录
+  - SQL生成失败: 显示"不支持或需要特殊处理"
+
+[EXAMPLES]
+- 连接字符串示例:
+  - PostgreSQL: postgresql://user:pass@localhost:5432/mydb
+  - MySQL: mysql://user:pass@localhost:3306/mydb
+  - SQLite: sqlite:///path/to/database.db
+- SQL方言输出示例:
+  - LIMIT查询:
+    - PostgreSQL: SELECT ... LIMIT 10 OFFSET 20
+    - MySQL: SELECT ... LIMIT 20, 10
+    - SQLite: SELECT ... LIMIT 10 OFFSET 20
 """
 
 import asyncio

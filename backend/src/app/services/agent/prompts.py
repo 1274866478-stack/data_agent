@@ -1,6 +1,37 @@
 """
-Agent System Prompt 定义
-包含 SQL 查询和图表可视化指令
+# Agent System Prompt - AI智能体系统提示词
+
+## [HEADER]
+**文件名**: prompts.py
+**职责**: 定义LangGraph Agent的系统提示词，包含SQL查询、文件分析和图表可视化指令
+**作者**: Data Agent Team
+**版本**: 2.0.0
+**变更记录**:
+- v2.0.0 (2026-01-01): 增强反幻觉规则和工具调用强制机制
+- v1.0.0 (2025-12-01): 初始版本，基础系统提示词
+
+## [INPUT]
+- 数据源类型: str - SQL数据库 或 文件(Excel/CSV)
+- 用户问题: str - 自然语言查询问题
+- Golden Examples: str - 可选的示例查询
+
+## [OUTPUT]
+- System Prompt: str - 完整的Agent系统指令字符串
+
+## [LINK]
+**上游依赖**:
+- [examples.py](examples.py) - 加载黄金示例
+
+**下游依赖**:
+- [agent_service.py](agent_service.py) - Agent服务初始化
+
+**调用方**:
+- LangGraph Agent初始化 - 设置系统提示词
+
+## [POS]
+**路径**: backend/src/app/services/agent/prompts.py
+**模块层级**: Level 3 (Services → Agent → Prompts)
+**依赖深度**: 2 层
 """
 try:
     from .examples import load_golden_examples

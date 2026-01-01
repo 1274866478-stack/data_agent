@@ -1,3 +1,45 @@
+/**
+ * # EChartsRenderer ECharts图表渲染器
+ *
+ * ## [MODULE]
+ * **文件名**: EChartsRenderer.tsx
+ * **职责**: 封装echarts-for-react库，提供类型安全和默认配置的图表渲染组件
+ * **作者**: Data Agent Team
+ * **版本**: 1.0.0
+ *
+ * ## [INPUT]
+ * - **echartsOption**: Record<string, any> | null - ECharts配置对象
+ * - **title**: string (可选) - 图表标题
+ * - **height**: number | string (可选) - 图表高度，默认400px
+ * - **loading**: boolean (可选) - 是否显示加载状态
+ * - **className**: string (可选) - 自定义样式类名
+ *
+ * ## [OUTPUT]
+ * - **返回值**: JSX.Element - Card包装的ECharts图表或null或错误提示
+ * - **副作用**: 无副作用
+ *
+ * ## [LINK]
+ * **上游依赖**:
+ * - [react](https://react.dev) - React核心库
+ * - [echarts-for-react](https://github.com/hustcc/echarts-for-react) - ECharts React封装
+ * - [@/components/ui/*](../ui/) - UI基础组件（Card, Alert）
+ * - [lucide-react](https://lucide.dev) - 图标库
+ *
+ * **下游依赖**:
+ * - 无直接下游组件
+ *
+ * **调用方**:
+ * - [./MessageList.tsx](./MessageList.tsx) - 消息列表中渲染图表
+ * - [./ChatQueryResultView.tsx](./ChatQueryResultView.tsx) - 查询结果视图
+ *
+ * ## [STATE]
+ * - **chartRef**: Ref<ReactECharts> - ECharts组件引用
+ *
+ * ## [SIDE-EFFECTS]
+ * - 自动添加默认的title和tooltip配置
+ * - 验证配置有效性，无效时显示错误提示
+ * - 配置为null时不渲染任何内容
+ */
 'use client'
 
 import React, { useEffect, useRef } from 'react'

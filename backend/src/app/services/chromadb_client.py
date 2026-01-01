@@ -1,4 +1,71 @@
 """
+# [CHROMADB_CLIENT] ChromaDB向量数据库客户端
+
+## [HEADER]
+**文件名**: chromadb_client.py
+**职责**: 提供ChromaDB向量数据库连接、集合管理、文档增删改查和向量检索功能，支持多租户集合隔离和RAG功能开关
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本 - ChromaDB向量数据库服务
+
+## [INPUT]
+- **collection_name: str** - 集合名称
+- **documents: List[str]** - 文档文本列表
+- **metadatas: List[Dict[str, Any]]** - 文档元数据列表
+- **ids: List[str]** - 文档唯一ID列表
+- **query_texts: List[str]** - 查询文本列表
+- **n_results: int** - 返回结果数量（默认10）
+- **where: Optional[Dict[str, Any]]** - 元数据过滤条件
+- **tenant_id: Optional[str]** - 租户ID（用于多租户集合隔离）
+
+## [OUTPUT]
+- **bool**: 操作成功/失败（create_collection, add_documents, delete_documents）
+- **bool**: 连接状态（check_connection）
+- **Optional[Dict[str, Any]]**: 查询结果（query_documents, get_collection_info）
+  - ids: List[List[str]] - 文档ID列表
+  - documents: List[List[str]] - 文档内容列表
+  - metadatas: List[List[Dict]] - 元数据列表
+  - distances: List[List[float]] - 距离列表
+- **List[str]**: 集合名称列表（list_collections）
+
+**上游依赖** (已读取源码):
+- [./core/config.py](./core/config.py) - 配置管理（ChromaDB host、port、enable_rag开关）
+
+**下游依赖** (需要反向索引分析):
+- [document_service.py](./document_service.py) - 文档服务（调用向量化）
+- [rag_service.py](./rag_service.py) - RAG服务（调用向量检索）
+- [xai_service.py](./xai_service.py) - XAI服务（可能调用）
+
+**调用方**:
+- [document_service.py](./document_service.py) - 文档上传后向量化
+- [../api/v1/endpoints/documents.py](../api/v1/endpoints/documents.py) - 文档API端点（间接）
+- RAG检索流程
+
+## [STATE]
+- **延迟初始化**: _client属性在首次使用时初始化（避免启动时连接失败）
+- **RAG功能开关**: 基于settings.enable_rag控制服务可用性
+- **可选依赖**: chromadb导入失败时设置CHROMADB_AVAILABLE=False，不阻塞应用启动
+- **多租户隔离**: 集合命名格式为"{collection_name}_{tenant_id}"
+- **嵌入函数**: 使用DefaultEmbeddingFunction生成向量
+- **全局实例**: chromadb_service单例供全局使用
+
+## [SIDE-EFFECTS]
+- **HTTP连接**: 连接ChromaDB服务（settings.chroma_host:chroma_port）
+- **异常处理**:
+  - RAG禁用时抛出RuntimeError
+  - 连接失败时记录警告并返回False/None
+  - 不阻塞应用启动（可选导入）
+- **日志记录**: 详细记录集合操作、连接状态、错误信息
+- **向量计算**: 自动计算文本嵌入向量（通过DefaultEmbeddingFunction）
+
+## [POS]
+**路径**: backend/src/app/services/chromadb_client.py
+**模块层级**: Level 1 (服务层)
+**依赖深度**: 直接依赖 core.config
+"""
+
+"""
 ChromaDB 客户端配置
 向量数据库连接、集合操作
 """

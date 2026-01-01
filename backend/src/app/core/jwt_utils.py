@@ -1,7 +1,46 @@
 """
-JWT验证工具模块
-提供Clerk/Auth0 JWT Token验证功能
-支持多租户和用户信息提取
+# JWT验证工具模块
+
+## [HEADER]
+**文件名**: jwt_utils.py
+**职责**: 提供Clerk/Auth0 JWT Token验证功能,支持多租户和用户信息提取
+**作者**: Data Agent Team
+**版本**: 1.0.0
+**变更记录**:
+- v1.0.0 (2026-01-01): 初始版本
+
+## [INPUT]
+- token: str - JWT Token字符串
+- issuer: str - Token发行者
+- jwks_url: str - JWKS公钥URL
+- audience: Optional[str] - 受众
+- api_key: Optional[str] - API密钥
+- authorization: Optional[str] - Authorization header
+
+## [OUTPUT]
+- 验证后的payload: Dict[str, Any]
+- 用户信息: Dict[str, Any]（包含user_id, email, tenant_id等）
+- Token过期时间: Optional[datetime]
+- Token是否过期: bool
+- 是否需要刷新: bool
+
+## [LINK]
+**上游依赖**:
+- [config.py](config.py) - settings配置对象
+
+**下游依赖**:
+- [auth.py](auth.py) - 依赖JWT验证实现用户认证
+- [api/v1/endpoints/auth.py](../api/v1/endpoints/auth.py) - 认证端点调用JWT验证
+
+**调用方**:
+- 认证中间件
+- API端点依赖注入
+- 用户认证流程
+
+## [POS]
+**路径**: backend/src/app/core/jwt_utils.py
+**模块层级**: Level 2（核心基础层）
+**依赖深度**: 1 层（依赖config层）
 """
 
 import jwt

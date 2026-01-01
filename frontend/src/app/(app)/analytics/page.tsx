@@ -1,3 +1,85 @@
+/**
+ * [HEADER]
+ * 数据分析页面 - Data Agent V4 Analytics Dashboard
+ * 提供数据资产概览、统计图表和使用情况分析
+ *
+ * [MODULE]
+ * 模块类型: Next.js 14 App Router Page Component
+ * 所属功能: 数据可视化与分析
+ * 技术栈: React, TypeScript, Recharts, Zustand
+ *
+ * [INPUT]
+ * - 无路由参数
+ * - 依赖的全局状态:
+ *   - tenantId (useTenantId): 当前租户ID
+ *   - overview (useDashboardStore): 概览数据
+ *   - dataSources (useDataSourceStore): 数据源列表
+ *   - documents (useDocumentStore): 文档列表
+ *
+ * [OUTPUT]
+ * - 渲染内容:
+ *   - 关键指标卡片 (数据源、文档、存储、资产总数)
+ *   - 数据源类型分布饼图
+ *   - 文档状态分布饼图
+ *   - 存储使用情况进度条
+ *   - 最近活动列表
+ * - 用户交互:
+ *   - 刷新数据按钮 (handleRefresh)
+ *   - 实时数据加载状态
+ *
+ * [LINK]
+ * - 依赖组件:
+ *   - @/components/ui/button - Button组件
+ *   - @/components/ui/card - Card组件族
+ *   - @/components/ui/loading-spinner - LoadingSpinner
+ *   - @/components/ui/error-message - ErrorMessage
+ * - 依赖状态管理:
+ *   - @/store/authStore - useTenantId
+ *   - @/store/dashboardStore - fetchOverview
+ *   - @/store/dataSourceStore - fetchDataSources
+ *   - @/store/documentStore - fetchDocuments
+ * - 图表库:
+ *   - recharts - PieChart, ResponsiveContainer
+ * - 路由:
+ *   - /analytics - 当前页面路由
+ *
+ * [POS]
+ * - 文件路径: frontend/src/app/(app)/analytics/page.tsx
+ * - 访问URL: http://localhost:3000/analytics
+ * - 布局位置: (app) 路由组, 继承主应用布局
+ *
+ * [STATE]
+ * - 局部状态:
+ *   - isRefreshing: boolean - 刷新状态标记
+ * - 衍生状态 (useMemo):
+ *   - dataSourceStats - 数据源统计对象
+ *   - docStats - 文档统计对象
+ *   - dataSourceTypeData - 饼图数据格式
+ *   - documentStatusData - 饼图数据格式
+ *   - storageData - 存储使用情况
+ * - 副作用:
+ *   - useEffect: 加载初始数据 (tenantId变化时)
+ *   - handleRefresh: 手动刷新所有数据
+ *
+ * [PROTOCOL]
+ * - 初始化流程:
+ *   1. 从 authStore 获取 tenantId
+ *   2. 并行调用 fetchOverview, fetchDataSources, fetchDocuments
+ *   3. 计算统计指标和图表数据
+ * - 数据刷新机制:
+ *   - 自动刷新: tenantId 变化时触发
+ *   - 手动刷新: 点击刷新按钮, 防抖处理
+ * - 错误处理:
+ *   - 租户未认证: 显示认证错误提示
+ *   - 数据加载失败: 显示 ErrorMessage 组件
+ * - 性能优化:
+ *   - useMemo 缓存统计计算结果
+ *   - Promise.all 并行数据请求
+ * - 空状态处理:
+ *   - 无数据源: 显示空状态提示图标
+ *   - 无文档: 显示空状态提示图标
+ */
+
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
