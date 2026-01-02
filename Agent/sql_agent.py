@@ -5,8 +5,9 @@
 **文件名**: sql_agent.py
 **职责**: 实现基于LangGraph和MCP的SQL智能查询代理 - 自然语言理解、Schema发现、SQL生成、图表可视化、多轮对话
 **作者**: Data Agent Team
-**版本**: 1.0.0
+**版本**: 1.0.1
 **变更记录**:
+- v1.0.1 (2026-01-02): 修复MCP echarts服务器URL配置（本地开发使用localhost）
 - v1.0.0 (2026-01-01): 初始版本 - LangGraph SQL Agent实现
 
 ## [INPUT]
@@ -564,10 +565,10 @@ def _get_mcp_config():
     }
 
     if ENABLE_ECHARTS_MCP:
-        # 使用容器内可访问的服务名而不是 localhost
+        # 本地开发使用 localhost，Docker环境使用服务名 mcp_echarts
         mcp_config["echarts"] = {
             "transport": "sse",
-            "url": "http://mcp_echarts:3033/sse",
+            "url": "http://localhost:3033/sse",
             "timeout": 30.0,
             "sse_read_timeout": 120.0,
         }

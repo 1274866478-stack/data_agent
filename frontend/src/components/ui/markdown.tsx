@@ -159,6 +159,11 @@ export function Markdown({ content, className }: MarkdownProps) {
             const language = match ? match[1] : ''
             const inline = className?.includes('inline-')
 
+            // 过滤掉 SQL 代码块，避免与 AI 推理过程重复显示
+            if (!inline && language === 'sql') {
+              return null
+            }
+
             if (!inline && language) {
               return (
                 <div className="relative">

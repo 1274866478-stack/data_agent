@@ -75,11 +75,19 @@
 **依赖深度**: 直接依赖 core.config 和 multimodal_processor
 """
 
+import json
 import logging
 from abc import ABC, abstractmethod
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union, AsyncGenerator
 from dataclasses import dataclass
+
+from openai import AsyncOpenAI
+from zhipuai import ZhipuAI
+
+from src.app.core.config import settings
+from src.app.services.multimodal_processor import multimodal_processor
 
 logger = logging.getLogger(__name__)
 

@@ -284,6 +284,7 @@ docker-compose.override.yml
 *.db
 *.sqlite
 *.sqlite3
+data_storage/
 
 # Alembic
 alembic/versions/*.py
@@ -294,6 +295,9 @@ alembic/versions/*.py
 
 # Local development
 .local/
+.claude/settings.local.json
+.clauderc
+.mcp.json
 
 # Temporary files
 nul
