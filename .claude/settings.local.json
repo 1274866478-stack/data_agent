@@ -27,9 +27,14 @@
       "Bash(pyright-langserver:*)",
       "Bash(timeout:*)",
       "Bash(ping:*)",
-      "Bash(tasklist:*)"
+      "Bash(tasklist:*)",
+      "mcp__chrome-devtools__list_network_requests",
+      "mcp__chrome-devtools__list_pages",
+      "mcp__chrome-devtools__navigate_page",
+      "mcp__chrome-devtools__get_network_request"
     ]
   },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "serena",
     "chrome-devtools",
@@ -38,6 +43,5 @@
     "ide",
     "deepwiki",
     "open-websearch"
-  ],
-  "enableAllProjectMcpServers": true
+  ]
 }

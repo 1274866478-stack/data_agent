@@ -1,19 +1,16 @@
 {
   "mcpServers": {
     "serena": {
-      "command": "uvx",
+      "command": "C:\\Users\\Tian\\.local\\bin\\serena-mcp-server.exe",
       "args": [
-        "--from",
-        "git+https://github.com/oraios/serena",
-        "serena",
-        "start-mcp-server",
-        "--project-from-cwd",
+        "--project",
+        "C:\\data_agent",
         "--context",
-        "desktop-app",
+        "claude-code",
         "--mode",
-        "interactive,editing",
-        "--log-level",
-        "INFO"
+        "interactive",
+        "--mode",
+        "editing"
       ]
     },
     "chrome-devtools": {
@@ -31,25 +28,7 @@
         "/c",
         "npx",
         "-y",
-        "context7"
-      ]
-    },
-    "exa": {
-      "command": "cmd",
-      "args": [
-        "/c",
-        "npx",
-        "-y",
-        "@extralife/mcp-server-exa"
-      ]
-    },
-    "ide": {
-      "command": "cmd",
-      "args": [
-        "/c",
-        "npx",
-        "-y",
-        "@modelcontextprotocol/server-ide"
+        "@upstash/context7-mcp"
       ]
     },
     "deepwiki": {
@@ -61,14 +40,15 @@
         "mcp-deepwiki"
       ]
     },
-    "open-websearch": {
+    "playwright": {
       "command": "cmd",
       "args": [
         "/c",
         "npx",
         "-y",
-        "@mcp-im/open-websearch"
+        "@executeautomation/playwright-mcp-server"
       ]
     }
-  }
+  },
+  "_comment": "可用的MCP服务器: serena(代码搜索), chrome-devtools(浏览器工具), context7(上下文), deepwiki(文档), playwright(浏览器自动化)"
 }
