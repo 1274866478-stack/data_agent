@@ -56,9 +56,13 @@ import {
   TableProperties,
   Wand2,
   Code2,
-  Zap
+  Zap,
+  BarChart3,
+  Table,
 } from 'lucide-react'
-import { ProcessingStep } from '@/types/chat'
+import { ProcessingStep, StepContentType, StepContentData, StepTableData, StepChartData } from '@/types/chat'
+import ReactECharts from 'echarts-for-react'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 interface ProcessingStepsProps {
   steps: ProcessingStep[]
@@ -92,6 +96,8 @@ function getStepIcon(step: number, title: string, status: ProcessingStep['status
         return <FileCode className={cn(iconClass, 'text-green-500')} />
       case 6: // 执行SQL查询
         return <Zap className={cn(iconClass, 'text-green-500')} />
+      case 7: // 生成数据可视化图表
+        return <BarChart3 className={cn(iconClass, 'text-green-500')} />
       default:
         // 回退到标题匹配
         if (title.includes('数据源') || title.includes('Schema')) {
@@ -130,6 +136,196 @@ function formatDuration(ms?: number) {
   if (!ms) return ''
   if (ms < 1000) return `${ms}ms`
   return `${(ms / 1000).toFixed(2)}s`
+}
+
+// 渲染SQL代码块
+function renderSQLCode(sql: string) {
+  return (
+    <div className="mt-2 rounded-md bg-gray-900 overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-gray-800 border-b border-gray-700">
+        <span className="text-xs font-medium text-gray-300">SQL</span>
+      </div>
+      <pre className="p-3 overflow-x-auto">
+        <code className="text-xs text-green-400 font-mono">{sql}</code>
+      </pre>
+    </div>
+  )
+}
+
+// 渲染数据表格（组件形式，支持状态管理）
+interface TableDataRendererProps {
+  table: StepTableData
+}
+
+function TableDataRenderer({ table }: TableDataRendererProps) {
+  const [isExpanded, setIsExpanded] = React.useState(false)
+
+  // 默认显示更多行（50行），列数不限
+  const DEFAULT_MAX_ROWS = 50
+  const MAX_COLUMNS = 10  // 增加列数限制
+  const limitedColumns = table.columns.slice(0, MAX_COLUMNS)
+
+  // 根据展开状态决定显示行数
+  const displayRows = isExpanded ? table.rows : table.rows.slice(0, DEFAULT_MAX_ROWS)
+  const hasMoreRows = table.row_count > DEFAULT_MAX_ROWS
+  const hasMoreColumns = table.columns.length > MAX_COLUMNS
+
+  return (
+    <div className="mt-2 rounded-md border border-gray-200 overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-200">
+        <span className="text-xs font-medium text-gray-700">查询结果</span>
+        <span className="text-xs text-gray-500">
+          {table.row_count} 行 × {table.columns.length} 列
+          {hasMoreColumns && ` (显示前${MAX_COLUMNS}列)`}
+        </span>
+      </div>
+      <ScrollArea>
+        <table className="w-full text-xs border-collapse">
+          <thead className="bg-gray-50 sticky top-0 z-10">
+            <tr>
+              {limitedColumns.map(col => (
+                <th
+                  key={col}
+                  className="px-3 py-2 border-b text-left font-medium text-gray-700 whitespace-nowrap bg-gray-50"
+                >
+                  {col}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {displayRows.map((row, rowIndex) => (
+              <tr key={rowIndex} className="odd:bg-white even:bg-gray-50/60 hover:bg-blue-50/30">
+                {limitedColumns.map(col => (
+                  <td
+                    key={col}
+                    className="px-3 py-1.5 border-b text-gray-800 align-top"
+                  >
+                    <span className="break-words whitespace-pre-wrap">
+                      {row[col] !== undefined && row[col] !== null
+                        ? String(row[col])
+                        : ''}
+                    </span>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ScrollArea>
+      {/* 展开/收起按钮 */}
+      {(hasMoreRows || hasMoreColumns) && (
+        <div className="px-3 py-1.5 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+          <span className="text-xs text-gray-500">
+            {isExpanded
+              ? `显示全部 ${table.row_count} 行`
+              : `共 ${table.row_count} 行，当前显示前 ${Math.min(DEFAULT_MAX_ROWS, table.row_count)} 行`
+            }
+            {hasMoreColumns && ` · 仅展示前 ${MAX_COLUMNS} 列`}
+          </span>
+          {hasMoreRows && (
+            <button
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+            >
+              {isExpanded ? '收起' : '展开全部'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// 渲染图表
+function renderChart(chart: StepChartData) {
+  if (chart.echarts_option) {
+    return (
+      <div className="mt-2 rounded-md border border-blue-200 overflow-hidden bg-white">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border-b border-blue-200">
+          <span className="text-xs font-medium text-blue-700">数据可视化</span>
+          {chart.chart_type && (
+            <span className="text-xs text-blue-500 uppercase">{chart.chart_type}</span>
+          )}
+        </div>
+        <div className="p-2">
+          <ReactECharts
+            option={chart.echarts_option}
+            style={{ width: '100%', minHeight: '400px' }}
+            opts={{ renderer: 'canvas' }}
+            notMerge={false}
+            lazyUpdate={false}
+          />
+        </div>
+      </div>
+    )
+  }
+
+  if (chart.chart_image) {
+    return (
+      <div className="mt-2 rounded-md border border-blue-200 overflow-hidden bg-white">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border-b border-blue-200">
+          <span className="text-xs font-medium text-blue-700">数据可视化</span>
+        </div>
+        <div className="p-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={chart.chart_image}
+            alt={chart.title || '图表'}
+            className="w-full h-auto rounded"
+          />
+        </div>
+      </div>
+    )
+  }
+
+  return null
+}
+
+// 渲染步骤内容
+function renderStepContent(step: ProcessingStep) {
+  if (!step.content_type || !step.content_data) return null
+
+  switch (step.content_type) {
+    case 'sql':
+      if (step.content_data.sql) {
+        return renderSQLCode(step.content_data.sql)
+      }
+      break
+    case 'table':
+      if (step.content_data.table) {
+        return <TableDataRenderer table={step.content_data.table} />
+      }
+      break
+    case 'chart':
+      if (step.content_data.chart) {
+        return renderChart(step.content_data.chart)
+      }
+      break
+    case 'error':
+      if (step.content_data.error) {
+        return (
+          <div className="mt-2 p-2 rounded-md bg-red-50 border border-red-200">
+            <p className="text-xs text-red-700">{step.content_data.error}</p>
+          </div>
+        )
+      }
+      break
+    case 'text':
+      if (step.content_data.text) {
+        return (
+          <div className="mt-2 p-3 rounded-md bg-blue-50 border border-blue-200">
+            <div className="text-xs font-medium text-blue-700 mb-1">数据分析</div>
+            <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+              {step.content_data.text}
+            </p>
+          </div>
+        )
+      }
+      break
+  }
+
+  return null
 }
 
 export function ProcessingSteps({ steps, className, defaultExpanded = true }: ProcessingStepsProps) {
@@ -229,9 +425,12 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
                       {step.description}
                     </p>
                   )}
-                  
-                  {/* 详情（如SQL内容） */}
-                  {step.details && (
+
+                  {/* 渲染步骤内容（SQL、表格、图表） */}
+                  {renderStepContent(step)}
+
+                  {/* 详情（如SQL内容） - 仅当没有content_type时显示 */}
+                  {step.details && !step.content_type && (
                     <details className="mt-1">
                       <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
                         查看详情

@@ -61,9 +61,65 @@ import { Markdown } from '@/components/ui/markdown'
 import { Button } from '@/components/ui/button'
 import { ChatMessage, useChatStore } from '@/store/chatStore'
 import { cn } from '@/lib/utils'
-import { EChartsRenderer } from './EChartsRenderer'
-import { ChatQueryResultView } from './ChatQueryResultView'
 import { ProcessingSteps } from './ProcessingSteps'
+
+/**
+ * 从消息内容中移除图表标记和Markdown表格，避免与推理步骤中的内容重复显示
+ * - 如果有 AI 推理步骤，移除所有内容（所有内容都在 ProcessingSteps 中展示）
+ * - 图表已通过 ProcessingSteps 的步骤7展示
+ * - 表格已通过 ProcessingSteps 的步骤6展示
+ * - 数据分析已通过 ProcessingSteps 的步骤8展示
+ */
+function removeChartMarkers(content: string, hasProcessingSteps: boolean): string {
+  // 如果有 AI 推理步骤，移除所有内容（避免重复）
+  if (hasProcessingSteps) {
+    return ''
+  }
+
+  let cleaned = content
+
+  // 移除 [CHART_START]...[CHART_END] 标记
+  cleaned = cleaned.replace(/\[CHART_START\].*?\[CHART_END\]/gs, '')
+
+  // 移除 Markdown 表格（避免与 ProcessingSteps 步骤6重复）
+  // 匹配以 | 开头的行，包含分隔符行 |---| 和数据行
+  // 策略：找到表格开始（包含 | 的行），然后连续的 | 行都是表格的一部分
+  const lines = cleaned.split('\n')
+  const filteredLines: string[] = []
+  let inTable = false
+  let tableLineCount = 0
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    // 检查是否是表格行（包含 | 且不是代码块）
+    const isTableRow = trimmed.startsWith('|') && trimmed.endsWith('|')
+    const isSeparator = /^\|[\s\-:|]+\|$/.test(trimmed)
+
+    if (isTableRow) {
+      if (!inTable) {
+        inTable = true
+        tableLineCount = 0
+      }
+      tableLineCount++
+      // 跳过表格行，不添加到输出
+      continue
+    } else {
+      if (inTable && tableLineCount > 0) {
+        // 表格结束
+        inTable = false
+        tableLineCount = 0
+      }
+      filteredLines.push(line)
+    }
+  }
+
+  cleaned = filteredLines.join('\n')
+
+  // 清理多余的空行
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
+
+  return cleaned
+}
 
 interface MessageListProps {
   className?: string
@@ -127,32 +183,6 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
   return (
     <div className={cn('space-y-4 p-4', className)}>
       {messages.map((message) => {
-        // 解析逻辑：将 message.content 拆分成"纯文本部分"和"图表配置部分"
-        const content = message.content || ''
-        const chartRegex = /\[CHART_START\]([\s\S]*?)\[CHART_END\]/ // 匹配图表标记
-        const match = content.match(chartRegex)
-        
-        let textToRender = content
-        let chartOption = null
-        
-        if (match) {
-          try {
-            const jsonStr = match[1].trim()
-            chartOption = JSON.parse(jsonStr)
-            
-            // 关键：将图表代码从显示的文本中移除，避免重复显示乱码
-            textToRender = content.replace(match[0], '').trim()
-          } catch (e) {
-            console.error('Failed to parse chart JSON:', e)
-            // 如果解析失败，保留原文以便调试
-          }
-        }
-        
-        // 如果 metadata 中有 echarts_option，优先使用（用于向后兼容）
-        if (!chartOption && message.metadata?.echarts_option) {
-          chartOption = message.metadata.echarts_option
-        }
-
         return (
           <div
             key={message.id}
@@ -190,61 +220,39 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
               )}>
                 <CardContent className="p-3">
                   <div className="message-container">
-                    {/* 1. 渲染清洗后的 Markdown 文本 */}
+                    {/* 渲染 Markdown 文本 */}
                     {message.role === 'user' ? (
-                      <p className="text-base whitespace-pre-wrap">{textToRender}</p>
+                      <p className="text-base whitespace-pre-wrap">{message.content || ''}</p>
                     ) : (
                       <>
-                        <Markdown content={textToRender} />
-                        {/* 流式响应光标闪烁效果 */}
-                        {message.status === 'sending' && (
-                          <span className="inline-block w-2 h-5 ml-1 bg-gray-600 animate-pulse" />
+                        {/* 如果有 processing_steps，不在此处显示内容（内容在 ProcessingSteps 中展示） */}
+                        {(!message.metadata?.processing_steps || message.metadata.processing_steps.length === 0) ? (
+                          <Markdown content={message.content || ''} />
+                        ) : (
+                          // 有 processing_steps 时，显示流式光标（如果正在发送）
+                          message.status === 'sending' && (
+                            <span className="inline-block w-2 h-5 ml-1 bg-gray-600 animate-pulse" />
+                          )
                         )}
                       </>
-                    )}
-                    
-                    {/* 2. 如果解析到了图表配置，渲染图表（仅对 assistant 消息显示） */}
-                    {message.role === 'assistant' && chartOption && (
-                      <div className="mt-4 w-full">
-                        <EChartsRenderer
-                          echartsOption={chartOption}
-                          title={
-                            (typeof chartOption.title === 'object' 
-                              ? chartOption.title?.text 
-                              : chartOption.title) || 
-                            '数据可视化'
-                          }
-                        />
-                      </div>
                     )}
                   </div>
                 </CardContent>
               </Card>
 
-              {/* 如果有结构化结果或图表，追加展示（仅对 assistant 消息显示） */}
-              {message.role === 'assistant' && message.metadata && (message.metadata.table || message.metadata.chart) && (
-                <ChatQueryResultView
-                  table={message.metadata.table}
-                  chart={message.metadata.chart}
-                />
-              )}
-
-              {/* 显示AI推理步骤（仅对 assistant 消息显示） */}
-              {message.role === 'assistant' && (() => {
-                // 调试日志
-                console.log('[MessageList] 检查processing_steps:', message.id, message.metadata?.processing_steps)
-                return message.metadata?.processing_steps && message.metadata.processing_steps.length > 0
-              })() && (
+              {/* 显示AI推理步骤（包含SQL、表格、图表，仅对 assistant 消息显示） */}
+              {message.role === 'assistant' && message.metadata?.processing_steps &&
+               message.metadata.processing_steps.length > 0 && (
                 <ProcessingSteps
                   steps={message.metadata.processing_steps}
-                  defaultExpanded={true}
+                  defaultExpanded={message.status === 'sending'}
                 />
               )}
 
-              {/* 🔴 第三道防线：检测工具调用失败并显示警告图标 */}
+              {/* 检测工具调用失败并显示警告 */}
               {message.role === 'assistant' && (
                 (() => {
-                  const hasSystemError = message.content.includes('SYSTEM ERROR') || 
+                  const hasSystemError = message.content.includes('SYSTEM ERROR') ||
                                          message.content.includes('无法获取数据') ||
                                          message.content.includes('工具调用失败') ||
                                          (message.metadata as any)?.tool_error === true ||
@@ -272,9 +280,9 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                   {message.status === 'error' && ' • 发送失败'}
                 </span>
                 {/* 停止生成按钮 */}
-                {message.role === 'assistant' && 
-                 message.status === 'sending' && 
-                 streamingMessageId === message.id && 
+                {message.role === 'assistant' &&
+                 message.status === 'sending' &&
+                 streamingMessageId === message.id &&
                  streamingStatus !== 'idle' && (
                   <Button
                     variant="ghost"
@@ -288,7 +296,7 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                 )}
               </div>
 
-              {/* 🔴 第三道防线：默认展开显示推理过程和工具输出 */}
+              {/* 推理过程和元数据（向后兼容） */}
               {message.metadata && (
                 <div className="mt-2 text-xs space-y-2">
                   {/* 工具调用状态（默认展开） */}
@@ -310,7 +318,7 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                       </div>
                     </details>
                   )}
-                  
+
                   {/* 推理过程（默认展开） */}
                   {message.metadata.reasoning && (
                     <details open className="bg-gray-50 border border-gray-200 rounded p-2">
@@ -318,7 +326,7 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                       <p className="text-gray-600 mt-1 whitespace-pre-wrap">{message.metadata.reasoning}</p>
                     </details>
                   )}
-                  
+
                   {message.metadata.sources && message.metadata.sources.length > 0 && (
                     <div className="mb-1">
                       <strong>数据源：</strong> {message.metadata.sources.join(', ')}

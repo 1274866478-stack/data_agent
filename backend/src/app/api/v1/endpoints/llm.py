@@ -968,19 +968,38 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
         return ""
 
 
-def _build_system_prompt_with_context(data_sources_context: str) -> str:
+def _build_system_prompt_with_context(
+    data_sources_context: str,
+    db_type: str = "postgresql"  # 新增参数：数据库类型
+) -> str:
     """
     构建包含数据源上下文的系统提示词（使用 SQL 代码块格式）
 
     Args:
         data_sources_context: 数据源上下文信息
+        db_type: 数据库类型（postgresql, mysql, sqlite, xlsx, csv等）
 
     Returns:
         系统提示词
     """
+    # 导入提示词生成器（支持数据库类型感知）
+    import sys
+    from pathlib import Path
+
+    # 路径计算：优先使用 Docker 容器中的绝对路径 /Agent
+    # 如果 /Agent 不存在，则使用相对路径计算（本地开发环境）
+    if Path("/Agent").exists():
+        agent_path = Path("/Agent")
+    else:
+        # 本地开发环境：从 llm.py 向上 5 级到 backend，然后到 Agent
+        agent_path = Path(__file__).parent.parent.parent.parent.parent / "Agent"
+
+    if str(agent_path) not in sys.path:
+        sys.path.insert(0, str(agent_path))
+
     if data_sources_context:
-        # 有数据源时的完整提示，要求使用 ```sql 代码块格式
-        return f"""你是一个专业的数据分析师。你的任务是根据用户的问题，查询数据库并给出分析结果。
+        # 基础系统提示词
+        base_prompt = f"""你是一个专业的数据分析师。你的任务是根据用户的问题，查询数据库并给出分析结果。
 
 ## 🔴 重要规则 🔴
 
@@ -1038,8 +1057,8 @@ SELECT * FROM 表名 WHERE 条件;
 
 ### 方式1：使用 CAST 转换后比较（推荐）
 ```sql
-SELECT * FROM 订单表 
-WHERE CAST(created_at AS DATE) >= '2023-01-01' 
+SELECT * FROM 订单表
+WHERE CAST(created_at AS DATE) >= '2023-01-01'
   AND CAST(created_at AS DATE) < '2024-01-01';
 ```
 
@@ -1055,10 +1074,10 @@ SELECT * FROM 订单表 WHERE created_at LIKE '2023-06%';
 ### 方式3：按年月分组统计
 ```sql
 -- 使用 strftime 需要先转换为日期类型
-SELECT 
+SELECT
     strftime(CAST(created_at AS DATE), '%Y-%m') as 月份,
     COUNT(*) as 订单数量
-FROM 订单表 
+FROM 订单表
 WHERE created_at LIKE '2023%'
 GROUP BY strftime(CAST(created_at AS DATE), '%Y-%m')
 ORDER BY 月份;
@@ -1066,11 +1085,11 @@ ORDER BY 月份;
 
 ### 方式4：使用 SUBSTRING 提取年月（更通用）
 ```sql
-SELECT 
+SELECT
     SUBSTRING(created_at, 1, 7) as 月份,
     COUNT(*) as 订单数量,
     SUM(final_amount) as 总销售额
-FROM 订单表 
+FROM 订单表
 WHERE SUBSTRING(created_at, 1, 4) = '2023'
 GROUP BY SUBSTRING(created_at, 1, 7)
 ORDER BY 月份;
@@ -1093,10 +1112,10 @@ SELECT * FROM 用户表;
 让我查询各产品的销量排名：
 
 ```sql
-SELECT 产品名称, SUM(销量) as 总销量 
-FROM 订单表 
-GROUP BY 产品名称 
-ORDER BY 总销量 DESC 
+SELECT 产品名称, SUM(销量) as 总销量
+FROM 订单表
+GROUP BY 产品名称
+ORDER BY 总销量 DESC
 LIMIT 10;
 ```
 
@@ -1105,11 +1124,11 @@ LIMIT 10;
 让我查询2023年按月的销售趋势：
 
 ```sql
-SELECT 
+SELECT
     SUBSTRING(created_at, 1, 7) as 月份,
     COUNT(*) as 订单数量,
     SUM(final_amount) as 总销售额
-FROM 订单表 
+FROM 订单表
 WHERE SUBSTRING(created_at, 1, 4) = '2023'
 GROUP BY SUBSTRING(created_at, 1, 7)
 ORDER BY 月份;
@@ -1118,6 +1137,19 @@ ORDER BY 月份;
 ---
 
 **记住：只需要在回答中写 SQL 代码块，系统会自动执行查询并返回结果！**"""
+
+        # 使用数据库特定的提示词生成器
+        try:
+            from src.app.services.prompt_generator import generate_database_aware_system_prompt
+            result = generate_database_aware_system_prompt(db_type, base_prompt)
+            logger.info(f"🔍 [LLM端点] 使用数据库类型感知提示词生成器，db_type={db_type}")
+            return result
+        except ImportError as e:
+            logger.warning(f"⚠️ 无法导入 prompt_generator: {e}，使用默认提示词")
+            return base_prompt
+        except Exception as e:
+            logger.warning(f"⚠️ 生成数据库特定提示词失败: {e}，使用默认提示词")
+            return base_prompt
     else:
         # 没有数据源时的提示
         return """你是一个数据分析助手。
@@ -1127,6 +1159,90 @@ ORDER BY 月份;
 如果用户询问数据相关问题，请告诉他们需要先在"数据源管理"页面添加数据库连接。
 
 不要假设或猜测数据库结构，不要生成任何SQL查询。"""
+
+
+def _get_default_fix_prompt(
+    original_sql: str,
+    error_message: str,
+    schema_context: str,
+    original_question: str,
+    error_details: dict
+) -> str:
+    """
+    获取默认的SQL修复提示词（回退方案，当动态生成失败时使用）
+    主要针对PostgreSQL，但也可以处理基本的函数不兼容错误
+    """
+    # 检查是否是函数不兼容错误（如 TO_CHAR 不存在）
+    if "does not exist" in error_message and ("to_char" in error_message.lower() or "date_trunc" in error_message.lower()):
+        # 添加函数不兼容的特定提示
+        db_hint = """
+## 🔴 函数不兼容错误
+
+你使用的函数在当前数据库中不存在。请检查并替换为兼容的函数：
+
+- **TO_CHAR()**: PostgreSQL专用，MySQL中用DATE_FORMAT()，SQLite中用strftime()
+- **DATE_TRUNC()**: PostgreSQL专用，MySQL中用DATE_FORMAT()，SQLite中用strftime()
+- **EXTRACT()**: PostgreSQL支持，MySQL可用YEAR()/MONTH()，SQLite用strftime()
+
+请根据错误信息和上述说明，替换不兼容的函数。
+"""
+    else:
+        db_hint = f"""
+## 数据库提示
+{error_details.get('hint', '无提示')}
+"""
+
+    return f"""你是一个SQL专家。用户的查询执行失败了，请帮助修复SQL语句。
+
+# 用户原始问题
+{original_question}
+
+# 失败的SQL查询
+```sql
+{original_sql}
+```
+
+# 错误信息
+{error_details['main_error']}
+
+{db_hint}
+
+# 🔴🔴🔴 数据库Schema信息（必须使用这里的实际表名和列名）
+{schema_context}
+
+# 🔥🔥🔥 修复要求（必须严格遵守）
+
+## 第1步：理解错误
+- **主要错误**: {error_details['main_error']}
+
+## 第2步：查找正确的表名/列名
+**🔴 核心问题：SQL中使用了不存在的表名或列名，或者使用了不兼容的函数！**
+
+1. **如果错误是"函数不存在"**：
+   - 检查并替换为数据库兼容的函数
+   - PostgreSQL: TO_CHAR(), DATE_TRUNC(), EXTRACT()
+   - MySQL: DATE_FORMAT(), YEAR(), MONTH()
+   - SQLite: strftime(), CAST(strftime() AS INTEGER)
+
+2. **如果错误是"Table does not exist"**：
+   - 必须从上面的Schema信息中找到实际存在的表名
+
+3. **如果错误是"Column does not exist"**：
+   - 在Schema中找到正确的列名
+
+## 第3步：修复SQL
+1. 检查并替换所有不兼容的函数
+2. 仔细阅读Schema信息，找到对应的**实际表名和列名**
+3. 确保SQL语法正确
+4. 只使用SELECT查询
+5. 🔴 极值查询必须使用 LIMIT 1
+
+## 第4步：返回结果
+- **只返回修复后的SQL语句** - 不要包含任何解释或markdown标记
+- **如果Schema中没有相关的表或列** - 返回"CANNOT_FIX"
+- **不要添加```sql标记** - 直接返回纯SQL语句
+
+现在请修复上述失败的SQL查询，直接返回修复后的SQL语句："""
 
 
 def _parse_sql_error(error_message: str) -> Dict[str, str]:
@@ -1216,7 +1332,8 @@ async def _fix_sql_with_ai(
     original_sql: str,
     error_message: str,
     schema_context: str,
-    original_question: str
+    original_question: str,
+    db_type: str = "postgresql"  # 新增：数据库类型参数
 ) -> Optional[str]:
     """
     使用AI修复失败的SQL查询
@@ -1226,92 +1343,41 @@ async def _fix_sql_with_ai(
         error_message: 错误信息
         schema_context: 数据库schema上下文
         original_question: 用户原始问题
+        db_type: 数据库类型（postgresql, mysql, sqlite, xlsx, csv等）
 
     Returns:
         修复后的SQL，如果无法修复则返回None
     """
     try:
-        # 解析错误信息，提取关键信息
-        error_details = _parse_sql_error(error_message)
+        # 尝试使用动态生成的数据库特定修复提示词
+        try:
+            from src.app.services.prompt_generator import generate_sql_fix_prompt_with_db_type
+            fix_prompt = generate_sql_fix_prompt_with_db_type(
+                original_sql=original_sql,
+                error_message=error_message,
+                schema_context=schema_context,
+                original_question=original_question,
+                db_type=db_type
+            )
+        except ImportError as e:
+            logger.warning(f"无法导入 prompt_generator: {e}，使用默认PostgreSQL修复提示")
+            # 回退到原有的硬编码提示词（仅针对函数不兼容错误）
+            error_details = _parse_sql_error(error_message)
+            fix_prompt = _get_default_fix_prompt(
+                original_sql, error_message, schema_context, original_question, error_details
+            )
+        except Exception as e:
+            logger.warning(f"生成动态修复提示词失败: {e}，使用默认PostgreSQL修复提示")
+            # 回退到原有的硬编码提示词
+            error_details = _parse_sql_error(error_message)
+            fix_prompt = _get_default_fix_prompt(
+                original_sql, error_message, schema_context, original_question, error_details
+            )
 
-        # 构建更精确的修复提示
-        fix_prompt = f"""你是一个SQL专家。用户的查询执行失败了，请帮助修复SQL语句。
-
-# 用户原始问题
-{original_question}
-
-# 失败的SQL查询
-```sql
-{original_sql}
-```
-
-# 错误信息
-{error_details['main_error']}
-
-# PostgreSQL数据库提示
-{error_details.get('hint', '无')}
-
-# 🔴🔴🔴 数据库Schema信息（必须使用这里的实际表名和列名）
-{schema_context}
-
-# 🔥🔥🔥 修复要求（必须严格遵守）
-
-## 第1步：理解错误
-- **主要错误**: {error_details['main_error']}
-- **数据库提示**: {error_details.get('hint', '无提示')}
-
-## 第2步：查找正确的表名/列名
-**🔴 核心问题：SQL中使用了不存在的表名或列名！**
-
-1. **如果错误是"Table does not exist"**：
-   - 这通常意味着SQL中使用了错误的表名（可能是用户想象的中文名）
-   - 必须从上面的Schema信息中找到实际存在的表名
-   - 例如：用户说"客户"，但Schema中实际的表可能叫 `customers`
-   - 例如：用户说"订单"，但Schema中实际的表可能叫 `orders`
-
-2. **如果错误是"Column does not exist"**：
-   - 查看PostgreSQL的HINT提示
-   - 在Schema中找到正确的列名
-
-3. **常见错误模式（中文表名→英文实际表名）：**
-   - ❌ `FROM 客户` → ✅ `FROM customers`（或Schema中的实际表名）
-   - ❌ `FROM 订单` → ✅ `FROM orders`（或Schema中的实际表名）
-   - ❌ `FROM 产品` → ✅ `FROM products`（或Schema中的实际表名）
-   - ❌ `FROM 员工` → ✅ `FROM employees`（或Schema中的实际表名）
-
-## 第3步：修复SQL
-1. 仔细阅读上面的Schema信息，找到对应的**实际表名和列名**
-2. 将SQL中错误的表名/列名替换为Schema中的实际名称
-3. 确保SQL语法正确
-4. 只使用SELECT查询
-5. 🔴 极值查询必须使用 LIMIT 1：如果原始问题涉及"最大"、"最小"、"最长"、"最短"等极值，确保SQL使用 ORDER BY + LIMIT 1
-
-## 第4步：返回结果
-- **只返回修复后的SQL语句** - 不要包含任何解释或markdown标记
-- **如果Schema中没有相关的表或列** - 返回"CANNOT_FIX"
-- **不要添加```sql标记** - 直接返回纯SQL语句
-
-# 修复示例
-
-**错误SQL:**
-```sql
-SELECT 客户.name, SUM(订单.total_amount) FROM 客户 JOIN 订单 ON 客户.id = 订单.customer_id
-```
-
-**错误信息:**
-Table with name 客户 does not exist
-
-**Schema信息中显示实际表名是：customers, orders**
-
-**修复后的SQL:**
-SELECT customers.name, SUM(orders.total_amount) as total_spent FROM customers JOIN orders ON customers.id = orders.customer_id GROUP BY customers.name
-
----
-
-现在请修复上述失败的SQL查询，直接返回修复后的SQL语句："""
-
+        # 更新 system prompt 以反映数据库类型
+        system_content = f"你是一个专业的SQL修复专家，擅长根据错误信息和schema修复{db_type.upper()}数据库的SQL查询。"
         messages = [
-            {"role": "system", "content": "你是一个专业的SQL修复专家，擅长根据错误信息和schema修复SQL查询。"},
+            {"role": "system", "content": system_content},
             {"role": "user", "content": fix_prompt}
         ]
 
@@ -1760,7 +1826,8 @@ async def _execute_sql_if_needed(
                             original_sql=current_sql,
                             error_message=last_error,
                             schema_context=schema_context,
-                            original_question=original_question
+                            original_question=original_question,
+                            db_type=data_source.db_type  # 传递数据库类型
                         )
 
                         if fixed_sql:
@@ -2048,9 +2115,27 @@ def _create_processing_step(
     status: str = "running",
     duration: int = None,
     details: str = None,
-    tenant_id: str = None
+    tenant_id: str = None,
+    content_type: str = None,
+    content_data: dict = None
 ) -> str:
-    """创建处理步骤事件的JSON字符串"""
+    """
+    创建处理步骤事件的JSON字符串
+
+    Args:
+        step: 步骤编号
+        title: 步骤标题
+        description: 步骤描述
+        status: 步骤状态 (pending/running/completed/error)
+        duration: 耗时（毫秒）
+        details: 详情文本（向后兼容）
+        tenant_id: 租户ID
+        content_type: 内容类型 (sql/table/chart/error)
+        content_data: 内容数据字典
+
+    Returns:
+        str: SSE格式的JSON字符串
+    """
     step_data = {
         "type": "processing_step",
         "step": {
@@ -2066,9 +2151,16 @@ def _create_processing_step(
         step_data["step"]["duration"] = duration
     if details:
         step_data["step"]["details"] = details
-    
+    # 新增：支持富内容类型
+    if content_type:
+        step_data["step"]["content_type"] = content_type
+    if content_data:
+        step_data["step"]["content_data"] = content_data
+
     # 添加日志确认步骤发送
     logger.info(f"📤 发送处理步骤 {step}: {title} [{status}]")
+    if content_type:
+        logger.info(f"   └─ content_type: {content_type}")
     return f"data: {json.dumps(step_data, ensure_ascii=False)}\n\n"
 
 
@@ -2195,15 +2287,16 @@ async def _stream_response_generator(
         async for chunk in stream_generator:
             # 处理普通内容
             if chunk.type == "content":
-                # 发送原始chunk
-                chunk_data = {
-                    "type": chunk.type,
-                    "content": chunk.content,
-                    "provider": chunk.provider,
-                    "finished": chunk.finished,
-                    "tenant_id": tenant_id
-                }
-                yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+                # 🔧 修复：不再发送 content 事件到消息区域，避免与 ProcessingSteps 重复
+                # LLM 的引导文本（如"让我查询..."）将通过步骤4展示
+                # chunk_data = {
+                #     "type": chunk.type,
+                #     "content": chunk.content,
+                #     "provider": chunk.provider,
+                #     "finished": chunk.finished,
+                #     "tenant_id": tenant_id
+                # }
+                # yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
                 full_content += chunk.content
             
             elif chunk.type == "thinking":
@@ -2220,7 +2313,18 @@ async def _stream_response_generator(
             
             # 如果流结束，检测并执行 SQL（方案B）
             if chunk.finished:
+                logger.info(f"流式响应完成，检测SQL查询。内容长度: {len(full_content)}")
+
+                # 检测SQL代码块（提前检测，用于步骤4的content_data）
+                sql_pattern = r'```sql\s*(.*?)\s*```'
+                sql_matches = re.findall(sql_pattern, full_content, re.DOTALL | re.IGNORECASE)
+
                 # ========== Step 4完成: AI生成SQL ==========
+                # 准备SQL的content_data
+                sql_content_data = None
+                if sql_matches:
+                    sql_content_data = {"sql": sql_matches[0].strip()}
+
                 yield _create_processing_step(
                     step=4,
                     title="AI生成SQL",
@@ -2228,14 +2332,10 @@ async def _stream_response_generator(
                     status="completed",
                     duration=int((time.time() - ai_start_time) * 1000),
                     details=f"AI回复长度: {len(full_content)} 字符",
-                    tenant_id=tenant_id
+                    tenant_id=tenant_id,
+                    content_type="sql" if sql_content_data else None,
+                    content_data=sql_content_data
                 )
-                
-                logger.info(f"流式响应完成，检测SQL查询。内容长度: {len(full_content)}")
-
-                # 检测SQL代码块
-                sql_pattern = r'```sql\s*(.*?)\s*```'
-                sql_matches = re.findall(sql_pattern, full_content, re.DOTALL | re.IGNORECASE)
 
                 if sql_matches:
                     # ========== Step 5: 提取SQL语句 ==========
@@ -2421,21 +2521,35 @@ async def _stream_response_generator(
                                         }
                                         yield f"data: {json.dumps(fix_chunk, ensure_ascii=False)}\n\n"
 
-                                    # 发送查询结果作为新的content chunk
-                                    result_chunk = {
-                                        "type": "content",
-                                        "content": result_text,
-                                        "provider": chunk.provider,
-                                        "finished": False,
-                                        "tenant_id": tenant_id
-                                    }
-                                    yield f"data: {json.dumps(result_chunk, ensure_ascii=False)}\n\n"
+                                    # 🔧 修复：不再发送 result_text 作为 content，避免与 ProcessingSteps 步骤6重复
+                                    # 表格数据将通过步骤6 (content_type: 'table') 显示
+                                    # result_chunk = {
+                                    #     "type": "content",
+                                    #     "content": result_text,
+                                    #     "provider": chunk.provider,
+                                    #     "finished": False,
+                                    #     "tenant_id": tenant_id
+                                    # }
+                                    # yield f"data: {json.dumps(result_chunk, ensure_ascii=False)}\n\n"
 
                                     logger.info(f"SQL查询执行成功，返回 {result.get('row_count', 0)} 行")
                                     total_rows += row_count
                                     execution_success = True
-                                    
+
                                     # ========== Step 6完成: 执行SQL查询 ==========
+                                    # 准备表格数据的content_data
+                                    table_content_data = None
+                                    if result.get('data') and result.get('columns'):
+                                        # 限制最多50行用于前端显示
+                                        rows_for_display = result['data'][:50]
+                                        table_content_data = {
+                                            "table": {
+                                                "columns": result['columns'],
+                                                "rows": rows_for_display,
+                                                "row_count": row_count
+                                            }
+                                        }
+
                                     yield _create_processing_step(
                                         step=6,
                                         title="执行SQL查询",
@@ -2443,7 +2557,9 @@ async def _stream_response_generator(
                                         status="completed",
                                         duration=int((time.time() - exec_start_time) * 1000),
                                         details=f"数据源: {data_source.name}\n返回行数: {row_count}\n执行耗时: {int((time.time() - exec_start_time) * 1000)}ms",
-                                        tenant_id=tenant_id
+                                        tenant_id=tenant_id,
+                                        content_type="table" if table_content_data else None,
+                                        content_data=table_content_data
                                     )
                                     
                                     # 🔧 方案B增强：二次LLM调用，分析数据并生成图表
@@ -2710,20 +2826,20 @@ async def _stream_response_generator(
                                             LLMMessage(role="assistant", content=f"让我查询相关数据：\n\n```sql\n{current_sql}\n```\n\n{result_text}"),
                                             LLMMessage(role="user", content=analysis_prompt)
                                         ]
-                                        
+
                                         # 获取provider实例
                                         provider_instance = llm_service.get_provider(tenant_id, LLMProvider.DEEPSEEK)
                                         if provider_instance:
                                             try:
-                                                # 发送分析状态
-                                                analysis_status = {
-                                                    "type": "content",
-                                                    "content": "\n\n📊 **数据分析中...**\n\n",
-                                                    "provider": chunk.provider,
-                                                    "finished": False,
-                                                    "tenant_id": tenant_id
-                                                }
-                                                yield f"data: {json.dumps(analysis_status, ensure_ascii=False)}\n\n"
+                                                # 🔧 修复：不再发送"数据分析中..."状态，避免与 ProcessingSteps 重复
+                                                # analysis_status = {
+                                                #     "type": "content",
+                                                #     "content": "\n\n📊 **数据分析中...**\n\n",
+                                                #     "provider": chunk.provider,
+                                                #     "finished": False,
+                                                #     "tenant_id": tenant_id
+                                                # }
+                                                # yield f"data: {json.dumps(analysis_status, ensure_ascii=False)}\n\n"
                                                 
                                                 # 二次调用LLM（流式）
                                                 analysis_stream = await provider_instance.chat_completion(
@@ -2740,14 +2856,16 @@ async def _stream_response_generator(
                                                 async for analysis_chunk in analysis_stream:
                                                     if analysis_chunk.type == "content" and analysis_chunk.content:
                                                         analysis_content += analysis_chunk.content
-                                                        analysis_data = {
-                                                            "type": "content",
-                                                            "content": analysis_chunk.content,
-                                                            "provider": analysis_chunk.provider,
-                                                            "finished": False,
-                                                            "tenant_id": tenant_id
-                                                        }
-                                                        yield f"data: {json.dumps(analysis_data, ensure_ascii=False)}\n\n"
+                                                        # 🔧 修复：不再发送 content 事件，避免与 ProcessingSteps 步骤8重复
+                                                        # 分析内容将通过步骤8 (processing_step) 发送
+                                                        # analysis_data = {
+                                                        #     "type": "content",
+                                                        #     "content": analysis_chunk.content,
+                                                        #     "provider": analysis_chunk.provider,
+                                                        #     "finished": False,
+                                                        #     "tenant_id": tenant_id
+                                                        # }
+                                                        # yield f"data: {json.dumps(analysis_data, ensure_ascii=False)}\n\n"
                                                 
                                                 logger.info(f"二次LLM调用完成，分析内容长度: {len(analysis_content)}")
                                                 
@@ -2796,10 +2914,80 @@ async def _stream_response_generator(
                                                             "tenant_id": tenant_id
                                                         }
                                                         yield f"data: {json.dumps(chart_event, ensure_ascii=False)}\n\n"
+
+                                                        # ========== Step 7: 生成数据可视化 ==========
+                                                        # 推断图表类型
+                                                        chart_type = "图表"
+                                                        series_list = echarts_option.get("series", [])
+                                                        if series_list and len(series_list) > 0:
+                                                            series_type = series_list[0].get("type", "")
+                                                            if series_type:
+                                                                chart_type = {
+                                                                    "bar": "柱状图", "line": "折线图", "pie": "饼图",
+                                                                    "scatter": "散点图", "effectScatter": "气泡图",
+                                                                    "tree": "树图", "treemap": "矩形树图",
+                                                                    "sunburst": "旭日图", "funnel": "漏斗图",
+                                                                    "gauge": "仪表盘"
+                                                                }.get(series_type, series_type)
+
+                                                        chart_content_data = {
+                                                            "chart": {
+                                                                "echarts_option": echarts_option,
+                                                                "chart_type": chart_type
+                                                            }
+                                                        }
+
+                                                        yield _create_processing_step(
+                                                            step=7,
+                                                            title="生成数据可视化",
+                                                            description=f"创建 {chart_type} 展示分析结果",
+                                                            status="completed",
+                                                            duration=int((time.time() - ai_start_time) * 1000 * 0.3),
+                                                            tenant_id=tenant_id,
+                                                            content_type="chart",
+                                                            content_data=chart_content_data
+                                                        )
+
+                                                        # ========== Step 8: 数据分析总结 ==========
+                                                        # 移除图表标记，提取纯文本分析
+                                                        clean_analysis = re.sub(chart_pattern, '', analysis_content, flags=re.DOTALL).strip()
+                                                        # 移除多余的空行
+                                                        clean_analysis = re.sub(r'\n{3,}', '\n\n', clean_analysis)
+
+                                                        if clean_analysis:
+                                                            yield _create_processing_step(
+                                                                step=8,
+                                                                title="数据分析总结",
+                                                                description="AI对查询结果的分析和解读",
+                                                                status="completed",
+                                                                duration=int((time.time() - ai_start_time) * 1000 * 0.2),
+                                                                tenant_id=tenant_id,
+                                                                content_type="text",
+                                                                content_data={"text": clean_analysis}
+                                                            )
                                                     except json.JSONDecodeError as e:
                                                         logger.warning(f"解析 ECharts JSON 失败: {e}")
                                                         logger.warning(f"失败的JSON内容 (前300字符): {chart_json_str[:300] if chart_json_str else 'None'}")
-                                                
+
+                                                else:
+                                                    # ========== Step 8: 数据分析总结（无图表情况）==========
+                                                    # 没有图表时，直接使用分析内容作为总结
+                                                    clean_analysis = analysis_content.strip()
+                                                    # 移除多余的空行
+                                                    clean_analysis = re.sub(r'\n{3,}', '\n\n', clean_analysis)
+
+                                                    if clean_analysis:
+                                                        yield _create_processing_step(
+                                                            step=8,
+                                                            title="数据分析总结",
+                                                            description="AI对查询结果的分析和解读",
+                                                            status="completed",
+                                                            duration=int((time.time() - ai_start_time) * 1000 * 0.2),
+                                                            tenant_id=tenant_id,
+                                                            content_type="text",
+                                                            content_data={"text": clean_analysis}
+                                                        )
+
                                             except Exception as e:
                                                 logger.error(f"二次LLM调用失败: {e}")
 
@@ -2814,7 +3002,8 @@ async def _stream_response_generator(
                                             original_sql=current_sql,
                                             error_message=last_error,
                                             schema_context=schema_context,
-                                            original_question=original_question
+                                            original_question=original_question,
+                                            db_type=data_source.db_type  # 传递数据库类型
                                         )
 
                                         if fixed_sql:
@@ -2882,7 +3071,7 @@ async def _stream_response_generator(
                 # 解析 JSON
                 echarts_option = json.loads(chart_json_str)
                 logger.info(f"✅ 成功提取 ECharts 配置: {list(echarts_option.keys())}")
-                
+
                 # 发送图表配置事件
                 chart_chunk = {
                     "type": "chart_config",
@@ -2894,10 +3083,43 @@ async def _stream_response_generator(
                     "tenant_id": tenant_id
                 }
                 yield f"data: {json.dumps(chart_chunk, ensure_ascii=False)}\n\n"
-                
+
+                # ========== Step 7: 生成数据可视化（fallback路径） ==========
+                # 推断图表类型
+                chart_type = "图表"
+                series_list = echarts_option.get("series", [])
+                if series_list and len(series_list) > 0:
+                    series_type = series_list[0].get("type", "")
+                    if series_type:
+                        chart_type = {
+                            "bar": "柱状图", "line": "折线图", "pie": "饼图",
+                            "scatter": "散点图", "effectScatter": "气泡图",
+                            "tree": "树图", "treemap": "矩形树图",
+                            "sunburst": "旭日图", "funnel": "漏斗图",
+                            "gauge": "仪表盘"
+                        }.get(series_type, series_type)
+
+                chart_content_data = {
+                    "chart": {
+                        "echarts_option": echarts_option,
+                        "chart_type": chart_type
+                    }
+                }
+
+                yield _create_processing_step(
+                    step=7,
+                    title="生成数据可视化",
+                    description=f"创建 {chart_type} 展示分析结果",
+                    status="completed",
+                    duration=200,  # 估算耗时
+                    tenant_id=tenant_id,
+                    content_type="chart",
+                    content_data=chart_content_data
+                )
+
                 # 可选：从最终内容中移除图表标记（前端可能已经显示了）
                 # 这里我们保留标记，让前端自己决定是否显示
-                
+
             except json.JSONDecodeError as e:
                 logger.warning(f"⚠️ 解析 ECharts JSON 失败: {e}")
                 logger.warning(f"原始内容: {chart_json_str[:200]}...")
@@ -2989,17 +3211,57 @@ async def chat_completion(
         # 转换消息格式
         messages = _convert_chat_messages(request.messages)
 
+        # ============================================================
+        # 🔧 [修复] 获取数据源类型，用于生成数据库特定的提示词
+        # ============================================================
+        db_type = "postgresql"  # 默认值
+        if request.data_source_ids and len(request.data_source_ids) == 1:
+            # 单个数据源，获取其 db_type
+            try:
+                data_sources = await data_source_service.get_data_sources(
+                    tenant_id=tenant_id,
+                    db=db,
+                    active_only=True
+                )
+                # 筛选出指定的数据源
+                matching_sources = [ds for ds in data_sources if ds.id in request.data_source_ids]
+                if matching_sources:
+                    db_type = matching_sources[0].db_type
+                    logger.info(f"🔍 [LLM端点] 检测到单个数据源，db_type={db_type}")
+            except Exception as e:
+                logger.warning(f"⚠️ 获取数据源类型失败: {e}，使用默认 db_type=postgresql")
+        elif request.data_source_ids and len(request.data_source_ids) > 1:
+            # 多个数据源，检查它们是否是同一类型
+            try:
+                data_sources = await data_source_service.get_data_sources(
+                    tenant_id=tenant_id,
+                    db=db,
+                    active_only=True
+                )
+                matching_sources = [ds for ds in data_sources if ds.id in request.data_source_ids]
+                if matching_sources:
+                    db_types = set(ds.db_type for ds in matching_sources)
+                    if len(db_types) == 1:
+                        db_type = db_types.pop()
+                        logger.info(f"🔍 [LLM端点] 多个数据源但类型一致，db_type={db_type}")
+                    else:
+                        logger.info(f"🔍 [LLM端点] 多个数据源类型不同: {db_types}，使用默认 postgresql")
+                        db_type = "postgresql"  # 多种类型时使用默认
+            except Exception as e:
+                logger.warning(f"⚠️ 获取数据源类型失败: {e}，使用默认 db_type=postgresql")
+        # ============================================================
+
         # 检查是否已有system消息，如果没有则添加包含数据源上下文的system消息
         has_system_message = any(msg.role == "system" for msg in messages)
         if not has_system_message:
-            system_prompt = _build_system_prompt_with_context(data_sources_context)
+            system_prompt = _build_system_prompt_with_context(data_sources_context, db_type)
             system_message = LLMMessage(role="system", content=system_prompt)
             messages.insert(0, system_message)
             logger.info("Added system message with data sources context")
         elif data_sources_context:
             # 如果已有system消息，替换为完整的数据分析系统提示（包含SQL生成指令）
             # 这样确保AI知道如何正确生成SQL查询
-            full_system_prompt = _build_system_prompt_with_context(data_sources_context)
+            full_system_prompt = _build_system_prompt_with_context(data_sources_context, db_type)
             for i, msg in enumerate(messages):
                 if msg.role == "system":
                     messages[i] = LLMMessage(role="system", content=full_system_prompt, thinking=msg.thinking)

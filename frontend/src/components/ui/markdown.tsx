@@ -237,14 +237,9 @@ export function Markdown({ content, className }: MarkdownProps) {
             </a>
           ),
 
-          // 自定义表格渲染
-          table: ({ children, ...props }) => (
-            <div className="my-4 overflow-x-auto">
-              <table className="min-w-full divide-y divide-border" {...props}>
-                {children}
-              </table>
-            </div>
-          ),
+          // 自定义表格渲染 - 禁用表格，因为表格已在 ProcessingSteps 的步骤6中展示
+          // 避免 Markdown 表格与 AI 推理过程中的表格重复显示
+          table: ({ children, ...props }) => null,
 
           thead: ({ children, ...props }) => (
             <thead className="bg-muted" {...props}>

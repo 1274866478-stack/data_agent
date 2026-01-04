@@ -73,7 +73,7 @@
  * - **SheetContent样式**: sheetVariants({ side })应用
  *   - **data-[state=open/closed]**: Radix UI自动添加（基于open prop）
  *   - **duration-300/500**: 关闭动画300ms，打开动画500ms
- *   - **动画效果**: slide-out-to-*/slide-in-from-*（根据side方向）
+ *   - **动画效果**: slide-out-to-[*]/slide-in-from-[*]（根据side方向）
  * - **SheetOverlay样式**: fixed.inset-0.z-50.bg-black/80
  *   - **bg-black/80**: 黑色背景80%不透明度
  *   - **动画效果**: fade-in-0/fade-out-0

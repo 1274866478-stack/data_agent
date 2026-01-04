@@ -768,37 +768,8 @@ export default function AIAssistantPage() {
                               )}
                               
                               <Markdown content={removeChartMarkers(message.content)} className="prose-base" />
-                              {/* 如果有结构化结果或图表，追加展示 */}
-                              {message.metadata && (message.metadata.table || message.metadata.chart) && (
-                                <ChatQueryResultView
-                                  table={message.metadata.table}
-                                  chart={message.metadata.chart}
-                                />
-                              )}
-                              {/* 从消息文本中提取并渲染 ECharts 配置 */}
-                              {(() => {
-                                const echartsOption = extractEChartsOption(message.content)
-                                if (echartsOption) {
-                                  return (
-                                    <EChartsRenderer
-                                      echartsOption={echartsOption}
-                                      title={echartsOption.title?.text || '数据可视化'}
-                                    />
-                                  )
-                                }
-                                // 如果 metadata 中有 echarts_option，也尝试渲染
-                                if (message.metadata && (message.metadata as any).echarts_option) {
-                                  return (
-                                    <EChartsRenderer
-                                      echartsOption={(message.metadata as any).echarts_option}
-                                      title={(message.metadata as any).echarts_option?.title?.text || '数据可视化'}
-                                    />
-                                  )
-                                }
-                                return null
-                              })()}
-                              
-                              {/* 显示AI推理步骤 */}
+
+                              {/* 显示AI推理步骤（包含SQL、表格、图表） */}
                               {message.metadata?.processing_steps && message.metadata.processing_steps.length > 0 && (
                                 <ProcessingSteps
                                   steps={message.metadata.processing_steps}

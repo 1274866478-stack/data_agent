@@ -91,7 +91,7 @@ import time
 import traceback
 from typing import Dict, Any, Optional, Callable, List
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query as QueryParam
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query as QueryParam, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -559,6 +559,19 @@ async def create_query(
     Story 3.1: 核心查询端点，处理自然语言查询
     集成 LangGraph SQL Agent（使用 DeepSeek 作为默认 LLM）
     """
+    # ============================================================
+    # 🔍 [诊断] /query 端点被调用 - 记录完整请求信息
+    # ============================================================
+    logger.info("="*80)
+    logger.info("🔍 [诊断] /query 端点被调用")
+    logger.info(f"🔍 [诊断] connection_id={request.connection_id}")
+    logger.info(f"🔍 [诊断] query={request.query[:100]}")
+    logger.info(f"🔍 [诊断] enable_cache={request.enable_cache}")
+    logger.info(f"🔍 [诊断] force_refresh={request.force_refresh}")
+    logger.info("="*80)
+    print(f"🔍 [诊断] /query 端点被调用 - connection_id={request.connection_id}, query={request.query[:100]}")
+    # ============================================================
+
     try:
         query_id = str(uuid.uuid4())
         start_time = time.time()
@@ -694,7 +707,8 @@ async def create_query(
                     thread_id=thread_id,
                     database_url=database_url,
                     verbose=True,  # 🔍 启用详细日志以诊断编造数据问题
-                    enable_echarts=True  # 启用 ECharts 图表生成功能
+                    enable_echarts=True,  # 启用 ECharts 图表生成功能
+                    db_type=selected_source.db_type  # 传递数据库类型
                 )
                 if agent_response:
                     logger.info(

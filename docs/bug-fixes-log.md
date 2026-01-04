@@ -2223,5 +2223,154 @@ docker-compose up -d backend
 
 ---
 
+### BUG-036: DuckDB/Excel 查询使用 `to_char` 函数错误 - 流式响应缺少 db_type 参数
+
+**发现时间**: 2025-01-04
+**严重程度**: 🔴 高 (功能阻塞)
+**状态**: ✅ 已修复
+
+#### 问题描述
+用户查询 Excel 文件（使用 DuckDB 引擎）"2024年的销售趋势" 时，AI 生成了包含 `to_char` 函数的 SQL，导致错误：
+```
+Catalog Error: Scalar Function with name to_char does not exist!
+```
+
+系统尝试自动修复 2 次后仍然失败。
+
+#### 根本原因
+
+**问题**: 流式响应中的 SQL 自动修复调用缺少 `db_type` 参数，导致默认使用 PostgreSQL 语法而非 DuckDB 语法。
+
+**问题代码位置**: `backend/src/app/api/v1/endpoints/llm.py` 第 2880-2885 行
+
+```python
+# ❌ 修复前 - 缺少 db_type 参数
+fixed_sql = await _fix_sql_with_ai(
+    original_sql=current_sql,
+    error_message=last_error,
+    schema_context=schema_context,
+    original_question=original_question
+    # 缺少 db_type 参数！默认使用 "postgresql"
+)
+```
+
+**问题链条**:
+1. 初始 SQL 生成正确（使用 `strftime` 等 DuckDB 函数）
+2. 执行时出现错误，触发自动修复
+3. **流式响应路径**的修复调用缺少 `db_type` 参数
+4. 修复 prompt 使用 PostgreSQL 语法（包含 `to_char`）
+5. AI 生成使用 `to_char` 的 SQL，DuckDB 不支持此函数
+6. 修复失败，显示错误
+
+**对比**: 非流式响应路径（第 1825-1831 行）已正确传递 `db_type` 参数。
+
+#### 解决方法
+
+**修复**: 添加 `db_type=data_source.db_type` 参数到流式响应的 SQL 修复调用
+
+文件: `backend/src/app/api/v1/endpoints/llm.py` 第 2885 行
+
+```python
+# ✅ 修复后 - 添加 db_type 参数
+fixed_sql = await _fix_sql_with_ai(
+    original_sql=current_sql,
+    error_message=last_error,
+    schema_context=schema_context,
+    original_question=original_question,
+    db_type=data_source.db_type  # 传递数据库类型
+)
+```
+
+#### 数据库函数映射对照
+
+| 数据库 | 日期格式化 | 字符串转日期 | 年份提取 |
+|--------|-----------|-------------|---------|
+| PostgreSQL | `TO_CHAR(date, 'YYYY')` | `str::date` 或 `TO_DATE()` | `EXTRACT(YEAR FROM date)` |
+| MySQL | `DATE_FORMAT(date, '%Y')` | `STR_TO_DATE(str, fmt)` | `YEAR(date)` |
+| SQLite | `strftime('%Y', date)` | `date(str)` | `CAST(strftime('%Y', date) AS INT)` |
+| **DuckDB** | `strftime(date, '%Y')` | `str::date` 或 `TRY_CAST()` | `EXTRACT(YEAR FROM date)` |
+
+#### 修复后的效果
+
+**修复前**:
+```
+用户: 2024年的销售趋势
+
+AI: 生成 SQL（正确使用 strftime）
+
+❌ SQL执行失败: Catalog Error: Scalar Function with name to_char does not exist!
+❌ 自动修复尝试1: 使用 TO_CHAR() → 仍然失败
+❌ 自动修复尝试2: 使用 TO_CHAR() → 仍然失败
+已尝试自动修复 2 次，但仍然失败
+```
+
+**修复后**:
+```
+用户: 2024年的销售趋势
+
+AI: 生成 SQL（正确使用 strftime）
+
+⚠️ 原始SQL执行失败
+🔧 AI自动尝试修复（使用 DuckDB 语法）...
+✅ SQL已自动修复（重试1次后成功）
+
+| 月份 | 订单数量 | 总销售额 |
+|------|---------|---------|
+| 2024-01 | 1523 | 765432 |
+| 2024-02 | 1387 | 654321 |
+...
+```
+
+#### 修改的文件
+1. `backend/src/app/api/v1/endpoints/llm.py` - 第 2885 行，添加 `db_type=data_source.db_type` 参数
+
+#### 相关代码位置
+
+**非流式响应（已正确）**: `llm.py` 第 1825-1831 行
+```python
+fixed_sql = await _fix_sql_with_ai(
+    original_sql=current_sql,
+    error_message=last_error,
+    schema_context=schema_context,
+    original_question=original_question,
+    db_type=data_source.db_type  # ✅ 正确传递
+)
+```
+
+**流式响应（已修复）**: `llm.py` 第 2880-2886 行
+```python
+fixed_sql = await _fix_sql_with_ai(
+    original_sql=current_sql,
+    error_message=last_error,
+    schema_context=schema_context,
+    original_question=original_question,
+    db_type=data_source.db_type  # ✅ 修复后添加
+)
+```
+
+#### 预防措施
+
+**SQL 修复开发规范**:
+1. ✅ **所有 SQL 修复调用必须传递 db_type 参数** - 确保使用正确的数据库语法
+2. ✅ **统一流式和非流式响应的修复逻辑** - 避免参数不一致
+3. ✅ **测试不同数据库类型的修复机制** - PostgreSQL、MySQL、DuckDB、SQLite
+
+**database_spec.py 规范**:
+- 确保每种数据库类型都有正确的函数映射
+- 禁止函数列表包含该数据库不支持的函数
+- 修复 prompt 提供清晰的函数替换指南
+
+#### 相关问题
+- **BUG-024**: 初步添加了数据库感知的 SQL 修复机制
+- **prompt_generator.py**: 已包含 DuckDB 的函数映射（本次修复确保被正确调用）
+
+#### 验证
+- ✅ 后端服务重启成功
+- ✅ 查询 "2024年的销售趋势" 成功执行
+- ✅ SQL 自动修复使用正确的 DuckDB 语法
+- ✅ 避免使用 `to_char`、`to_date` 等 Oracle/PostgreSQL 专属函数
+
+---
+
 **注意**: 本日志记录了项目开发过程中遇到的关键问题和解决方案，请开发人员参考并避免重复出现类似问题。
 

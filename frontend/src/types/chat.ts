@@ -49,6 +49,33 @@ export type StreamEventType =
   | 'error'            // 错误信息
   | 'done';            // 结束信号
 
+// 步骤内容类型
+export type StepContentType = 'text' | 'sql' | 'table' | 'chart' | 'error'
+
+// 表格数据结构
+export interface StepTableData {
+  columns: string[];
+  rows: Record<string, any>[];
+  row_count: number;
+}
+
+// 图表数据结构
+export interface StepChartData {
+  echarts_option?: EChartsOption;
+  chart_image?: string;
+  chart_type?: string;
+  title?: string;
+}
+
+// 步骤内容数据
+export interface StepContentData {
+  sql?: string;              // SQL语句
+  table?: StepTableData;     // 表格数据
+  chart?: StepChartData;     // 图表配置
+  error?: string;            // 错误信息
+  text?: string;             // 数据分析文本（用于步骤8）
+}
+
 // AI处理步骤定义
 export interface ProcessingStep {
   step: number;           // 步骤编号
@@ -58,6 +85,9 @@ export interface ProcessingStep {
   timestamp?: string;     // 时间戳
   duration?: number;      // 耗时（毫秒）
   details?: string;       // 额外详情（如SQL内容、Schema信息等）
+  // 新增字段：支持在步骤内渲染不同类型的内容
+  content_type?: StepContentType;  // 内容类型
+  content_data?: StepContentData;  // 内容数据
 }
 
 export interface StreamEvent {

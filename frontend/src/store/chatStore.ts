@@ -643,17 +643,12 @@ export const useChatStore = create<ChatState>()(
                 console.log('[ChatStore] Tool result received:', data)
               },
               onChartConfig: (chartOption: any) => {
-                // 🔧 恢复图表功能：处理后端发送的 ECharts 配置
-                console.log('[ChatStore] 📊 收到图表配置:', chartOption)
+                // 图表已通过 ProcessingSteps 的步骤7显示，无需单独处理
+                console.log('[ChatStore] 📊 收到图表配置（已由步骤7处理）:', chartOption)
                 echartsOption = chartOption
                 set({ streamingStatus: 'generating_chart' })
-                
-                // 立即更新消息的 metadata，以便前端可以渲染图表
-                state.updateMessage(assistantMessageId, {
-                  metadata: {
-                    echarts_option: chartOption,
-                  },
-                })
+                // 图表配置已通过 onProcessingStep 的步骤7 添加到 processing_steps 中
+                // 无需再单独添加到 metadata，避免重复显示
               },
               onProcessingStep: (step: ProcessingStep) => {
                 // 处理AI推理步骤事件
@@ -690,7 +685,9 @@ export const useChatStore = create<ChatState>()(
               onDone: () => {
                 set({ streamingStatus: 'done' })
                 // 流结束，更新最终消息状态（合并所有累积的内容）
-                const finalContent = accumulatedContent || '抱歉，我现在无法回答这个问题。'
+                // 🔧 修复：如果有 processing_steps，说明内容已在 ProcessingSteps 中展示，不需要默认错误消息
+                const hasProcessingSteps = processingSteps.length > 0
+                const finalContent = accumulatedContent || (hasProcessingSteps ? '' : '抱歉，我现在无法回答这个问题。')
                 
                 // 如果 toolInput 有内容但还没添加到 content 中，添加它
                 if (toolInput && !finalContent.includes('```sql')) {

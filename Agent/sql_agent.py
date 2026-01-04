@@ -139,8 +139,8 @@ import os
 from datetime import datetime
 
 
-# System prompt for the SQL Agent
-SYSTEM_PROMPT = """你是一个专业的 PostgreSQL 数据库助手，具备数据查询和图表可视化能力。
+# Base system prompt for the SQL Agent (will be dynamically enhanced based on db_type)
+BASE_SYSTEM_PROMPT = """你是一个专业的 PostgreSQL 数据库助手，具备数据查询和图表可视化能力。
 
 ## 可用的 MCP 工具：
 
@@ -211,6 +211,37 @@ SYSTEM_PROMPT = """你是一个专业的 PostgreSQL 数据库助手，具备数�
 - 调用图表工具时，必须将 SQL 结果转换为正确的 data 格式
 - 用中文回复用户
 """
+
+
+def get_system_prompt(db_type: str = "postgresql") -> str:
+    """
+    根据数据库类型获取系统提示词
+
+    Args:
+        db_type: 数据库类型（postgresql, mysql, sqlite, xlsx, csv等）
+
+    Returns:
+        str: 系统提示词
+    """
+    print(f"🔍 [get_system_prompt] 调用参数 db_type='{db_type}'")
+    try:
+        from prompt_generator import generate_database_aware_system_prompt
+        result = generate_database_aware_system_prompt(db_type, BASE_SYSTEM_PROMPT)
+        print(f"🔍 [get_system_prompt] 成功生成提示词，长度={len(result)}")
+        # 打印提示词的前200字符，验证是否包含数据库特定信息
+        preview = result[:200].replace('\n', ' ')
+        print(f"🔍 [get_system_prompt] 提示词预览: {preview}...")
+        return result
+    except ImportError as e:
+        print(f"⚠️ 无法导入 prompt_generator: {e}，使用默认PostgreSQL提示词")
+        return BASE_SYSTEM_PROMPT
+    except Exception as e:
+        print(f"⚠️ 生成动态提示词失败: {e}，使用默认PostgreSQL提示词")
+        return BASE_SYSTEM_PROMPT
+
+
+# 默认提示词（向后兼容）
+SYSTEM_PROMPT = BASE_SYSTEM_PROMPT
 
 
 def create_llm():
@@ -526,6 +557,7 @@ _cached_agent = None
 _cached_mcp_client = None
 _cached_tools = None
 _cached_checkpointer = None
+_cached_db_type = "postgresql"  # 缓存当前数据库类型
 
 
 def _get_mcp_config():
@@ -576,19 +608,28 @@ def _get_mcp_config():
     return mcp_config
 
 
-async def _get_or_create_agent():
+async def _get_or_create_agent(db_type: str = "postgresql"):
     """获取或创建持久化的 Agent 实例（单例模式）
+
+    Args:
+        db_type: 数据库类型，用于生成特定的系统提示词
 
     Returns:
         tuple: (agent, mcp_client) - 编译好的agent和MCP客户端
     """
-    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer
+    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer, _cached_db_type
+
+    # 检查数据库类型是否变化，如果变化则重置 Agent
+    if _cached_agent is not None and _cached_db_type != db_type:
+        print(f"🔄 数据库类型变化: {_cached_db_type} -> {db_type}，重置 Agent...")
+        await reset_agent()
+        _cached_db_type = db_type
 
     # 如果已缓存，直接返回
     if _cached_agent is not None and _cached_mcp_client is not None:
         return _cached_agent, _cached_mcp_client
 
-    print("🔄 首次初始化 Agent（后续查询将复用连接）...")
+    print(f"🔄 首次初始化 Agent（数据库类型: {db_type}，后续查询将复用连接）...")
 
     # 创建 MCP 客户端
     try:
@@ -664,11 +705,14 @@ async def _get_or_create_agent():
     llm = create_llm()
     llm_with_tools = llm.bind_tools(_cached_tools)
 
+    # 获取数据库特定的系统提示词
+    system_prompt = get_system_prompt(db_type)
+
     # 定义节点
     async def call_model(state: MessagesState):
         messages = state["messages"]
         if not any(isinstance(m, SystemMessage) for m in messages):
-            messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
+            messages = [SystemMessage(content=system_prompt)] + messages
         response = await llm_with_tools.ainvoke(messages)
         return {"messages": [response]}
 
@@ -700,27 +744,29 @@ async def _get_or_create_agent():
 
 async def reset_agent():
     """重置 Agent 缓存（用于重新连接或配置变更）"""
-    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer
+    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer, _cached_db_type
     _cached_agent = None
     _cached_mcp_client = None
     _cached_tools = None
     _cached_checkpointer = None
+    _cached_db_type = "postgresql"  # 重置为默认值
     print("🔄 Agent 缓存已重置")
 
 
-async def run_agent(question: str, thread_id: str = "1", verbose: bool = True) -> VisualizationResponse:
+async def run_agent(question: str, thread_id: str = "1", verbose: bool = True, db_type: str = "postgresql") -> VisualizationResponse:
     """Run the SQL Agent with a question
 
     Args:
         question: 用户问题
         thread_id: 会话ID
         verbose: 是否打印详细过程
+        db_type: 数据库类型（postgresql, mysql, sqlite, xlsx, csv等）
 
     Returns:
         VisualizationResponse: 结构化的可视化响应
     """
-    # 🚀 使用持久化的 Agent（首次调用会初始化，后续复用）
-    agent, mcp_client = await _get_or_create_agent()
+    # 🚀 使用持久化的 Agent（传递 db_type 参数）
+    agent, mcp_client = await _get_or_create_agent(db_type=db_type)
 
     # Run the agent
     config_dict = {"configurable": {"thread_id": thread_id}}

@@ -217,6 +217,186 @@ def load_chart_as_base64(chart_path: str) -> Optional[str]:
         return None
 
 
+def _build_processing_steps(
+    success: bool,
+    sql: str,
+    results: list,
+    row_count: int,
+    data_obj: Any,
+    echarts_option: Any,
+    chart_data: Any,
+    chart_obj: Any,
+    processing_time_ms: int,
+    answer: str = ""
+) -> list:
+    """
+    构建包含SQL、表格、图表、数据分析文本的处理步骤列表
+
+    Args:
+        success: 查询是否成功
+        sql: SQL语句
+        results: 查询结果列表
+        row_count: 行数
+        data_obj: 数据对象
+        echarts_option: ECharts配置
+        chart_data: 图表数据
+        chart_obj: 图表对象
+        processing_time_ms: 处理时间
+        answer: AI数据分析文本（用于步骤8）
+
+    Returns:
+        list: 处理步骤列表
+    """
+    if not success:
+        return [{
+            "step": 1,
+            "title": "查询处理失败",
+            "description": "无法处理您的请求，请检查数据源配置或重新提问",
+            "status": "error"
+        }]
+
+    # 计算各步骤的大致耗时（估算）
+    base_time = processing_time_ms / 8  # 现在有8个步骤
+
+    # 构建表格数据（用于步骤6）
+    table_data = None
+    if data_obj:
+        columns = safe_get_attr(data_obj, 'columns', [])
+        rows = safe_get_attr(data_obj, 'rows', [])
+        if columns and rows:
+            table_data = {
+                "columns": columns,
+                "rows": rows[:50],  # 限制最多50行
+                "row_count": row_count
+            }
+
+    # 构建图表数据（用于步骤7）
+    chart_step_data = None
+    if echarts_option:
+        chart_step_data = {
+            "echarts_option": echarts_option,
+            "chart_type": _extract_chart_type(chart_obj)
+        }
+    elif chart_data:
+        chart_step_data = {
+            "chart_image": chart_data,
+            "chart_type": _extract_chart_type(chart_obj)
+        }
+
+    steps = [
+        {
+            "step": 1,
+            "title": "理解用户问题",
+            "description": "分析用户查询意图，识别数据需求",
+            "status": "completed",
+            "duration": int(base_time)
+        },
+        {
+            "step": 2,
+            "title": "获取数据库Schema",
+            "description": f"成功加载 {safe_get_attr(data_obj, 'row_count', 0)} 行数据",
+            "status": "completed",
+            "duration": int(base_time)
+        },
+        {
+            "step": 3,
+            "title": "构建AI Prompt",
+            "description": "根据问题和Schema生成查询指令",
+            "status": "completed",
+            "duration": int(base_time)
+        },
+        {
+            "step": 4,
+            "title": "AI生成SQL语句",
+            "description": "AI已生成数据库查询语句",
+            "status": "completed",
+            "duration": int(base_time * 2),
+            "content_type": "sql",
+            "content_data": {
+                "sql": sql
+            } if sql else None
+        },
+        {
+            "step": 5,
+            "title": "验证SQL语句",
+            "description": "检查SQL语法和安全性",
+            "status": "completed",
+            "duration": int(base_time * 0.5)
+        },
+        {
+            "step": 6,
+            "title": "执行SQL查询",
+            "description": f"查询返回 {row_count} 行结果",
+            "status": "completed",
+            "duration": int(base_time * 1.5),
+            "content_type": "table",
+            "content_data": {
+                "table": table_data
+            } if table_data else None
+        },
+    ]
+
+    # 添加步骤7（图表生成）
+    if chart_step_data:
+        steps.append({
+            "step": 7,
+            "title": "生成数据可视化",
+            "description": f"创建 {chart_step_data.get('chart_type', '图表')} 展示分析结果",
+            "status": "completed",
+            "duration": int(base_time * 2),
+            "content_type": "chart",
+            "content_data": {
+                "chart": chart_step_data
+            }
+        })
+
+    # 添加步骤8（数据分析总结）
+    if answer and answer.strip():
+        steps.append({
+            "step": 8,
+            "title": "数据分析总结",
+            "description": "AI对查询结果的分析和解读",
+            "status": "completed",
+            "duration": int(base_time * 1.5),
+            "content_type": "text",
+            "content_data": {
+                "text": answer.strip()
+            }
+        })
+
+    return steps
+
+
+def _extract_chart_type(chart_obj: Any) -> str:
+    """安全提取图表类型"""
+    if not chart_obj:
+        return "图表"
+
+    # 尝试从chart_obj中提取类型
+    if hasattr(chart_obj, 'chart_type'):
+        chart_type = getattr(chart_obj, 'chart_type')
+        if hasattr(chart_type, 'value'):
+            return str(chart_type.value)
+        return str(chart_type)
+
+    if isinstance(chart_obj, dict):
+        return chart_obj.get('chart_type', '图表')
+
+    return "图表"
+
+
+def safe_get_attr(obj: Any, attr: str, default: Any = None) -> Any:
+    """安全获取对象属性"""
+    try:
+        if hasattr(obj, attr):
+            return getattr(obj, attr)
+        if isinstance(obj, dict):
+            return obj.get(attr, default)
+        return default
+    except Exception:
+        return default
+
+
 def convert_agent_response_to_query_response(
     agent_response: VisualizationResponse,
     query_id: str,
@@ -454,12 +634,19 @@ def convert_agent_response_to_query_response(
         "processing_time_ms": processing_time_ms,
         "confidence_score": 0.9 if success else 0.5,
         "explanation": explanation,
-        "processing_steps": [
-            "解析用户查询",
-            "生成SQL语句",
-            "执行SQL查询",
-            "生成可视化响应"
-        ] if success else ["查询处理失败"],
+        # 🔥 扩展的处理步骤：包含SQL、表格、图表数据、数据分析文本
+        "processing_steps": _build_processing_steps(
+            success=success,
+            sql=sql,
+            results=results,
+            row_count=row_count,
+            data_obj=data_obj,
+            echarts_option=echarts_option,
+            chart_data=chart_data,
+            chart_obj=safe_get(agent_response, 'chart'),
+            processing_time_ms=processing_time_ms,
+            answer=explanation
+        ),
         "validation_result": {
             "valid": success,
             "error": error
@@ -600,18 +787,20 @@ async def run_agent_query(
     thread_id: str,
     database_url: Optional[str] = None,
     verbose: bool = False,
-    enable_echarts: bool = True  # 默认启用 ECharts 功能
+    enable_echarts: bool = True,  # 默认启用 ECharts 功能
+    db_type: str = "postgresql"  # 数据库类型
 ) -> Optional[VisualizationResponse]:
     """
     运行Agent查询
-    
+
     Args:
         question: 用户问题
         thread_id: 线程ID（用于会话管理）
         database_url: 数据库连接URL（可选，如果不提供则使用Agent配置）
         verbose: 是否显示详细输出
         enable_echarts: 是否启用 ECharts 图表生成功能（默认启用）
-    
+        db_type: 数据库类型（postgresql, mysql, sqlite, xlsx, csv等）
+
     Returns:
         VisualizationResponse: Agent响应，如果失败则返回None
     """
@@ -622,6 +811,7 @@ async def run_agent_query(
             "thread_id": thread_id,
             "has_database_url": bool(database_url),
             "agent_available": _agent_available,
+            "db_type": db_type,  # 添加数据库类型到日志
         },
     )
     if not _agent_available:
@@ -789,7 +979,8 @@ async def run_agent_query(
                 database_url=effective_db_url,  # 文件模式下传递文件路径，数据库模式下传递数据库 URL
                 thread_id=thread_id,
                 enable_echarts=enable_echarts,
-                verbose=verbose
+                verbose=verbose,
+                db_type=db_type  # 传递数据库类型
             )
             # 新版本返回 Dict，提取 response 字段（VisualizationResponse 对象）
             if result and isinstance(result, dict) and "response" in result:
@@ -800,7 +991,7 @@ async def run_agent_query(
                 response = None
         else:
             # 旧版本：不支持 enable_echarts 参数
-            response = await run_agent(enhanced_question, thread_id, verbose=verbose)  # 🔥 使用增强后的问题
+            response = await run_agent(enhanced_question, thread_id, verbose=verbose, db_type=db_type)  # 传递 db_type
         logger.info(
             "Underlying LangGraph Agent finished",
             extra={
