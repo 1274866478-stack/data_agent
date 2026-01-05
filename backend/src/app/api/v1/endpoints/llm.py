@@ -102,6 +102,7 @@ from src.app.services.data_source_service import data_source_service
 from src.app.services.minio_client import minio_service
 from src.app.services.database_interface import PostgreSQLAdapter
 from src.app.services.zhipu_client import zhipu_service
+from src.app.services.sql_error_memory_service import SQLErrorMemoryService
 import re
 import duckdb
 
@@ -256,6 +257,40 @@ def _remove_database_name_prefix(sql: str, database_name: str) -> str:
         logger.info(f"[SQL预处理] 去除数据库名前缀 '{database_name}.': {original_sql[:100]}... -> {sql[:100]}...")
     
     return sql
+
+
+def _extract_table_name_from_sql(sql: str) -> Optional[str]:
+    """
+    从SQL语句中提取主表名
+
+    Args:
+        sql: SQL语句
+
+    Returns:
+        提取的表名，如果无法提取则返回None
+    """
+    try:
+        # 移除注释
+        clean_sql = sql
+        # 移除单行注释
+        clean_sql = re.sub(r'--.*$', '', clean_sql, flags=re.MULTILINE)
+        # 移除多行注释
+        clean_sql = re.sub(r'/\*.*?\*/', '', clean_sql, flags=re.DOTALL)
+
+        # 查找 FROM 或 JOIN 子句
+        # 优先匹配 FROM (主表)
+        from_match = re.search(r'\bFROM\s+["\']?([a-zA-Z_][a-zA-Z0-9_]*)', clean_sql, re.IGNORECASE)
+        if from_match:
+            return from_match.group(1).lower()
+
+        # 如果没有FROM，尝试JOIN
+        join_match = re.search(r'\bJOIN\s+["\']?([a-zA-Z_][a-zA-Z0-9_]*)', clean_sql, re.IGNORECASE)
+        if join_match:
+            return join_match.group(1).lower()
+
+        return None
+    except Exception:
+        return None
 
 
 def _convert_decimal_to_float(data: Any) -> Any:
@@ -1804,6 +1839,21 @@ async def _execute_sql_if_needed(
                             sql_block,
                             fixed_sql_block + result_text
                         )
+
+                        # 🔧 新增：记录SQL错误到错误记忆系统
+                        try:
+                            error_memory_service = SQLErrorMemoryService(db)
+                            await error_memory_service.record_error(
+                                tenant_id=tenant_id,
+                                original_query=sql_query,
+                                error_message=last_error,
+                                fixed_query=current_sql,
+                                table_name=_extract_table_name_from_sql(sql_query),
+                                schema_context=None  # 可选：可以传递schema上下文
+                            )
+                            logger.info("SQL错误已记录到错误记忆系统")
+                        except Exception as record_error:
+                            logger.warning(f"记录SQL错误失败: {record_error}")
                     else:
                         # 没有重试，直接将结果插入到SQL代码块后面
                         sql_block = f"```sql\n{sql_query}\n```"
@@ -2698,6 +2748,22 @@ async def _stream_response_generator(
                                         }
                                         yield f"data: {json.dumps(fix_chunk, ensure_ascii=False)}\n\n"
 
+                                        # 🔧 新增：记录SQL错误到错误记忆系统
+                                        logger.info(f"[SQL错误记忆] 准备记录SQL错误！retry_count={retry_count}, tenant_id={tenant_id[:20] if tenant_id else None}")
+                                        try:
+                                            error_memory_service = SQLErrorMemoryService(db)
+                                            await error_memory_service.record_error(
+                                                tenant_id=tenant_id,
+                                                original_query=sql_query,
+                                                error_message=last_error,
+                                                fixed_query=current_sql,
+                                                table_name=_extract_table_name_from_sql(sql_query),
+                                                schema_context=None
+                                            )
+                                            logger.info("[流式生成] SQL错误已记录到错误记忆系统")
+                                        except Exception as record_error:
+                                            logger.warning(f"[流式生成] 记录SQL错误失败: {record_error}")
+
                                     # 🔧 修复：不再发送 result_text 作为 content，避免与 ProcessingSteps 步骤6重复
                                     # 表格数据将通过步骤6 (content_type: 'table') 显示
                                     # result_chunk = {
@@ -3451,6 +3517,45 @@ async def chat_completion(
             if msg.role == "user":
                 original_question = msg.content
                 break
+
+        # ============================================================
+        # SQL错误记忆注入 - 从历史错误中学习，避免重复错误
+        # ============================================================
+        try:
+            error_memory_service = SQLErrorMemoryService(db)
+            # 尝试从问题或上下文中提取表名
+            table_name = None
+            if data_sources_context:
+                # 从第一个数据源中提取可能的表名
+                import re
+                for ds in data_sources_context:
+                    if ds.get("schema_info") and ds["schema_info"].get("tables"):
+                        # 获取第一个表名作为相关表
+                        tables = list(ds["schema_info"]["tables"].keys())
+                        if tables:
+                            table_name = tables[0].lower()
+                            break
+
+            # 获取历史错误提示
+            few_shot_prompt = await error_memory_service.generate_few_shot_prompt(
+                tenant_id=tenant_id,
+                user_question=original_question,
+                table_name=table_name,
+                limit=3  # 最多3个历史错误示例
+            )
+
+            if few_shot_prompt:
+                # 将历史错误注入到system消息中
+                for i, msg in enumerate(messages):
+                    if msg.role == "system":
+                        # 在原有提示后追加历史错误示例
+                        enhanced_prompt = msg.content + "\n\n" + few_shot_prompt
+                        messages[i] = LLMMessage(role="system", content=enhanced_prompt, thinking=msg.thinking)
+                        logger.info(f"✅ [SQL错误记忆] 已注入{few_shot_prompt.count('错误')}个历史错误示例到Prompt")
+                        break
+        except Exception as error_inject_error:
+            logger.warning(f"⚠️ [SQL错误记忆] 注入历史错误失败: {error_inject_error}")
+        # ============================================================
 
         # 调用LLM服务
         if request.stream:

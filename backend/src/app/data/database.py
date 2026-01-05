@@ -126,7 +126,8 @@ def create_tables():
         from .models import (
             Tenant, DataSourceConnection, KnowledgeDocument,
             TenantConfig, QueryLog, ExplanationLog,
-            FusionResult, ReasoningPath, TenantStatus
+            FusionResult, ReasoningPath, TenantStatus,
+            SQLErrorMemory, SQLErrorType  # SQL错误记忆系统
         )
 
         Base.metadata.create_all(bind=engine)

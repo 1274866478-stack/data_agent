@@ -456,12 +456,29 @@ export const useChatStore = create<ChatState>()(
           const currentSession = state.sessions.find(s => s.id === sessionId)
           // 安全获取消息列表，防止 undefined 错误
           const currentMessages = currentSession?.messages || []
+          // 🔧 [修复] 清理历史消息中的错误信息，避免AI重复提及历史错误
+          const cleanErrorContent = (content: string): string => {
+            // 移除SQL执行失败的错误块
+            let cleaned = content
+              // 移除 "⚠️ 原始SQL有误，尝试修复后仍然失败" 错误块
+              .replace(/\*\*⚠️ 原始SQL有误，尝试修复后仍然失败：\*\*[\s\S]*?(?=\n\n|$)/g, '')
+              // 移除 "❌ 查询执行失败" 错误信息
+              .replace(/\n\n❌ \*\*查询执行失败\*\*:[\s\S]*?(?=\n\n[^*]|$)/g, '')
+              // 移除重试提示
+              .replace(/\n\*已尝试自动修复 \d+ 次，但仍然失败\*\n/g, '')
+              // 移除多余的空行
+              .replace(/\n{3,}/g, '\n\n')
+              .trim()
+            return cleaned
+          }
+
           const historyMessages = currentMessages
             .filter(m => m.role !== 'system' && m.status !== 'error')  // 排除系统消息和错误消息
             .slice(0, -1)  // 排除刚刚添加的当前消息（避免重复）
             .map(m => ({
               role: m.role as 'user' | 'assistant' | 'system',
-              content: m.content
+              // 清理assistant消息中的错误内容，避免AI重复历史错误
+              content: m.role === 'assistant' ? cleanErrorContent(m.content) : m.content
             }))
 
           console.log('[ChatStore] 历史消息数量:', historyMessages.length, '数据源ID:', normalizedDataSourceIds)

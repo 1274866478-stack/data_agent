@@ -820,3 +820,104 @@ if hasattr(ExplanationLog, '__table__'):
 # 添加反向关系到FusionResult模型
 if hasattr(FusionResult, '__table__'):
     FusionResult.reasoning_paths = relationship("ReasoningPath", back_populates="fusion_result", cascade="all, delete-orphan")
+
+
+# ============================================================================
+# SQL错误记忆系统相关数据模型
+# ============================================================================
+
+class SQLErrorType(str, enum.Enum):
+    """SQL错误类型枚举"""
+    COLUMN_NOT_EXIST = "column_not_exist"       # 列不存在
+    TABLE_NOT_EXIST = "table_not_exist"         # 表不存在
+    SYNTAX_ERROR = "syntax_error"               # 语法错误
+    AMBIGUOUS_COLUMN = "ambiguous_column"       # 列名歧义
+    TYPE_MISMATCH = "type_mismatch"             # 类型不匹配
+    RELATION_ERROR = "relation_error"           # 关系错误（JOIN等）
+    AGGREGATE_ERROR = "aggregate_error"         # 聚合函数错误
+    GROUP_BY_ERROR = "group_by_error"           # GROUP BY错误
+    OTHER = "other"                             # 其他错误
+
+
+class SQLErrorMemory(Base):
+    """
+    SQL错误记忆模型
+    存租户级别的SQL错误及其修复方案，支持AI从错误中学习
+    """
+    __tablename__ = "sql_error_memory"
+
+    # 主键
+    id = Column(Integer, primary_key=True, index=True)
+
+    # 租户隔离（强制要求）
+    tenant_id = Column(String(255), ForeignKey("tenants.id"), nullable=False, index=True)
+
+    # 错误识别
+    error_pattern_hash = Column(String(64), unique=True, index=True, nullable=False)  # 错误模式哈希（SHA256）
+    error_type = Column(Enum(SQLErrorType), default=SQLErrorType.OTHER, nullable=False, index=True)
+    error_message = Column(Text, nullable=False)  # 原始错误信息
+
+    # 修复方案
+    original_query = Column(Text, nullable=False)  # 原始SQL
+    fixed_query = Column(Text, nullable=False)     # 修复后SQL
+    fix_description = Column(Text, nullable=True)  # 修复说明（LLM生成）
+
+    # 元数据
+    table_name = Column(String(100), nullable=True, index=True)  # 涉及的主表名
+    schema_context = Column(JSONB, nullable=True)  # Schema上下文（表结构快照）
+
+    # 统计信息
+    occurrence_count = Column(Integer, default=1, nullable=False)  # 出现次数
+    last_occurrence = Column(DateTime(timezone=True), nullable=True)  # 最后出现时间
+    success_count = Column(Integer, default=0, nullable=False)  # 应用后成功次数
+
+    # 时间戳
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # 关系
+    tenant = relationship("Tenant")
+
+    def __repr__(self):
+        return f"<SQLErrorMemory(id={self.id}, tenant_id='{self.tenant_id}', error_type='{self.error_type.value}', hash='{self.error_pattern_hash[:8]}...')>"
+
+    def to_dict(self) -> dict:
+        """转换为字典格式"""
+        return {
+            "id": self.id,
+            "tenant_id": self.tenant_id,
+            "error_pattern_hash": self.error_pattern_hash,
+            "error_type": self.error_type.value if self.error_type else None,
+            "error_message": self.error_message,
+            "original_query": self.original_query,
+            "fixed_query": self.fixed_query,
+            "fix_description": self.fix_description,
+            "table_name": self.table_name,
+            "schema_context": self.schema_context,
+            "occurrence_count": self.occurrence_count,
+            "last_occurrence": self.last_occurrence.isoformat() if self.last_occurrence else None,
+            "success_count": self.success_count,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None
+        }
+
+    def increment_occurrence(self):
+        """增加出现次数"""
+        self.occurrence_count += 1
+        self.last_occurrence = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(timezone.utc)
+
+    def increment_success(self):
+        """增加成功次数（应用此修复后成功）"""
+        self.success_count += 1
+        self.updated_at = datetime.now(timezone.utc)
+
+    @property
+    def effectiveness_score(self) -> float:
+        """
+        计算有效性分数（成功次数 / 出现次数）
+        分数越高表示此修复方案越有效
+        """
+        if self.occurrence_count == 0:
+            return 0.0
+        return round(self.success_count / self.occurrence_count, 2)
