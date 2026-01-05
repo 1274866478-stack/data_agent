@@ -220,21 +220,14 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
               )}>
                 <CardContent className="p-3">
                   <div className="message-container">
-                    {/* 渲染 Markdown 文本 */}
+                    {/* 渲染消息内容 */}
                     {message.role === 'user' ? (
                       <p className="text-base whitespace-pre-wrap">{message.content || ''}</p>
                     ) : (
-                      <>
-                        {/* 如果有 processing_steps，不在此处显示内容（内容在 ProcessingSteps 中展示） */}
-                        {(!message.metadata?.processing_steps || message.metadata.processing_steps.length === 0) ? (
-                          <Markdown content={message.content || ''} />
-                        ) : (
-                          // 有 processing_steps 时，显示流式光标（如果正在发送）
-                          message.status === 'sending' && (
-                            <span className="inline-block w-2 h-5 ml-1 bg-gray-600 animate-pulse" />
-                          )
-                        )}
-                      </>
+                      // AI消息：所有内容在 ProcessingSteps 中展示，此处只显示流式光标
+                      message.status === 'sending' && (
+                        <span className="inline-block w-2 h-5 ml-1 bg-gray-600 animate-pulse" />
+                      )
                     )}
                   </div>
                 </CardContent>

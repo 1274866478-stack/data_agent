@@ -59,6 +59,9 @@ import {
   Zap,
   BarChart3,
   Table,
+  Brain,      // 新增：思考/上下文检索
+  Sparkles,   // 新增：内容生成
+  Shield,     // 新增：安全检查
 } from 'lucide-react'
 import { ProcessingStep, StepContentType, StepContentData, StepTableData, StepChartData } from '@/types/chat'
 import ReactECharts from 'echarts-for-react'
@@ -73,7 +76,7 @@ interface ProcessingStepsProps {
 // 根据步骤编号和标题返回对应的图标
 function getStepIcon(step: number, title: string, status: ProcessingStep['status']) {
   const iconClass = 'w-4 h-4'
-  
+
   // 根据状态返回状态图标
   if (status === 'running') {
     return <Loader2 className={cn(iconClass, 'animate-spin text-blue-500')} />
@@ -82,37 +85,69 @@ function getStepIcon(step: number, title: string, status: ProcessingStep['status
     return <XCircle className={cn(iconClass, 'text-red-500')} />
   }
   if (status === 'completed') {
-    // 根据步骤编号显示对应图标（6步流程）
+    // 智能匹配：基于标题关键词（优先级最高，支持不同场景）
+    // 意图理解类
+    if (title.includes('意图') || title.includes('理解') || title.includes('用户问题')) {
+      return <MessageSquare className={cn(iconClass, 'text-green-500')} />
+    }
+    // 上下文检索/思考类
+    if (title.includes('检索') || title.includes('上下文') || title.includes('知识')) {
+      return <Brain className={cn(iconClass, 'text-green-500')} />
+    }
+    // Schema/数据库类
+    if (title.includes('Schema') || title.includes('数据库') || title.includes('表结构')) {
+      return <TableProperties className={cn(iconClass, 'text-green-500')} />
+    }
+    // 策略/Prompt构建类
+    if (title.includes('策略') || title.includes('Prompt') || title.includes('构建')) {
+      return <Wand2 className={cn(iconClass, 'text-green-500')} />
+    }
+    // SQL生成类
+    if (title.includes('SQL') && (title.includes('生成') || title.includes('构建'))) {
+      return <Code2 className={cn(iconClass, 'text-green-500')} />
+    }
+    // 内容生成类（非SQL）
+    if (title.includes('生成') || title.includes('回复') || title.includes('内容')) {
+      return <Sparkles className={cn(iconClass, 'text-green-500')} />
+    }
+    // 安全检查类
+    if (title.includes('安全') || title.includes('检查') || title.includes('合规')) {
+      return <Shield className={cn(iconClass, 'text-green-500')} />
+    }
+    // 优化/输出完成类
+    if (title.includes('优化') || title.includes('输出') || title.includes('完成') || title.includes('最终')) {
+      return <CheckCircle2 className={cn(iconClass, 'text-green-500')} />
+    }
+    // SQL提取/代码类
+    if (title.includes('提取') || title.includes('代码')) {
+      return <FileCode className={cn(iconClass, 'text-green-500')} />
+    }
+    // 执行/查询类
+    if (title.includes('执行') || title.includes('查询') || title.includes('运行')) {
+      return <Zap className={cn(iconClass, 'text-green-500')} />
+    }
+    // 图表可视化类
+    if (title.includes('图表') || title.includes('可视化') || title.includes('展示')) {
+      return <BarChart3 className={cn(iconClass, 'text-green-500')} />
+    }
+    // 数据源类
+    if (title.includes('数据源') || title.includes('连接')) {
+      return <Database className={cn(iconClass, 'text-green-500')} />
+    }
+
+    // 回退到步骤编号映射（8步Agent SQL流程）
     switch (step) {
-      case 1: // 理解用户问题
-        return <MessageSquare className={cn(iconClass, 'text-green-500')} />
-      case 2: // 获取数据库Schema
-        return <TableProperties className={cn(iconClass, 'text-green-500')} />
-      case 3: // 构建AI Prompt
-        return <Wand2 className={cn(iconClass, 'text-green-500')} />
-      case 4: // AI生成SQL
-        return <Code2 className={cn(iconClass, 'text-green-500')} />
-      case 5: // 提取SQL语句
-        return <FileCode className={cn(iconClass, 'text-green-500')} />
-      case 6: // 执行SQL查询
-        return <Zap className={cn(iconClass, 'text-green-500')} />
-      case 7: // 生成数据可视化图表
-        return <BarChart3 className={cn(iconClass, 'text-green-500')} />
-      default:
-        // 回退到标题匹配
-        if (title.includes('数据源') || title.includes('Schema')) {
-          return <Database className={cn(iconClass, 'text-green-500')} />
-        }
-        if (title.includes('SQL') || title.includes('生成')) {
-          return <FileCode className={cn(iconClass, 'text-green-500')} />
-        }
-        if (title.includes('执行') || title.includes('查询')) {
-          return <Play className={cn(iconClass, 'text-green-500')} />
-        }
-        return <CheckCircle2 className={cn(iconClass, 'text-green-500')} />
+      case 1: return <MessageSquare className={cn(iconClass, 'text-green-500')} />
+      case 2: return <TableProperties className={cn(iconClass, 'text-green-500')} />
+      case 3: return <Wand2 className={cn(iconClass, 'text-green-500')} />
+      case 4: return <Code2 className={cn(iconClass, 'text-green-500')} />
+      case 5: return <FileCode className={cn(iconClass, 'text-green-500')} />
+      case 6: return <Zap className={cn(iconClass, 'text-green-500')} />
+      case 7: return <BarChart3 className={cn(iconClass, 'text-green-500')} />
+      default: return <CheckCircle2 className={cn(iconClass, 'text-green-500')} />
     }
   }
-  
+
   // pending 状态
   return <Clock className={cn(iconClass, 'text-gray-400')} />
 }
@@ -424,6 +459,19 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
                     <p className="text-xs text-gray-600 mt-0.5">
                       {step.description}
                     </p>
+                  )}
+
+                  {/* 🔧 新增：实时内容预览（当步骤正在运行时） */}
+                  {step.status === 'running' && step.content_preview && (
+                    <div className="mt-2 p-2 rounded-md bg-blue-50 border border-blue-200">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
+                        <span className="text-xs font-medium text-blue-700">正在生成...</span>
+                      </div>
+                      <div className="text-xs text-gray-700 font-mono whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
+                        {step.content_preview}
+                      </div>
+                    </div>
                   )}
 
                   {/* 渲染步骤内容（SQL、表格、图表） */}

@@ -168,7 +168,16 @@ function dispatchStreamEvent(event: StreamEvent, callbacks: StreamCallbacks) {
         callbacks.onContent(contentDelta);
       }
       break;
-    
+
+    case 'content_delta':
+      // 🔧 新增：处理实时内容增量事件
+      // 这个事件用于实时显示AI正在生成的内容
+      const delta = event.delta || '';
+      if (delta) {
+        callbacks.onContent(delta);
+      }
+      break;
+
     case 'thinking':
       // 优先使用 delta，如果没有则使用 thinking（兼容后端格式）
       const thinkingDelta = event.delta || event.thinking || '';
@@ -176,7 +185,7 @@ function dispatchStreamEvent(event: StreamEvent, callbacks: StreamCallbacks) {
         callbacks.onThinking(thinkingDelta);
       }
       break;
-    
+
     case 'tool_input':
       // 处理 SQL 代码的流式传输
       if (event.tool_name && (event.args || event.tool_input)) {
@@ -208,11 +217,21 @@ function dispatchStreamEvent(event: StreamEvent, callbacks: StreamCallbacks) {
       }
       break;
 
+    case 'step_update':
+      // 🔧 新增：处理步骤更新事件（用于更新正在进行的步骤的描述和内容预览）
+      const stepNum = typeof event.step === 'number' ? event.step : parseInt(event.step || '0');
+      if (stepNum > 0 && callbacks.onStepUpdate) {
+        const description = event.description || '';
+        const contentPreview = event.content_preview || '';
+        callbacks.onStepUpdate(stepNum, description, contentPreview);
+      }
+      break;
+
     case 'error':
       const errorMsg = event.message || event.error || 'Unknown stream error';
       callbacks.onError(errorMsg);
       break;
-      
+
     case 'done':
       // 通常由外层循环处理，但防止后端显式发送 done 事件
       callbacks.onDone();

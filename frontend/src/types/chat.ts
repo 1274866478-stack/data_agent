@@ -39,13 +39,15 @@
 
 // 流式响应事件类型定义
 
-export type StreamEventType = 
-  | 'content'          // 普通对话文本
+export type StreamEventType =
+  | 'content'          // 普通对话文本（完整内容）
+  | 'content_delta'    // 内容增量（实时流式输出）
   | 'thinking'         // 模型思考过程
   | 'tool_input'       // Agent 生成的 SQL 或参数
   | 'tool_result'      // 工具执行结果 (如查询到的数据库数据)
   | 'chart_config'     // ECharts 图表配置
   | 'processing_step'  // AI处理步骤（用于展示推理过程）
+  | 'step_update'      // 步骤更新事件（用于更新正在进行的步骤）
   | 'error'            // 错误信息
   | 'done';            // 结束信号
 
@@ -88,6 +90,8 @@ export interface ProcessingStep {
   // 新增字段：支持在步骤内渲染不同类型的内容
   content_type?: StepContentType;  // 内容类型
   content_data?: StepContentData;  // 内容数据
+  // 🔧 新增：实时内容预览（用于显示正在生成的内容）
+  content_preview?: string;        // 正在生成的内容预览
 }
 
 export interface StreamEvent {
@@ -106,7 +110,10 @@ export interface StreamEvent {
   provider?: string;    // 提供商信息
   tenant_id?: string;   // 租户ID
   // processing_step 事件专用字段
-  step?: ProcessingStep;  // 处理步骤信息
+  step?: ProcessingStep | number;  // 处理步骤信息或步骤编号（用于 step_update）
+  // step_update 事件专用字段
+  description?: string;     // 步骤描述更新
+  content_preview?: string; // 内容预览（用于显示正在生成的内容）
 }
 
 // ECharts 配置接口
@@ -128,6 +135,7 @@ export interface StreamCallbacks {
   onToolResult: (data: any) => void;
   onChartConfig: (echartsOption: EChartsOption) => void;  // 处理图表配置
   onProcessingStep: (step: ProcessingStep) => void;       // 处理AI推理步骤
+  onStepUpdate?: (step: number, description: string, contentPreview?: string) => void;  // 步骤更新回调（可选）
   onError: (error: string) => void;
   onDone: () => void;
 }

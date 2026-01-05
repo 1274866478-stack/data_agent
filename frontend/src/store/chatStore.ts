@@ -674,6 +674,40 @@ export const useChatStore = create<ChatState>()(
                   },
                 })
               },
+              // 🔧 新增：处理步骤更新事件（用于更新正在进行的步骤）
+              onStepUpdate: (stepNum: number, description: string, contentPreview?: string) => {
+                console.log('[ChatStore] 🔄 收到步骤更新:', stepNum, description, contentPreview?.substring(0, 50))
+
+                // 查找是否已存在相同步骤号的步骤
+                const existingIndex = processingSteps.findIndex(s => s.step === stepNum)
+                if (existingIndex >= 0) {
+                  // 更新已有步骤的描述和内容预览
+                  processingSteps[existingIndex] = {
+                    ...processingSteps[existingIndex],
+                    description: description,
+                    content_preview: contentPreview,
+                  }
+                } else {
+                  // 如果步骤不存在，创建一个新步骤
+                  processingSteps.push({
+                    step: stepNum,
+                    title: `步骤 ${stepNum}`,
+                    description: description,
+                    status: 'running',
+                    content_preview: contentPreview,
+                  })
+                }
+
+                // 按步骤号排序
+                processingSteps.sort((a, b) => a.step - b.step)
+
+                // 更新消息的metadata
+                state.updateMessage(assistantMessageId, {
+                  metadata: {
+                    processing_steps: [...processingSteps],
+                  },
+                })
+              },
               onError: (error: string) => {
                 set({ streamingStatus: 'error' })
                 state.updateMessage(assistantMessageId, {

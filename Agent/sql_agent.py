@@ -116,7 +116,7 @@ try:
             _analyze_dataframe_tool = getattr(module, 'analyze_dataframe', None)
             
             if _inspect_file_tool and _analyze_dataframe_tool:
-                print(f"✅ 文件数据源工具导入成功 (路径: {import_module})")
+                print(f"[OK] 文件数据源工具导入成功 (路径: {import_module})")
                 print(f"   - inspect_file: {getattr(_inspect_file_tool, 'name', 'unknown')}")
                 print(f"   - analyze_dataframe: {getattr(_analyze_dataframe_tool, 'name', 'unknown')}")
                 break
@@ -128,7 +128,7 @@ try:
         
 except Exception as e:
     import os
-    print(f"⚠️ 文件数据源工具导入失败: {e}")
+    print(f"[WARNING] 文件数据源工具导入失败: {e}")
     print(f"   当前工作目录: {os.getcwd()}")
     print(f"   脚本路径: {Path(__file__).absolute()}")
     print(f"   Python 路径: {sys.path[:3]}")

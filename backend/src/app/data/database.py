@@ -250,13 +250,13 @@ def log_pool_health():
     try:
         pool_status = get_pool_status()
         status_emoji = {
-            "healthy": "✅",
-            "warning": "⚠️",
-            "critical": "🔴",
-            "error": "❌",
+            "healthy": "[OK]",
+            "warning": "[!]",
+            "critical": "[RED]",
+            "error": "[X]",
         }
 
-        emoji = status_emoji.get(pool_status["status"], "❓")
+        emoji = status_emoji.get(pool_status["status"], "[?]")
         logger.info(
             "%s Database Pool - Size: %s, Active: %s, Status: %s",
             emoji,

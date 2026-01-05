@@ -569,7 +569,7 @@ async def create_query(
     logger.info(f"🔍 [诊断] enable_cache={request.enable_cache}")
     logger.info(f"🔍 [诊断] force_refresh={request.force_refresh}")
     logger.info("="*80)
-    print(f"🔍 [诊断] /query 端点被调用 - connection_id={request.connection_id}, query={request.query[:100]}")
+    print(f"[SEARCH] [诊断] /query 端点被调用 - connection_id={request.connection_id}, query={request.query[:100]}")
     # ============================================================
 
     try:

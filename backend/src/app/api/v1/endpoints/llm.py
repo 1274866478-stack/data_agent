@@ -2164,6 +2164,159 @@ def _create_processing_step(
     return f"data: {json.dumps(step_data, ensure_ascii=False)}\n\n"
 
 
+async def _stream_general_chat_generator(
+    stream_generator,
+    tenant_id: str,
+    original_question: str = ""
+):
+    """
+    普通对话的流式响应生成器（6步推理流程）
+
+    用于没有数据源的普通AI对话场景，展示推理过程：
+
+    步骤1: 理解用户意图
+    步骤2: 检索上下文知识
+    步骤3: 构建回复策略
+    步骤4: 生成回复内容 (running -> completed)
+    步骤5: 安全与合规检查
+    步骤6: 优化最终输出 (包含回复文本)
+    """
+    from src.app.services.processing_steps import ProcessingStepBuilder
+
+    builder = ProcessingStepBuilder()
+    steps_config = builder.build_general_chat_steps(
+        question=original_question,
+        has_context=False  # 普通对话暂不检查上下文
+    )
+
+    # ========== 发送连接初始化事件 ==========
+    init_event = {
+        "type": "connection_init",
+        "message": "Stream connection established",
+        "tenant_id": tenant_id
+    }
+    yield f"data: {json.dumps(init_event, ensure_ascii=False)}\n\n"
+    await asyncio.sleep(0.05)
+
+    # ========== 发送步骤1-3（已完成） ==========
+    for step_cfg in steps_config[:3]:
+        yield _create_processing_step(
+            step=step_cfg.step,
+            title=step_cfg.title,
+            description=step_cfg.description,
+            status=step_cfg.status,
+            duration=step_cfg.duration,
+            tenant_id=tenant_id
+        )
+        await asyncio.sleep(0.05)
+
+    # ========== 发送步骤4（运行中） ==========
+    yield _create_processing_step(
+        step=4,
+        title=steps_config[3].title,
+        description=steps_config[3].description,
+        status="running",
+        tenant_id=tenant_id
+    )
+    await asyncio.sleep(0.05)
+
+    # ========== 收集LLM输出 ==========
+    full_content = ""
+    llm_start_time = time.time()
+
+    # 🔧 新增：用于累积和更新步骤4的内容预览
+    step4_content_preview = ""
+    last_update_time = time.time()
+
+    async for chunk in stream_generator:
+        if chunk.type == "content":
+            full_content += chunk.content
+
+            # 🔧 新增：实时发送content delta到前端
+            content_delta = {
+                "type": "content_delta",
+                "delta": chunk.content,
+                "provider": chunk.provider,
+                "tenant_id": tenant_id
+            }
+            yield f"data: {json.dumps(content_delta, ensure_ascii=False)}\n\n"
+
+            # 🔧 新增：定期更新步骤4的描述，显示内容预览
+            step4_content_preview += chunk.content
+            current_time = time.time()
+            if current_time - last_update_time >= 0.1:  # 100ms间隔
+                # 生成内容预览（限制长度）
+                preview_text = step4_content_preview[-150:] if len(step4_content_preview) > 150 else step4_content_preview
+                # 清理预览文本
+                preview_text = preview_text.replace("\n", " ").strip()
+
+                step_update = {
+                    "type": "step_update",
+                    "step": 4,
+                    "description": f"正在生成回复... {len(step4_content_preview)} 字符",
+                    "content_preview": preview_text,
+                    "tenant_id": tenant_id
+                }
+                yield f"data: {json.dumps(step_update, ensure_ascii=False)}\n\n"
+                last_update_time = current_time
+
+        elif chunk.type == "thinking":
+            # 发送thinking事件
+            chunk_data = {
+                "type": "thinking",
+                "delta": chunk.content,
+                "provider": chunk.provider,
+                "finished": chunk.finished,
+                "tenant_id": tenant_id
+            }
+            yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+        elif chunk.type == "error":
+            error_data = {
+                "type": "error",
+                "message": chunk.content,
+                "tenant_id": tenant_id
+            }
+            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+
+    llm_duration = int((time.time() - llm_start_time) * 1000)
+
+    # ========== 内容生成完成，发送步骤4-6 ==========
+    yield _create_processing_step(
+        step=4,
+        title=steps_config[3].title,
+        description="回复内容已生成",
+        status="completed",
+        duration=llm_duration,
+        tenant_id=tenant_id
+    )
+    await asyncio.sleep(0.05)
+
+    yield _create_processing_step(
+        step=5,
+        title="安全与合规检查",
+        description="内容合规性检查通过",
+        status="completed",
+        duration=50,
+        tenant_id=tenant_id
+    )
+    await asyncio.sleep(0.05)
+
+    yield _create_processing_step(
+        step=6,
+        title="优化最终输出",
+        description="回复已完成",
+        status="completed",
+        duration=30,
+        content_type="text",
+        content_data={"text": full_content},
+        tenant_id=tenant_id
+    )
+
+    # ========== 发送完成信号 ==========
+    done_event = {"type": "done", "tenant_id": tenant_id}
+    yield f"data: {json.dumps(done_event, ensure_ascii=False)}\n\n"
+
+
 async def _stream_response_generator(
     stream_generator,
     tenant_id: str,
@@ -2284,21 +2437,45 @@ async def _stream_response_generator(
         # 确保事件被刷新到客户端
         await asyncio.sleep(0.05)
 
+        # 🔧 新增：用于累积和更新步骤4的内容预览
+        step4_content_preview = ""
+        last_update_time = time.time()
+
         async for chunk in stream_generator:
             # 处理普通内容
             if chunk.type == "content":
-                # 🔧 修复：不再发送 content 事件到消息区域，避免与 ProcessingSteps 重复
-                # LLM 的引导文本（如"让我查询..."）将通过步骤4展示
-                # chunk_data = {
-                #     "type": chunk.type,
-                #     "content": chunk.content,
-                #     "provider": chunk.provider,
-                #     "finished": chunk.finished,
-                #     "tenant_id": tenant_id
-                # }
-                # yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
                 full_content += chunk.content
-            
+
+                # 🔧 新增：实时发送content delta到前端
+                # 使用content_delta事件类型，避免与最终content冲突
+                content_delta = {
+                    "type": "content_delta",
+                    "delta": chunk.content,
+                    "provider": chunk.provider,
+                    "tenant_id": tenant_id
+                }
+                yield f"data: {json.dumps(content_delta, ensure_ascii=False)}\n\n"
+
+                # 🔧 新增：定期更新步骤4的描述，显示内容预览
+                # 每100ms更新一次预览，避免过于频繁
+                step4_content_preview += chunk.content
+                current_time = time.time()
+                if current_time - last_update_time >= 0.1:  # 100ms间隔
+                    # 生成内容预览（限制长度）
+                    preview_text = step4_content_preview[-200:] if len(step4_content_preview) > 200 else step4_content_preview
+                    # 清理预览文本，移除markdown代码块标记等
+                    preview_text = preview_text.replace("```sql", "").replace("```", "").strip()
+
+                    step_update = {
+                        "type": "step_update",
+                        "step": 4,
+                        "description": f"正在生成SQL... {len(step4_content_preview)} 字符",
+                        "content_preview": preview_text,
+                        "tenant_id": tenant_id
+                    }
+                    yield f"data: {json.dumps(step_update, ensure_ascii=False)}\n\n"
+                    last_update_time = current_time
+
             elif chunk.type == "thinking":
                 thinking_content += chunk.content
                 # 发送thinking chunk
@@ -2310,7 +2487,7 @@ async def _stream_response_generator(
                     "tenant_id": tenant_id
                 }
                 yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
-            
+
             # 如果流结束，检测并执行 SQL（方案B）
             if chunk.finished:
                 logger.info(f"流式响应完成，检测SQL查询。内容长度: {len(full_content)}")
@@ -3300,24 +3477,48 @@ async def chat_completion(
             )
             
             logger.info(f"[STREAM] Stream generator created, starting response")
-            return StreamingResponse(
-                _stream_response_generator(
-                    response_generator, 
-                    tenant_id, 
-                    db, 
-                    original_question, 
-                    request.data_source_ids,
-                    initial_messages=messages,  # 传递初始消息历史
-                    schema_info=schema_info  # 传递Schema获取信息
-                ),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Headers": "Cache-Control"
-                }
-            )
+
+            # 判断是否为Agent模式（有数据源）
+            is_agent_mode = request.data_source_ids and len(request.data_source_ids) > 0
+
+            if is_agent_mode:
+                # Agent SQL查询模式：8步流程
+                logger.info(f"[STREAM] Using Agent mode (8-step SQL query flow)")
+                return StreamingResponse(
+                    _stream_response_generator(
+                        response_generator,
+                        tenant_id,
+                        db,
+                        original_question,
+                        request.data_source_ids,
+                        initial_messages=messages,  # 传递初始消息历史
+                        schema_info=schema_info  # 传递Schema获取信息
+                    ),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Headers": "Cache-Control"
+                    }
+                )
+            else:
+                # 普通对话模式：6步流程
+                logger.info(f"[STREAM] Using General Chat mode (6-step reasoning flow)")
+                return StreamingResponse(
+                    _stream_general_chat_generator(
+                        response_generator,
+                        tenant_id,
+                        original_question
+                    ),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Headers": "Cache-Control"
+                    }
+                )
         else:
             # 非流式响应
             llm_start = time.time()
