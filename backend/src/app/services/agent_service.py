@@ -603,7 +603,7 @@ def convert_agent_response_to_query_response(
         for pattern in fake_data_patterns:
             if re.search(pattern, explanation):
                 detected_patterns.append(pattern)
-        
+
         # 如果检测到多个假数据模式，很可能是假数据
         if len(detected_patterns) >= 2:
             error_message = (
@@ -623,7 +623,53 @@ def convert_agent_response_to_query_response(
             explanation = error_message
             results = []
             logger.error(f"🚫 [响应转换] 二次检查检测到假数据模式，已拦截并替换explanation")
-    
+
+    # 🛡️🛡️🛡️ 安全优先级0：危险 SQL 检查（最高优先级，在假数据检查之前）
+    # 检查 explanation 中是否包含危险的 DML/DDL 操作
+    if explanation:
+        import re
+        explanation_upper = explanation.upper()
+
+        # 危险关键字黑名单
+        dangerous_keywords = [
+            (r'\bUPDATE\b', 'UPDATE'),
+            (r'\bDELETE\b', 'DELETE'),
+            (r'\bINSERT\b', 'INSERT'),
+            (r'\bDROP\b', 'DROP'),
+            (r'\bTRUNCATE\b', 'TRUNCATE'),
+            (r'\bALTER\b', 'ALTER'),
+            (r'\bCREATE\s+TABLE\b', 'CREATE TABLE'),
+            (r'\bGRANT\b', 'GRANT'),
+            (r'\bREVOKE\b', 'REVOKE'),
+        ]
+
+        detected_dangerous = []
+        for pattern, keyword in dangerous_keywords:
+            if re.search(pattern, explanation_upper):
+                detected_dangerous.append(keyword)
+
+        # 检测到危险 SQL - 替换为拒绝消息
+        if detected_dangerous:
+            security_message = (
+                "⛔ **操作被拒绝**\n\n"
+                "您请求的操作涉及数据修改，这违反了安全策略。\n\n"
+                "🛡️ 作为一个只读数据分析助手，我只能：\n"
+                "- ✅ 查询和展示数据（SELECT）\n"
+                "- ✅ 分析数据趋势和模式\n"
+                "- ✅ 生成数据可视化图表\n"
+                "- ❌ 不能修改、删除或新增数据\n\n"
+                "如果您需要修改数据，请联系数据库管理员或使用专门的管理工具。"
+            )
+            explanation = security_message
+            results = []  # 清除可能包含危险操作的结果
+            logger.error(
+                f"🚫 [响应安全检查] 检测到危险SQL关键字并已拦截: {', '.join(detected_dangerous)}",
+                extra={
+                    "detected_keywords": detected_dangerous,
+                    "original_query": original_query[:100]
+                }
+            )
+
     # 🛡️ 安全访问所有属性
     sql = safe_get(agent_response, 'sql', '')
     data_obj = safe_get(agent_response, 'data')
@@ -771,7 +817,50 @@ def convert_agent_response_to_chat_response(
     success = safe_get(agent_response, 'success', False)
     data_obj = safe_get(agent_response, 'data')
     echarts_option = safe_get(agent_response, 'echarts_option')
-    
+
+    # 🛡️🛡️🛡️ 安全检查：检查 answer 中是否包含危险的 DML/DDL 操作
+    if answer:
+        import re
+        answer_upper = answer.upper()
+
+        # 危险关键字黑名单
+        dangerous_keywords = [
+            (r'\bUPDATE\b', 'UPDATE'),
+            (r'\bDELETE\b', 'DELETE'),
+            (r'\bINSERT\b', 'INSERT'),
+            (r'\bDROP\b', 'DROP'),
+            (r'\bTRUNCATE\b', 'TRUNCATE'),
+            (r'\bALTER\b', 'ALTER'),
+            (r'\bCREATE\s+TABLE\b', 'CREATE TABLE'),
+            (r'\bGRANT\b', 'GRANT'),
+            (r'\bREVOKE\b', 'REVOKE'),
+        ]
+
+        detected_dangerous = []
+        for pattern, keyword in dangerous_keywords:
+            if re.search(pattern, answer_upper):
+                detected_dangerous.append(keyword)
+
+        # 检测到危险 SQL - 替换为拒绝消息
+        if detected_dangerous:
+            security_message = (
+                "⛔ **操作被拒绝**\n\n"
+                "您请求的操作涉及数据修改，这违反了安全策略。\n\n"
+                "🛡️ 作为一个只读数据分析助手，我只能：\n"
+                "- ✅ 查询和展示数据（SELECT）\n"
+                "- ✅ 分析数据趋势和模式\n"
+                "- ✅ 生成数据可视化图表\n"
+                "- ❌ 不能修改、删除或新增数据\n\n"
+                "如果您需要修改数据，请联系数据库管理员或使用专门的管理工具。"
+            )
+            answer = security_message
+            logger.error(
+                f"🚫 [Chat响应安全检查] 检测到危险SQL关键字并已拦截: {', '.join(detected_dangerous)}",
+                extra={
+                    "detected_keywords": detected_dangerous
+                }
+            )
+
     # 构建响应
     response = {
         "answer": answer,
