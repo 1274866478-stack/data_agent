@@ -128,6 +128,16 @@ try:
         _use_new_agent = False
         logger.info("使用旧版本 Agent (不支持 enable_echarts)")
     _agent_available = True
+
+    # 🔥 【QA集成】导入错误追踪模块
+    try:
+        from error_tracker import error_tracker, log_agent_error, ErrorCategory
+        _error_tracking_available = True
+        logger.info("✅ 错误追踪模块已加载")
+    except ImportError as track_err:
+        _error_tracking_available = False
+        error_tracker = None
+        logger.warning(f"⚠️ 错误追踪模块导入失败: {track_err}，错误追踪功能将不可用")
 except ImportError as e:
     logger.warning(f"Agent模块导入失败: {e}，Agent功能将不可用")
     _agent_available = False
@@ -950,6 +960,19 @@ async def run_agent_query(
             "Starting underlying LangGraph Agent run",
             extra={"thread_id": thread_id, "enable_echarts": enable_echarts},
         )
+
+        # 🔥 【QA集成】开始计时
+        import time as _time_module
+        _qa_start_time = _time_module.time()
+        _qa_context = {
+            "source": "backend_api",
+            "endpoint": "/api/v1/llm/query-with-agent",
+            "user_question": question,  # 原始问题（未增强）
+            "thread_id": thread_id,
+            "db_type": db_type,
+            "enable_echarts": enable_echarts,
+        }
+
         # 根据使用的 Agent 版本调用不同的函数
         if _use_new_agent:
             # 新版本：需要传递 database_url，返回 Dict 包含 response 字段
@@ -1001,7 +1024,37 @@ async def run_agent_query(
                 "error": getattr(response, "error", None) if response else None,
             },
         )
-        
+
+        # 🔥 【QA集成】记录成功
+        if _error_tracking_available and error_tracker:
+            _qa_elapsed = _time_module.time() - _qa_start_time
+            _response_success = getattr(response, "success", False) if response else False
+            _response_answer = getattr(response, "answer", "")[:500] if response else ""
+            _response_sql = getattr(response, "sql", "")[:200] if response else ""
+            _response_error = getattr(response, "error", None) if response else None
+
+            if _response_success:
+                error_tracker.log_success(
+                    question=question,
+                    response=_response_answer or "查询成功",
+                    context={
+                        **_qa_context,
+                        "sql": _response_sql,
+                        "chart_type": getattr(getattr(response, "chart", None), "chart_type", None) if response else None,
+                    },
+                    execution_time=_qa_elapsed
+                )
+                logger.info(f"✅ [QA] 成功记录已保存 (耗时: {_qa_elapsed:.2f}s)")
+            elif _response_error:
+                # 有错误但没抛异常的情况
+                log_agent_error(
+                    question=question,
+                    error=Exception(_response_error),
+                    category=ErrorCategory.UNKNOWN,
+                    context={**_qa_context, "execution_time": _qa_elapsed}
+                )
+                logger.info(f"⚠️ [QA] 错误记录已保存 (Agent返回错误: {_response_error[:100]})")
+
         # 恢复原始配置（只有当 original_url 被设置时才恢复）
         if original_url is not None:
             from config import config
@@ -1012,6 +1065,35 @@ async def run_agent_query(
     
     except Exception as e:
         logger.error("Agent查询失败", extra={"error": str(e)}, exc_info=True)
+
+        # 🔥 【QA集成】记录异常错误
+        if _error_tracking_available and error_tracker:
+            try:
+                _qa_elapsed = _time_module.time() - _qa_start_time
+                # 自动推断错误类别
+                _error_category = ErrorCategory.UNKNOWN
+                error_str = str(e).lower()
+                if "connection" in error_str or "connect" in error_str:
+                    _error_category = ErrorCategory.DATABASE_CONNECTION
+                elif "timeout" in error_str:
+                    _error_category = ErrorCategory.TIMEOUT
+                elif "schema" in error_str or "table" in error_str or "column" in error_str:
+                    _error_category = ErrorCategory.SCHEMA_NOT_FOUND
+                elif "mcp" in error_str or "tool" in error_str:
+                    _error_category = ErrorCategory.MCP_TOOL_FAILURE
+                elif "api" in error_str or "llm" in error_str or "rate" in error_str:
+                    _error_category = ErrorCategory.LLM_API_ERROR
+
+                log_agent_error(
+                    question=question,
+                    error=e,
+                    category=_error_category,
+                    context={**_qa_context, "execution_time": _qa_elapsed}
+                )
+                logger.info(f"❌ [QA] 异常错误已记录 (类别: {_error_category.value})")
+            except Exception as track_error:
+                logger.warning(f"错误追踪记录失败: {track_error}")
+
         return None
 
 

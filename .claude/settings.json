@@ -1,19 +1,53 @@
 {
-  "enabledPlugins": {
-    "lsp-python": true,
-    "lsp-typescript": true
+  "env": {
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_MEM_MODEL": "glm-4.7",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000",
+    "MAX_THINKING_TOKENS": "31999",
+    "DISABLE_TELEMETRY": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "MCP_TIMEOUT": "60000",
+    "API_TIMEOUT_MS": "3000000",
+    "ANTHROPIC_AUTH_TOKEN": "3d4e9176ca22408f9ed83065b7a3934d.B2R18MErm3mpwoZb",
+    "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic"
   },
   "permissions": {
     "allow": [
-      "LSP*",
-      "Bash(export ENABLE_LSP_TOOLS=1)"
+      "Bash",
+      "BashOutput",
+      "Edit",
+      "Glob",
+      "Grep",
+      "KillShell",
+      "NotebookEdit",
+      "Read",
+      "SlashCommand",
+      "Task",
+      "TodoWrite",
+      "WebFetch",
+      "WebSearch",
+      "Write",
+      "mcp__ide",
+      "mcp__exa",
+      "mcp__context7",
+      "mcp__mcp-deepwiki",
+      "mcp__Playwright",
+      "mcp__spec-workflow",
+      "mcp__open-websearch",
+      "mcp__serena"
     ],
     "deny": []
   },
-  "env": {
-    "ENABLE_LSP_TOOLS": "1",
-    "ANTHROPIC_AUTH_TOKEN": "88_e7860912ad32f203231dbac220ff783718f933f2fb40ba19150e9be40187943c",
-    "ANTHROPIC_BASE_URL": "https://www.88code.ai/api",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+  "model": "opus",
+  "statusLine": {
+    "type": "command",
+    "command": "%USERPROFILE%\\.claude\\ccline\\ccline.exe",
+    "padding": 0
+  },
+  "enabledPlugins": {
+    "claude-mem@thedotmack": true,
+    "pyright-lsp@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true
   }
 }

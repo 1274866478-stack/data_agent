@@ -1,0 +1,12 @@
+{
+  "env": {
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GLM-4.7",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "ANTHROPIC_AUTH_TOKEN": "3d4e9176ca22408f9ed83065b7a3934d.B2R18MErm3mpwoZb",
+    "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic",
+    "CLAUDE_MEM_MODEL": "GLM-4.7"
+  },
+  "enabledPlugins": {
+    "claude-mem@thedotmack": true
+  }
+}

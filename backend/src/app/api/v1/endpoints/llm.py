@@ -2223,26 +2223,41 @@ def _create_processing_step(
 async def _stream_general_chat_generator(
     stream_generator,
     tenant_id: str,
-    original_question: str = ""
+    original_question: str = "",
+    has_data_source: bool = False
 ):
     """
-    普通对话的流式响应生成器（6步推理流程）
+    普通对话的流式响应生成器（动态步骤流程）
 
-    用于没有数据源的普通AI对话场景，展示推理过程：
+    根据问题类型动态生成不同的步骤：
+    - 简单问候（你好、谢谢）: 2步
+    - Schema查询（有哪些表）: 3步
+    - 数据查询: 5步
+    - 可视化需求: 6步
+    - 普通对话（默认）: 6步
 
-    步骤1: 理解用户意图
-    步骤2: 检索上下文知识
-    步骤3: 构建回复策略
-    步骤4: 生成回复内容 (running -> completed)
-    步骤5: 安全与合规检查
-    步骤6: 优化最终输出 (包含回复文本)
+    Args:
+        stream_generator: LLM流式输出生成器
+        tenant_id: 租户ID
+        original_question: 用户原始问题
+        has_data_source: 是否有可用的数据源
     """
-    from src.app.services.processing_steps import ProcessingStepBuilder
+    from src.app.services.processing_steps import (
+        ProcessingStepBuilder,
+        classify_question,
+        QuestionType
+    )
 
+    # 1. 分类问题类型
+    question_type = classify_question(original_question, has_data_source)
+    logger.info(f"[DYNAMIC_STEPS] Question type: {question_type.value}, has_data_source: {has_data_source}")
+
+    # 2. 构建动态步骤
     builder = ProcessingStepBuilder()
-    steps_config = builder.build_general_chat_steps(
+    steps_config = builder.build_dynamic_steps(
+        question_type=question_type,
         question=original_question,
-        has_context=False  # 普通对话暂不检查上下文
+        has_context=False
     )
 
     # ========== 发送连接初始化事件 ==========
@@ -2254,41 +2269,47 @@ async def _stream_general_chat_generator(
     yield f"data: {json.dumps(init_event, ensure_ascii=False)}\n\n"
     await asyncio.sleep(0.05)
 
-    # ========== 发送步骤1-3（已完成） ==========
-    for step_cfg in steps_config[:3]:
-        yield _create_processing_step(
-            step=step_cfg.step,
-            title=step_cfg.title,
-            description=step_cfg.description,
-            status=step_cfg.status,
-            duration=step_cfg.duration,
-            tenant_id=tenant_id
-        )
-        await asyncio.sleep(0.05)
-
-    # ========== 发送步骤4（运行中） ==========
-    yield _create_processing_step(
-        step=4,
-        title=steps_config[3].title,
-        description=steps_config[3].description,
-        status="running",
-        tenant_id=tenant_id
-    )
-    await asyncio.sleep(0.05)
+    # ========== 动态发送步骤 ==========
+    # 发送除最后一个步骤外的所有步骤（标记为已完成）
+    step_count = len(steps_config)
+    for i, step_cfg in enumerate(steps_config):
+        if i < step_count - 1:
+            # 前面的步骤标记为已完成
+            yield _create_processing_step(
+                step=step_cfg.step,
+                title=step_cfg.title,
+                description=step_cfg.description,
+                status="completed",
+                duration=step_cfg.duration or 100,
+                tenant_id=tenant_id
+            )
+            await asyncio.sleep(0.05)
+        else:
+            # 最后一个步骤标记为运行中（LLM生成中）
+            last_step_number = step_cfg.step
+            yield _create_processing_step(
+                step=last_step_number,
+                title=step_cfg.title,
+                description=step_cfg.description,
+                status="running",
+                tenant_id=tenant_id
+            )
+            await asyncio.sleep(0.05)
+            break  # 开始LLM生成
 
     # ========== 收集LLM输出 ==========
     full_content = ""
     llm_start_time = time.time()
 
-    # 🔧 新增：用于累积和更新步骤4的内容预览
-    step4_content_preview = ""
+    # 用于累积和更新最后步骤的内容预览
+    last_step_content_preview = ""
     last_update_time = time.time()
 
     async for chunk in stream_generator:
         if chunk.type == "content":
             full_content += chunk.content
 
-            # 🔧 新增：实时发送content delta到前端
+            # 实时发送content delta到前端
             content_delta = {
                 "type": "content_delta",
                 "delta": chunk.content,
@@ -2297,19 +2318,19 @@ async def _stream_general_chat_generator(
             }
             yield f"data: {json.dumps(content_delta, ensure_ascii=False)}\n\n"
 
-            # 🔧 新增：定期更新步骤4的描述，显示内容预览
-            step4_content_preview += chunk.content
+            # 定期更新最后步骤的描述，显示内容预览
+            last_step_content_preview += chunk.content
             current_time = time.time()
             if current_time - last_update_time >= 0.1:  # 100ms间隔
                 # 生成内容预览（限制长度）
-                preview_text = step4_content_preview[-150:] if len(step4_content_preview) > 150 else step4_content_preview
+                preview_text = last_step_content_preview[-150:] if len(last_step_content_preview) > 150 else last_step_content_preview
                 # 清理预览文本
                 preview_text = preview_text.replace("\n", " ").strip()
 
                 step_update = {
                     "type": "step_update",
-                    "step": 4,
-                    "description": f"正在生成回复... {len(step4_content_preview)} 字符",
+                    "step": last_step_number,
+                    "description": f"正在生成回复... {len(last_step_content_preview)} 字符",
                     "content_preview": preview_text,
                     "tenant_id": tenant_id
                 }
@@ -2336,37 +2357,20 @@ async def _stream_general_chat_generator(
 
     llm_duration = int((time.time() - llm_start_time) * 1000)
 
-    # ========== 内容生成完成，发送步骤4-6 ==========
+    # ========== 内容生成完成，完成最后一个步骤 ==========
+    # 获取最后一个步骤配置
+    last_step_cfg = steps_config[-1]
     yield _create_processing_step(
-        step=4,
-        title=steps_config[3].title,
-        description="回复内容已生成",
-        status="completed",
-        duration=llm_duration,
-        tenant_id=tenant_id
-    )
-    await asyncio.sleep(0.05)
-
-    yield _create_processing_step(
-        step=5,
-        title="安全与合规检查",
-        description="内容合规性检查通过",
-        status="completed",
-        duration=50,
-        tenant_id=tenant_id
-    )
-    await asyncio.sleep(0.05)
-
-    yield _create_processing_step(
-        step=6,
-        title="优化最终输出",
+        step=last_step_number,
+        title=last_step_cfg.title,
         description="回复已完成",
         status="completed",
-        duration=30,
+        duration=llm_duration,
         content_type="text",
         content_data={"text": full_content},
         tenant_id=tenant_id
     )
+    await asyncio.sleep(0.05)
 
     # ========== 发送完成信号 ==========
     done_event = {"type": "done", "tenant_id": tenant_id}
@@ -2380,7 +2384,8 @@ async def _stream_response_generator(
     original_question: str = "",
     data_source_ids: Optional[List[str]] = None,
     initial_messages: Optional[List[LLMMessage]] = None,
-    schema_info: Optional[dict] = None  # 新增：Schema获取信息
+    schema_info: Optional[dict] = None,  # Schema获取信息
+    question_type: Optional[Any] = None  # 🔧 新增：问题类型，用于决定是否生成图表
 ):
     """
     流式响应生成器（方案B：SQL 代码块检测模式）
@@ -2397,6 +2402,14 @@ async def _stream_response_generator(
     6. 执行SQL查询
     """
     try:
+        # 🔧 导入QuestionType用于判断是否需要图表
+        from src.app.services.processing_steps import QuestionType
+
+        # 🔧 判断是否需要生成图表（SCHEMA_QUERY不需要图表）
+        should_generate_chart = question_type not in [QuestionType.SCHEMA_QUERY]
+
+        logger.info(f"[_stream_response_generator] question_type={question_type.value if question_type else 'None'}, should_generate_chart={should_generate_chart}")
+
         # 收集完整的响应内容
         full_content = ""
         thinking_content = ""
@@ -2917,9 +2930,17 @@ async def _stream_response_generator(
                                         
                                         analysis_directive = ""
                                         supplementary_stats = ""
-                                        
+
+                                        # 🔧 修复：如果问题类型不需要图表（如SCHEMA_QUERY），强制禁止生成图表
+                                        if not should_generate_chart:
+                                            analysis_directive = (
+                                                "🛑 **CONSTRAINT**: Schema查询不需要图表.\n"
+                                                "- **DO NOT** generate any chart.\n"
+                                                "- **DO NOT** explain why you are not generating a chart. Just skip it silently.\n\n"
+                                                "- Focus on listing the tables and their structure clearly.\n"
+                                            )
                                         # 规则 1: 单行数据（聚合结果）-> 禁止画图，但要展示计算过程
-                                        if analysis_row_count <= 1:
+                                        elif analysis_row_count <= 1:
                                             # 🔧 执行补充查询获取统计信息
                                             try:
                                                 # 从SQL中提取表名
@@ -3459,57 +3480,108 @@ async def _stream_response_generator(
 
                         # ========== 🔧 重构：统一图表生成逻辑（循环结束后） ==========
                         # 收集所有成功的SQL结果，一次性调用LLM生成分析和图表（支持多图表）
+                        # 🔧 修复：根据问题类型决定是否生成图表
                         if successful_query_results:
-                            logger.info(f"🔧 开始统一图表生成：共有 {len(successful_query_results)} 个成功的SQL结果")
+                            logger.info(f"🔧 开始统一数据分析和图表生成：共有 {len(successful_query_results)} 个成功的SQL结果, should_generate_chart={should_generate_chart}")
 
-                            # 构建包含所有查询结果的数据摘要
-                            all_results_summary = []
-                            for idx, query_result in enumerate(successful_query_results, 1):
-                                result_data = query_result['result']
-                                data_for_analysis = result_data.get('data', [])[:20]  # 每个结果最多20行
-                                row_count = query_result['row_count']
-                                columns = query_result['columns']
+                            # 🔧 如果不需要图表（如SCHEMA_QUERY），跳过图表生成，直接发送数据
+                            if not should_generate_chart:
+                                logger.info("🔧 跳过图表生成，直接返回查询结果")
+                                # 构建 JSON 数据摘要
+                                all_results_summary = []
+                                for idx, query_result in enumerate(successful_query_results, 1):
+                                    result_data = query_result['result']
+                                    data_for_analysis = result_data.get('data', [])[:20]
+                                    row_count = query_result['row_count']
+                                    columns = query_result['columns']
+                                    serializable_data = _convert_decimal_to_float(data_for_analysis)
 
-                                # 将 Decimal 转换为 float
-                                serializable_data = _convert_decimal_to_float(data_for_analysis)
+                                    result_summary = {
+                                        'query_index': idx,
+                                        'sql': query_result['sql'][:200] + '...' if len(query_result['sql']) > 200 else query_result['sql'],
+                                        'columns': columns,
+                                        'row_count': row_count,
+                                        'data_preview': serializable_data
+                                    }
+                                    all_results_summary.append(result_summary)
 
-                                result_summary = {
-                                    'query_index': idx,
-                                    'sql': query_result['sql'][:200] + '...' if len(query_result['sql']) > 200 else query_result['sql'],
-                                    'columns': columns,
-                                    'row_count': row_count,
-                                    'data_preview': serializable_data
-                                }
-                                all_results_summary.append(result_summary)
+                                # 直接返回数据结果
+                                for idx, query_result in enumerate(successful_query_results, 1):
+                                    result_data = query_result['result']
+                                    table_content_data = {
+                                        "table": {
+                                            "columns": query_result['columns'],
+                                            "rows": result_data.get('data', [])[:50],  # 限制50行
+                                            "row_count": query_result['row_count']
+                                        }
+                                    }
+                                    # 发送表格数据
+                                    table_event = {
+                                        "type": "content_delta",
+                                        "delta": f"\n\n## 查询结果 {idx}/{len(successful_query_results)}\n\n",
+                                        "tenant_id": tenant_id
+                                    }
+                                    yield f"data: {json.dumps(table_event, ensure_ascii=False)}\n\n"
 
-                            # 数据特征分析
-                            total_queries = len(successful_query_results)
-                            total_rows = sum(r['row_count'] for r in successful_query_results)
+                                    # 发送表格内容事件
+                                    table_event = {
+                                        "type": "table_data",
+                                        "data": table_content_data,
+                                        "tenant_id": tenant_id
+                                    }
+                                    yield f"data: {json.dumps(table_event, ensure_ascii=False)}\n\n"
 
-                            # 分析每个结果集的特征
-                            analysis_hints = []
-                            for idx, query_result in enumerate(successful_query_results, 1):
-                                result_data = query_result['result']
-                                data_preview = result_data.get('data', [])[:5]
-                                columns = query_result['columns']
-                                row_count = query_result['row_count']
+                                # 跳过后续的图表生成逻辑
+                                chart_already_generated = True
+                            else:
+                                # 🔧 需要生成图表的情况：构建包含所有查询结果的数据摘要
+                                all_results_summary = []
+                                for idx, query_result in enumerate(successful_query_results, 1):
+                                    result_data = query_result['result']
+                                    data_for_analysis = result_data.get('data', [])[:20]  # 每个结果最多20行
+                                    row_count = query_result['row_count']
+                                    columns = query_result['columns']
 
-                                col_names_str = " ".join([str(c).lower() for c in columns])
-                                has_time_col = any(k in col_names_str for k in ['date', 'time', 'year', 'month', 'day', '日期', '时间', '年', '月'])
+                                    # 将 Decimal 转换为 float
+                                    serializable_data = _convert_decimal_to_float(data_for_analysis)
 
-                                if row_count <= 1:
-                                    analysis_hints.append(f"查询{idx}: 聚合结果（1行），不需要图表")
-                                elif has_time_col and row_count > 1:
-                                    analysis_hints.append(f"查询{idx}: 时间序列数据（{row_count}行），适合折线图")
-                                elif row_count > 1:
-                                    analysis_hints.append(f"查询{idx}: 分类数据（{row_count}行），适合柱状图或饼图")
+                                    result_summary = {
+                                        'query_index': idx,
+                                        'sql': query_result['sql'][:200] + '...' if len(query_result['sql']) > 200 else query_result['sql'],
+                                        'columns': columns,
+                                        'row_count': row_count,
+                                        'data_preview': serializable_data
+                                    }
+                                    all_results_summary.append(result_summary)
 
-                            analysis_hints_text = "\n".join(analysis_hints)
+                                # 数据特征分析
+                                total_queries = len(successful_query_results)
+                                total_rows = sum(r['row_count'] for r in successful_query_results)
 
-                            # 构建多结果分析prompt
-                            multi_result_json = json.dumps(all_results_summary, ensure_ascii=False, indent=2)
+                                # 分析每个结果集的特征
+                                analysis_hints = []
+                                for idx, query_result in enumerate(successful_query_results, 1):
+                                    result_data = query_result['result']
+                                    data_preview = result_data.get('data', [])[:5]
+                                    columns = query_result['columns']
+                                    row_count = query_result['row_count']
 
-                            multi_analysis_prompt = f"""你刚刚执行了 {total_queries} 个SQL查询，所有结果如下：
+                                    col_names_str = " ".join([str(c).lower() for c in columns])
+                                    has_time_col = any(k in col_names_str for k in ['date', 'time', 'year', 'month', 'day', '日期', '时间', '年', '月'])
+
+                                    if row_count <= 1:
+                                        analysis_hints.append(f"查询{idx}: 聚合结果（1行），不需要图表")
+                                    elif has_time_col and row_count > 1:
+                                        analysis_hints.append(f"查询{idx}: 时间序列数据（{row_count}行），适合折线图")
+                                    elif row_count > 1:
+                                        analysis_hints.append(f"查询{idx}: 分类数据（{row_count}行），适合柱状图或饼图")
+
+                                analysis_hints_text = "\n".join(analysis_hints)
+
+                                # 构建多结果分析prompt
+                                multi_result_json = json.dumps(all_results_summary, ensure_ascii=False, indent=2)
+
+                                multi_analysis_prompt = f"""你刚刚执行了 {total_queries} 个SQL查询，所有结果如下：
 
 ```json
 {multi_result_json}
@@ -3549,216 +3621,216 @@ async def _stream_response_generator(
 
 请直接输出分析和图表："""
 
-                            # 构建系统提示
-                            multi_chart_system_prompt = (
-                                "你是专业的数据分析师。你的任务是分析多个SQL查询结果并生成可视化图表。\n\n"
-                                "**核心原则**：\n"
-                                "1. 每个有意义的数据集都应该有自己的图表\n"
-                                "2. 多个数据集 = 多个独立的图表配置\n"
-                                "3. 聚合结果（1行数据）不生成图表\n"
-                                "4. 使用标准ECharts JSON格式，用[CHART_START]...[CHART_END]标记\n"
-                                "5. 禁止使用JavaScript函数\n\n"
-                                "**图表类型选择**：\n"
-                                "- 时间序列 → 折线图 (line)\n"
-                                "- 排名/对比 → 柱状图 (bar)\n"
-                                "- 占比/分布 → 饼图 (pie)"
-                            )
+                                # 构建系统提示
+                                multi_chart_system_prompt = (
+                                    "你是专业的数据分析师。你的任务是分析多个SQL查询结果并生成可视化图表。\n\n"
+                                    "**核心原则**：\n"
+                                    "1. 每个有意义的数据集都应该有自己的图表\n"
+                                    "2. 多个数据集 = 多个独立的图表配置\n"
+                                    "3. 聚合结果（1行数据）不生成图表\n"
+                                    "4. 使用标准ECharts JSON格式，用[CHART_START]...[CHART_END]标记\n"
+                                    "5. 禁止使用JavaScript函数\n\n"
+                                    "**图表类型选择**：\n"
+                                    "- 时间序列 → 折线图 (line)\n"
+                                    "- 排名/对比 → 柱状图 (bar)\n"
+                                    "- 占比/分布 → 饼图 (pie)"
+                                )
 
-                            # 构建消息
-                            multi_analysis_messages = [
-                                LLMMessage(role="system", content=multi_chart_system_prompt),
-                                LLMMessage(role="user", content=original_question),
-                                LLMMessage(role="user", content=multi_analysis_prompt)
-                            ]
+                                # 构建消息
+                                multi_analysis_messages = [
+                                    LLMMessage(role="system", content=multi_chart_system_prompt),
+                                    LLMMessage(role="user", content=original_question),
+                                    LLMMessage(role="user", content=multi_analysis_prompt)
+                                ]
 
-                            # 获取provider实例并调用
-                            provider_instance = llm_service.get_provider(tenant_id, LLMProvider.DEEPSEEK)
-                            if provider_instance:
-                                try:
-                                    logger.info("🔧 开始统一LLM调用：分析数据并生成多图表")
+                                # 获取provider实例并调用
+                                provider_instance = llm_service.get_provider(tenant_id, LLMProvider.DEEPSEEK)
+                                if provider_instance:
+                                    try:
+                                        logger.info("🔧 开始统一LLM调用：分析数据并生成多图表")
 
-                                    # 🔧 流式输出：发送 Step 7/8 的 running 状态
-                                    yield _create_processing_step(
-                                        step=7,
-                                        title="生成数据可视化",
-                                        description="正在分析数据结构...",
-                                        status="running",
-                                        tenant_id=tenant_id
-                                    )
-                                    await asyncio.sleep(0.05)
+                                        # 🔧 流式输出：发送 Step 7/8 的 running 状态
+                                        yield _create_processing_step(
+                                            step=7,
+                                            title="生成数据可视化",
+                                            description="正在分析数据结构...",
+                                            status="running",
+                                            tenant_id=tenant_id
+                                        )
+                                        await asyncio.sleep(0.05)
 
-                                    yield _create_processing_step(
-                                        step=8,
-                                        title="数据分析总结",
-                                        description="正在分析查询结果...",
-                                        status="running",
-                                        tenant_id=tenant_id
-                                    )
-                                    await asyncio.sleep(0.05)
-
-                                    analysis_stream = await provider_instance.chat_completion(
-                                        messages=multi_analysis_messages,
-                                        model=None,
-                                        max_tokens=3000,  # 增加token限制以支持多图表
-                                        temperature=0.7,
-                                        stream=True,
-                                        tools=None
-                                    )
-
-                                    # 🔧 流式输出：收集分析内容并实时发送step_update事件
-                                    analysis_content = ""
-                                    last_step7_update = time.time()
-                                    last_step8_update = time.time()
-                                    step7_phase_idx = 0
-                                    step7_phases = ["正在分析数据结构...", "选择合适的图表类型...", "正在生成图表配置..."]
-                                    chart_detected = False
-
-                                    async for analysis_chunk in analysis_stream:
-                                        if analysis_chunk.type == "content" and analysis_chunk.content:
-                                            analysis_content += analysis_chunk.content
-                                            current_time = time.time()
-
-                                            # Step 7: 多阶段状态更新（每800ms切换阶段）
-                                            if "[CHART_START]" in analysis_content and not chart_detected:
-                                                chart_detected = True
-                                                step_update_event = {
-                                                    "type": "step_update",
-                                                    "step": 7,
-                                                    "description": "正在生成图表配置...",
-                                                    "tenant_id": tenant_id
-                                                }
-                                                yield f"data: {json.dumps(step_update_event, ensure_ascii=False)}\n\n"
-                                            elif not chart_detected and current_time - last_step7_update >= 0.8:
-                                                if step7_phase_idx < 2:
-                                                    step7_phase_idx += 1
-                                                    step_update_event = {
-                                                        "type": "step_update",
-                                                        "step": 7,
-                                                        "description": step7_phases[step7_phase_idx],
-                                                        "tenant_id": tenant_id
-                                                    }
-                                                    yield f"data: {json.dumps(step_update_event, ensure_ascii=False)}\n\n"
-                                                last_step7_update = current_time
-
-                                            # Step 8: 流式打字机效果（每100ms更新预览）
-                                            if current_time - last_step8_update >= 0.1:
-                                                # 提取非图表部分作为分析预览
-                                                clean_preview = re.sub(r'\[CHART_START\].*?\[CHART_END\]', '', analysis_content, flags=re.DOTALL)
-                                                clean_preview = re.sub(r'\n{3,}', '\n\n', clean_preview).strip()
-
-                                                if clean_preview:
-                                                    step8_update_event = {
-                                                        "type": "step_update",
-                                                        "step": 8,
-                                                        "description": f"正在分析... ({len(clean_preview)} 字符)",
-                                                        "content_preview": clean_preview,
-                                                        "streaming": True,
-                                                        "tenant_id": tenant_id
-                                                    }
-                                                    yield f"data: {json.dumps(step8_update_event, ensure_ascii=False)}\n\n"
-                                                last_step8_update = current_time
-
-                                    logger.info(f"🔧 统一LLM调用完成，内容长度: {len(analysis_content)}")
-
-                                    # 提取所有图表配置（支持多个）
-                                    chart_pattern = r'\[CHART_START\](.*?)\[CHART_END\]'
-                                    chart_matches = re.findall(chart_pattern, analysis_content, re.DOTALL)
-
-                                    logger.info(f"🔧 提取到 {len(chart_matches)} 个图表配置")
-
-                                    # 为每个图表生成step=7事件
-                                    for chart_idx, chart_json_str in enumerate(chart_matches, 1):
-                                        try:
-                                            chart_json_str = chart_json_str.strip()
-
-                                            # 移除可能的markdown代码块
-                                            if chart_json_str.startswith('```'):
-                                                lines = chart_json_str.split('\n')
-                                                if lines[0].startswith('```'):
-                                                    lines = lines[1:]
-                                                if lines and lines[-1].strip() == '```':
-                                                    lines = lines[:-1]
-                                                chart_json_str = '\n'.join(lines)
-
-                                            # 移除JavaScript函数
-                                            chart_json_str = re.sub(
-                                                r'"formatter":\s*function\s*\([^)]*\)\s*\{[^}]*(?:\{[^}]*\}[^}]*)*\}',
-                                                '"formatter": "{b}: {c}"',
-                                                chart_json_str
-                                            )
-
-                                            echarts_option = json.loads(chart_json_str.strip())
-                                            logger.info(f"✅ 成功解析图表{chart_idx}: {list(echarts_option.keys())}")
-
-                                            # 发送图表配置事件
-                                            chart_event = {
-                                                "type": "chart_config",
-                                                "data": {"echarts_option": echarts_option, "chart_index": chart_idx},
-                                                "provider": "deepseek",
-                                                "finished": False,
-                                                "tenant_id": tenant_id
-                                            }
-                                            yield f"data: {json.dumps(chart_event, ensure_ascii=False)}\n\n"
-
-                                            # 推断图表类型
-                                            chart_type = "图表"
-                                            series_list = echarts_option.get("series", [])
-                                            if series_list and len(series_list) > 0:
-                                                series_type = series_list[0].get("type", "")
-                                                if series_type:
-                                                    chart_type = {
-                                                        "bar": "柱状图", "line": "折线图", "pie": "饼图",
-                                                        "scatter": "散点图", "tree": "树图"
-                                                    }.get(series_type, series_type)
-
-                                            # 获取图表标题
-                                            chart_title = echarts_option.get("title", {}).get("text", f"图表{chart_idx}")
-
-                                            chart_content_data = {
-                                                "chart": {
-                                                    "echarts_option": echarts_option,
-                                                    "chart_type": chart_type,
-                                                    "chart_index": chart_idx
-                                                }
-                                            }
-
-                                            yield _create_processing_step(
-                                                step=7,
-                                                title=f"生成数据可视化 ({chart_idx}/{len(chart_matches)})",
-                                                description=f"{chart_title} - {chart_type}",
-                                                status="completed",
-                                                duration=int((time.time() - ai_start_time) * 1000 * 0.3 / len(chart_matches)),
-                                                tenant_id=tenant_id,
-                                                content_type="chart",
-                                                content_data=chart_content_data
-                                            )
-
-                                            chart_already_generated = True
-
-                                        except json.JSONDecodeError as e:
-                                            logger.warning(f"解析图表{chart_idx} JSON失败: {e}")
-                                            logger.warning(f"失败的JSON (前200字符): {chart_json_str[:200]}")
-
-                                    # 生成数据分析总结（step=8）
-                                    clean_analysis = re.sub(chart_pattern, '', analysis_content, flags=re.DOTALL).strip()
-                                    clean_analysis = re.sub(r'\n{3,}', '\n\n', clean_analysis)
-
-                                    if clean_analysis:
                                         yield _create_processing_step(
                                             step=8,
                                             title="数据分析总结",
-                                            description="AI对查询结果的分析和解读",
-                                            status="completed",
-                                            duration=int((time.time() - ai_start_time) * 1000 * 0.2),
-                                            tenant_id=tenant_id,
-                                            content_type="text",
-                                            content_data={"text": clean_analysis}
+                                            description="正在分析查询结果...",
+                                            status="running",
+                                            tenant_id=tenant_id
+                                        )
+                                        await asyncio.sleep(0.05)
+
+                                        analysis_stream = await provider_instance.chat_completion(
+                                            messages=multi_analysis_messages,
+                                            model=None,
+                                            max_tokens=3000,  # 增加token限制以支持多图表
+                                            temperature=0.7,
+                                            stream=True,
+                                            tools=None
                                         )
 
-                                except Exception as e:
-                                    logger.error(f"🔧 统一LLM调用失败: {e}")
-                            else:
-                                logger.warning("🔧 无法获取LLM provider实例")
+                                        # 🔧 流式输出：收集分析内容并实时发送step_update事件
+                                        analysis_content = ""
+                                        last_step7_update = time.time()
+                                        last_step8_update = time.time()
+                                        step7_phase_idx = 0
+                                        step7_phases = ["正在分析数据结构...", "选择合适的图表类型...", "正在生成图表配置..."]
+                                        chart_detected = False
+
+                                        async for analysis_chunk in analysis_stream:
+                                            if analysis_chunk.type == "content" and analysis_chunk.content:
+                                                analysis_content += analysis_chunk.content
+                                                current_time = time.time()
+
+                                                # Step 7: 多阶段状态更新（每800ms切换阶段）
+                                                if "[CHART_START]" in analysis_content and not chart_detected:
+                                                    chart_detected = True
+                                                    step_update_event = {
+                                                        "type": "step_update",
+                                                        "step": 7,
+                                                        "description": "正在生成图表配置...",
+                                                        "tenant_id": tenant_id
+                                                    }
+                                                    yield f"data: {json.dumps(step_update_event, ensure_ascii=False)}\n\n"
+                                                elif not chart_detected and current_time - last_step7_update >= 0.8:
+                                                    if step7_phase_idx < 2:
+                                                        step7_phase_idx += 1
+                                                        step_update_event = {
+                                                            "type": "step_update",
+                                                            "step": 7,
+                                                            "description": step7_phases[step7_phase_idx],
+                                                            "tenant_id": tenant_id
+                                                        }
+                                                        yield f"data: {json.dumps(step_update_event, ensure_ascii=False)}\n\n"
+                                                    last_step7_update = current_time
+
+                                                # Step 8: 流式打字机效果（每100ms更新预览）
+                                                if current_time - last_step8_update >= 0.1:
+                                                    # 提取非图表部分作为分析预览
+                                                    clean_preview = re.sub(r'\[CHART_START\].*?\[CHART_END\]', '', analysis_content, flags=re.DOTALL)
+                                                    clean_preview = re.sub(r'\n{3,}', '\n\n', clean_preview).strip()
+
+                                                    if clean_preview:
+                                                        step8_update_event = {
+                                                            "type": "step_update",
+                                                            "step": 8,
+                                                            "description": f"正在分析... ({len(clean_preview)} 字符)",
+                                                            "content_preview": clean_preview,
+                                                            "streaming": True,
+                                                            "tenant_id": tenant_id
+                                                        }
+                                                        yield f"data: {json.dumps(step8_update_event, ensure_ascii=False)}\n\n"
+                                                    last_step8_update = current_time
+
+                                        logger.info(f"🔧 统一LLM调用完成，内容长度: {len(analysis_content)}")
+
+                                        # 提取所有图表配置（支持多个）
+                                        chart_pattern = r'\[CHART_START\](.*?)\[CHART_END\]'
+                                        chart_matches = re.findall(chart_pattern, analysis_content, re.DOTALL)
+
+                                        logger.info(f"🔧 提取到 {len(chart_matches)} 个图表配置")
+
+                                        # 为每个图表生成step=7事件
+                                        for chart_idx, chart_json_str in enumerate(chart_matches, 1):
+                                            try:
+                                                chart_json_str = chart_json_str.strip()
+
+                                                # 移除可能的markdown代码块
+                                                if chart_json_str.startswith('```'):
+                                                    lines = chart_json_str.split('\n')
+                                                    if lines[0].startswith('```'):
+                                                        lines = lines[1:]
+                                                    if lines and lines[-1].strip() == '```':
+                                                        lines = lines[:-1]
+                                                    chart_json_str = '\n'.join(lines)
+
+                                                # 移除JavaScript函数
+                                                chart_json_str = re.sub(
+                                                    r'"formatter":\s*function\s*\([^)]*\)\s*\{[^}]*(?:\{[^}]*\}[^}]*)*\}',
+                                                    '"formatter": "{b}: {c}"',
+                                                    chart_json_str
+                                                )
+
+                                                echarts_option = json.loads(chart_json_str.strip())
+                                                logger.info(f"✅ 成功解析图表{chart_idx}: {list(echarts_option.keys())}")
+
+                                                # 发送图表配置事件
+                                                chart_event = {
+                                                    "type": "chart_config",
+                                                    "data": {"echarts_option": echarts_option, "chart_index": chart_idx},
+                                                    "provider": "deepseek",
+                                                    "finished": False,
+                                                    "tenant_id": tenant_id
+                                                }
+                                                yield f"data: {json.dumps(chart_event, ensure_ascii=False)}\n\n"
+
+                                                # 推断图表类型
+                                                chart_type = "图表"
+                                                series_list = echarts_option.get("series", [])
+                                                if series_list and len(series_list) > 0:
+                                                    series_type = series_list[0].get("type", "")
+                                                    if series_type:
+                                                        chart_type = {
+                                                            "bar": "柱状图", "line": "折线图", "pie": "饼图",
+                                                            "scatter": "散点图", "tree": "树图"
+                                                        }.get(series_type, series_type)
+
+                                                # 获取图表标题
+                                                chart_title = echarts_option.get("title", {}).get("text", f"图表{chart_idx}")
+
+                                                chart_content_data = {
+                                                    "chart": {
+                                                        "echarts_option": echarts_option,
+                                                        "chart_type": chart_type,
+                                                        "chart_index": chart_idx
+                                                    }
+                                                }
+
+                                                yield _create_processing_step(
+                                                    step=7,
+                                                    title=f"生成数据可视化 ({chart_idx}/{len(chart_matches)})",
+                                                    description=f"{chart_title} - {chart_type}",
+                                                    status="completed",
+                                                    duration=int((time.time() - ai_start_time) * 1000 * 0.3 / len(chart_matches)),
+                                                    tenant_id=tenant_id,
+                                                    content_type="chart",
+                                                    content_data=chart_content_data
+                                                )
+
+                                                chart_already_generated = True
+
+                                            except json.JSONDecodeError as e:
+                                                logger.warning(f"解析图表{chart_idx} JSON失败: {e}")
+                                                logger.warning(f"失败的JSON (前200字符): {chart_json_str[:200]}")
+
+                                        # 生成数据分析总结（step=8）
+                                        clean_analysis = re.sub(chart_pattern, '', analysis_content, flags=re.DOTALL).strip()
+                                        clean_analysis = re.sub(r'\n{3,}', '\n\n', clean_analysis)
+
+                                        if clean_analysis:
+                                            yield _create_processing_step(
+                                                step=8,
+                                                title="数据分析总结",
+                                                description="AI对查询结果的分析和解读",
+                                                status="completed",
+                                                duration=int((time.time() - ai_start_time) * 1000 * 0.2),
+                                                tenant_id=tenant_id,
+                                                content_type="text",
+                                                content_data={"text": clean_analysis}
+                                            )
+
+                                    except Exception as e:
+                                        logger.error(f"🔧 统一LLM调用失败: {e}")
+                                else:
+                                    logger.warning("🔧 无法获取LLM provider实例")
 
                     else:
                         logger.warning("没有找到活跃的数据源，无法执行SQL")
@@ -4056,12 +4128,29 @@ async def chat_completion(
             
             logger.info(f"[STREAM] Stream generator created, starting response")
 
+            # ========== 🔧 修复：先分类问题，再决定使用哪个生成器 ==========
+            # 导入问题分类器
+            from src.app.services.processing_steps import classify_question, QuestionType
+
             # 判断是否为Agent模式（有数据源）
             is_agent_mode = request.data_source_ids and len(request.data_source_ids) > 0
 
-            if is_agent_mode:
-                # Agent SQL查询模式：8步流程
-                logger.info(f"[STREAM] Using Agent mode (8-step SQL query flow)")
+            # 🔧 关键修复：先分类问题，再决定使用哪个生成器
+            # 即使有数据源，如果是简单对话也应使用动态步骤流程
+            question_type = classify_question(original_question, has_data_source=is_agent_mode)
+            logger.info(f"[STREAM] Question classified as: {question_type.value}, is_agent_mode={is_agent_mode}")
+
+            # 判断是否需要使用SQL流程（只有真正需要查询数据时才使用）
+            # 🔧 修复：SCHEMA_QUERY不需要SQL流程，Agent直接回答schema信息即可
+            needs_sql_flow = question_type in [
+                QuestionType.DATA_QUERY,
+                QuestionType.VISUALIZATION
+                # 🔧 SCHEMA_QUERY已移除 - schema查询不需要SQL，直接让Agent回答
+            ] and is_agent_mode
+
+            if needs_sql_flow:
+                # Agent SQL查询模式：6-8步流程（仅在真正需要数据查询时使用）
+                logger.info(f"[STREAM] Using Agent SQL mode for data query, question_type={question_type.value}")
                 return StreamingResponse(
                     _stream_response_generator(
                         response_generator,
@@ -4070,7 +4159,8 @@ async def chat_completion(
                         original_question,
                         request.data_source_ids,
                         initial_messages=messages,  # 传递初始消息历史
-                        schema_info=schema_info  # 传递Schema获取信息
+                        schema_info=schema_info,  # 传递Schema获取信息
+                        question_type=question_type  # 🔧 传递问题类型
                     ),
                     media_type="text/event-stream",
                     headers={
@@ -4081,13 +4171,15 @@ async def chat_completion(
                     }
                 )
             else:
-                # 普通对话模式：6步流程
-                logger.info(f"[STREAM] Using General Chat mode (6-step reasoning flow)")
+                # 🔧 修复：普通对话模式（包括简单问候）使用动态步骤流程
+                # 即使有数据源，如果是简单对话也走这里
+                logger.info(f"[STREAM] Using General Chat mode (dynamic steps: {question_type.value})")
                 return StreamingResponse(
                     _stream_general_chat_generator(
                         response_generator,
                         tenant_id,
-                        original_question
+                        original_question,
+                        has_data_source=is_agent_mode  # 传递实际的数据源状态
                     ),
                     media_type="text/event-stream",
                     headers={

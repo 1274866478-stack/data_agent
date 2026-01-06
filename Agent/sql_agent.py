@@ -91,6 +91,14 @@ from terminal_viz import render_response
 from data_transformer import sql_result_to_echarts_data, sql_result_to_mcp_echarts_data
 from chart_service import ChartRequest, generate_chart_simple, ChartResponse
 
+# 🔍 错误追踪模块（质量保证）
+try:
+    from error_tracker import error_tracker, log_agent_error, ErrorCategory
+    ERROR_TRACKING_ENABLED = True
+except ImportError:
+    ERROR_TRACKING_ENABLED = False
+    print("⚠️  警告: 错误追踪模块未启用（error_tracker.py不可用）")
+
 # 🔥 强制导入文件数据源工具（多种路径尝试）
 _inspect_file_tool = None
 _analyze_dataframe_tool = None
@@ -1050,6 +1058,144 @@ async def run_agent(question: str, thread_id: str = "1", verbose: bool = True, d
         print(f"   - 图表标题: {viz_response.chart.title or '无'}")
     
     return viz_response
+
+
+# ===============================================
+# 🔍 带错误追踪的包装函数（质量保证）
+# ===============================================
+
+async def run_agent_with_tracking(
+    question: str,
+    thread_id: str = "1",
+    verbose: bool = True,
+    db_type: str = "postgresql",
+    context: Optional[Dict[str, Any]] = None
+) -> VisualizationResponse:
+    """
+    带错误追踪的run_agent包装函数
+
+    在原有run_agent基础上添加：
+    - 性能监控（执行时间）
+    - 错误自动记录和分类
+    - 成功率统计
+    - 失败案例收集
+
+    Args:
+        question: 用户问题
+        thread_id: 会话ID
+        verbose: 是否打印详细过程
+        db_type: 数据库类型
+        context: 额外上下文信息（用户ID、租户ID等）
+
+    Returns:
+        VisualizationResponse: 与run_agent相同的返回值
+    """
+    import time
+
+    if not ERROR_TRACKING_ENABLED:
+        # 如果错误追踪未启用，直接调用原函数
+        return await run_agent(question, thread_id, verbose, db_type)
+
+    start_time = time.time()
+    response = None
+
+    try:
+        # 调用原始run_agent函数
+        response = await run_agent(question, thread_id, verbose, db_type)
+
+        # 记录成功
+        elapsed = time.time() - start_time
+        error_tracker.log_success(
+            question=question,
+            response=response.answer[:500] if response.answer else "无回复",
+            context={
+                **(context or {}),
+                "thread_id": thread_id,
+                "db_type": db_type,
+                "sql": response.sql[:200] if response.sql else None,
+                "chart_type": response.chart.chart_type.value if response.chart else None,
+            },
+            execution_time=elapsed
+        )
+
+        return response
+
+    except Exception as e:
+        # 记录错误
+        elapsed = time.time() - start_time
+
+        # 自动推断错误类别
+        error_category = _categorize_error(e, question)
+
+        log_agent_error(
+            question=question,
+            error=e,
+            category=error_category,
+            context={
+                **(context or {}),
+                "thread_id": thread_id,
+                "db_type": db_type,
+                "execution_time": elapsed,
+            }
+        )
+
+        # 重新抛出异常（保持原有行为）
+        raise
+
+
+def _categorize_error(error: Exception, question: str) -> ErrorCategory:
+    """
+    根据错误类型和用户问题自动分类错误
+
+    Args:
+        error: 异常对象
+        question: 用户问题
+
+    Returns:
+        ErrorCategory: 错误类别
+    """
+    error_str = str(error).lower()
+    error_type = type(error).__name__
+
+    # 危险操作检测
+    dangerous_keywords = ["drop", "delete", "update", "insert", "truncate", "alter"]
+    if any(kw in question.lower() for kw in dangerous_keywords):
+        return ErrorCategory.DANGEROUS_OPERATION
+
+    # SQL注入尝试
+    if "injection" in error_str or "malicious" in error_str:
+        return ErrorCategory.SQL_INJECTION_ATTEMPT
+
+    # 数据库连接问题
+    if "connection" in error_str or "connect" in error_str or "timeout" in error_str:
+        return ErrorCategory.DATABASE_CONNECTION
+
+    # LLM API错误
+    if "api" in error_str or "openai" in error_str or "deepseek" in error_str:
+        return ErrorCategory.LLM_API_ERROR
+
+    # Schema不存在
+    if "not found" in error_str or "does not exist" in error_str or "unknown" in error_str:
+        return ErrorCategory.SCHEMA_NOT_FOUND
+
+    # 空结果
+    if "empty" in error_str or "no data" in error_str or "no result" in error_str:
+        return ErrorCategory.EMPTY_RESULT
+
+    # 数据类型不匹配
+    if error_type in ["ValueError", "TypeError"] or "type" in error_str:
+        return ErrorCategory.DATA_TYPE_MISMATCH
+
+    # MCP工具失败
+    if "mcp" in error_str or "tool" in error_str:
+        return ErrorCategory.MCP_TOOL_FAILURE
+
+    # 模糊问题
+    if len(question.strip()) < 5:
+        return ErrorCategory.AMBIGUOUS_QUERY
+
+    # 默认为未知错误
+    return ErrorCategory.UNKNOWN
 
 
 async def interactive_mode():
