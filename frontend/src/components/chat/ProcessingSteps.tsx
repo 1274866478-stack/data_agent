@@ -85,6 +85,10 @@ function getStepIcon(step: number, title: string, status: ProcessingStep['status
     return <XCircle className={cn(iconClass, 'text-red-500')} />
   }
   if (status === 'completed') {
+    // 🔧 新增：步骤 0 特殊处理（理解问题/思考规划阶段）
+    if (step === 0) {
+      return <Brain className={cn(iconClass, 'text-green-500')} />
+    }
     // 智能匹配：基于标题关键词（优先级最高，支持不同场景）
     // 意图理解类
     if (title.includes('意图') || title.includes('理解') || title.includes('用户问题')) {
@@ -135,8 +139,9 @@ function getStepIcon(step: number, title: string, status: ProcessingStep['status
       return <Database className={cn(iconClass, 'text-green-500')} />
     }
 
-    // 回退到步骤编号映射（8步Agent SQL流程）
+    // 回退到步骤编号映射（0-8步Agent SQL流程）
     switch (step) {
+      case 0: return <Brain className={cn(iconClass, 'text-green-500')} />  // 🔧 新增：理解问题/思考规划
       case 1: return <MessageSquare className={cn(iconClass, 'text-green-500')} />
       case 2: return <TableProperties className={cn(iconClass, 'text-green-500')} />
       case 3: return <Wand2 className={cn(iconClass, 'text-green-500')} />
@@ -173,7 +178,48 @@ function formatDuration(ms?: number) {
   return `${(ms / 1000).toFixed(2)}s`
 }
 
-// 渲染SQL代码块
+// 渲染SQL代码块（可折叠版本）
+interface SQLCodeRendererProps {
+  sql: string
+  defaultExpanded?: boolean
+}
+
+function SQLCodeRenderer({ sql, defaultExpanded = false }: SQLCodeRendererProps) {
+  const [isExpanded, setIsExpanded] = React.useState(defaultExpanded)
+
+  // 计算SQL行数
+  const lineCount = sql.split('\n').length
+  const charCount = sql.length
+
+  return (
+    <div className="mt-2 rounded-md bg-gray-900 overflow-hidden">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center justify-between px-3 py-1.5 bg-gray-800 border-b border-gray-700 hover:bg-gray-700 transition-colors"
+      >
+        <span className="text-xs font-medium text-gray-300 flex items-center gap-2">
+          <Code2 className="w-3.5 h-3.5" />
+          SQL
+          <span className="text-gray-500 font-normal">
+            ({lineCount} 行, {charCount} 字符)
+          </span>
+        </span>
+        {isExpanded ? (
+          <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
+        ) : (
+          <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+        )}
+      </button>
+      {isExpanded && (
+        <pre className="p-3 overflow-x-auto max-h-64 overflow-y-auto">
+          <code className="text-xs text-green-400 font-mono">{sql}</code>
+        </pre>
+      )}
+    </div>
+  )
+}
+
+// 渲染SQL代码块（简单版本，用于非步骤4）
 function renderSQLCode(sql: string) {
   return (
     <div className="mt-2 rounded-md bg-gray-900 overflow-hidden">
@@ -324,6 +370,10 @@ function renderStepContent(step: ProcessingStep) {
   switch (step.content_type) {
     case 'sql':
       if (step.content_data.sql) {
+        // 步骤4（SQL生成）使用可折叠版本
+        if (step.step === 4) {
+          return <SQLCodeRenderer sql={step.content_data.sql} defaultExpanded={false} />
+        }
         return renderSQLCode(step.content_data.sql)
       }
       break
@@ -422,9 +472,16 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
       {/* 步骤列表 */}
       {isExpanded && (
         <div className="px-3 pb-3 space-y-2">
-          {steps.map((step, index) => (
+          {steps.map((step, index) => {
+            // 🔧 重构：支持多图表 - 使用 step号 + chart_index 作为唯一key
+            const chartIndex = step.content_data?.chart?.chart_index
+            const uniqueKey = chartIndex !== undefined
+              ? `step-${step.step}-chart-${chartIndex}`
+              : `step-${step.step || index}`
+
+            return (
             <div
-              key={step.step || index}
+              key={uniqueKey}
               className={cn(
                 'rounded-md border p-2 transition-all duration-300',
                 getStatusColor(step.status)
@@ -461,15 +518,24 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
                     </p>
                   )}
 
-                  {/* 🔧 新增：实时内容预览（当步骤正在运行时） */}
+                  {/* 🔧 实时内容预览（当步骤正在运行时），支持打字机光标效果 */}
                   {step.status === 'running' && step.content_preview && (
                     <div className="mt-2 p-2 rounded-md bg-blue-50 border border-blue-200">
                       <div className="flex items-center gap-1.5 mb-1">
                         <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
-                        <span className="text-xs font-medium text-blue-700">正在生成...</span>
+                        <span className="text-xs font-medium text-blue-700">
+                          {step.step === 8 ? '正在生成分析...' : '正在生成...'}
+                        </span>
                       </div>
-                      <div className="text-xs text-gray-700 font-mono whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
+                      <div className={cn(
+                        "text-xs text-gray-700 whitespace-pre-wrap break-words max-h-48 overflow-y-auto",
+                        step.step === 8 ? "font-normal leading-relaxed" : "font-mono"
+                      )}>
                         {step.content_preview}
+                        {/* 🔧 打字机光标效果（仅在流式输出时显示） */}
+                        {step.streaming && (
+                          <span className="inline-block w-0.5 h-4 bg-blue-500 animate-pulse ml-0.5 align-middle" />
+                        )}
                       </div>
                     </div>
                   )}
@@ -491,7 +557,7 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
                 </div>
               </div>
             </div>
-          ))}
+          )})}  {/* 🔧 闭合 map 回调函数的 return 和函数体 */}
         </div>
       )}
     </div>

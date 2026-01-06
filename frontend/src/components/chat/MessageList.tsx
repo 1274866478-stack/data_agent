@@ -214,24 +214,50 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
               'flex-1 max-w-[80%]',
               message.role === 'user' ? 'flex-col items-end' : 'flex-col items-start'
             )}>
-              <Card className={cn(
-                'inline-block w-full',
-                message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-100'
-              )}>
-                <CardContent className="p-3">
-                  <div className="message-container">
-                    {/* 渲染消息内容 */}
-                    {message.role === 'user' ? (
-                      <p className="text-base whitespace-pre-wrap">{message.content || ''}</p>
-                    ) : (
-                      // AI消息：所有内容在 ProcessingSteps 中展示，此处只显示流式光标
-                      message.status === 'sending' && (
-                        <span className="inline-block w-2 h-5 ml-1 bg-gray-600 animate-pulse" />
-                      )
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+              {/* 🔧 重构：AI 消息有 processing_steps 且内容为空时，不显示气泡卡片 */}
+              {(() => {
+                const hasProcessingSteps = message.metadata?.processing_steps && message.metadata.processing_steps.length > 0
+                const hasContent = message.content && message.content.trim().length > 0
+                const isAssistantWithSteps = message.role === 'assistant' && hasProcessingSteps && !hasContent
+
+                // AI 消息有步骤但无内容时，跳过气泡卡片渲染
+                if (isAssistantWithSteps && message.status !== 'sending') {
+                  return null
+                }
+
+                // 用户消息或有内容的 AI 消息，显示气泡卡片
+                if (message.role === 'user' || hasContent || message.status === 'sending') {
+                  return (
+                    <Card className={cn(
+                      'inline-block w-full',
+                      message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-100'
+                    )}>
+                      <CardContent className="p-3">
+                        <div className="message-container">
+                          {/* 渲染消息内容 */}
+                          {message.role === 'user' ? (
+                            <p className="text-base whitespace-pre-wrap">{message.content || ''}</p>
+                          ) : (
+                            // AI消息：所有内容在 ProcessingSteps 中展示
+                            <>
+                              {/* 有内容时显示内容 */}
+                              {hasContent && (
+                                <p className="text-base whitespace-pre-wrap">{message.content}</p>
+                              )}
+                              {/* 生成中时显示流式光标 */}
+                              {message.status === 'sending' && !hasProcessingSteps && (
+                                <span className="inline-block w-2 h-5 ml-1 bg-gray-600 animate-pulse" />
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )
+                }
+
+                return null
+              })()}
 
               {/* 显示AI推理步骤（包含SQL、表格、图表，仅对 assistant 消息显示） */}
               {message.role === 'assistant' && message.metadata?.processing_steps &&

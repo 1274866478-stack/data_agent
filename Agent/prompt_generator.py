@@ -85,6 +85,30 @@ def generate_database_aware_system_prompt(db_type: str, base_system_prompt: str 
         db_specific_instructions += """- ❌ PostgreSQL TO_CHAR()（使用 strftime 或 EXTRACT 替代）
 - ❌ MySQL DATE_FORMAT()（使用 strftime 或 EXTRACT 替代）
 - ❌ Oracle TO_DATE() → 应使用 TRY_CAST(str AS DATE) 或 str::date
+
+### 🚫🚫🚫 DuckDB 列类型约束（极其重要！）
+
+**日期/时间戳列禁止使用字符串函数**：
+- ❌ TIMESTAMP/DATE 列禁用: `SUBSTRING()`, `LEFT()`, `RIGHT()`, `CONCAT()`
+- ✅ TIMESTAMP/DATE 列必须使用: `EXTRACT()`, `strftime()`, `DATE_TRUNC()`, `CAST()`
+
+**错误示例**（会报 "No function matches" 错误）：
+```sql
+-- ❌ 错误: SUBSTRING 不能用于 TIMESTAMP 类型
+SELECT SUBSTRING(date_column, 1, 7) FROM table;
+```
+
+**正确示例**：
+```sql
+-- ✅ 使用 strftime 提取年月
+SELECT strftime(date_column, '%Y-%m') FROM table;
+
+-- ✅ 使用 EXTRACT 提取年份
+SELECT EXTRACT(YEAR FROM date_column) FROM table;
+
+-- ✅ 如需字符串操作，先转换类型
+SELECT SUBSTRING(CAST(date_column AS VARCHAR), 1, 7) FROM table;
+```
 """
     else:  # PostgreSQL
         db_specific_instructions += """- ❌ MySQL 专属函数: DATE_FORMAT(), YEAR(), MONTH()
@@ -345,6 +369,18 @@ def generate_sql_fix_prompt_with_db_type(
 - ❌ TO_DATE(str, 'format') → ✅ TRY_CAST(str AS DATE) 或 str::date
 - ❌ TO_CHAR(date, 'YYYY') → ✅ EXTRACT(YEAR FROM date) 或 strftime(date, '%Y')
 - ❌ DATE_TRUNC 仍然可用，或使用 strftime(date, '%Y-%m-01')
+
+### 🔴🔴🔴 DuckDB 类型不匹配修复指南（最常见错误！）
+
+**如果错误包含 "No function matches" 或 "argument types"：**
+这表示你对日期/时间戳列使用了字符串函数！
+
+**修复步骤**：
+1. 找到 SQL 中对 TIMESTAMP/DATE 列使用的 SUBSTRING、LEFT、RIGHT
+2. 替换为日期函数：
+   - `SUBSTRING(date_col, 1, 7)` → `strftime(date_col, '%Y-%m')`
+   - `SUBSTRING(date_col, 1, 4)` → `CAST(EXTRACT(YEAR FROM date_col) AS VARCHAR)`
+3. 如确需字符串操作，先转换：`SUBSTRING(CAST(date_col AS VARCHAR), 1, 7)`
 """
     else:  # PostgreSQL
         prompt += """

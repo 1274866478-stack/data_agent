@@ -106,9 +106,12 @@ class SQLErrorMemoryService:
         ]):
             return SQLErrorType.SYNTAX_ERROR
 
-        # 类型不匹配
+        # 类型不匹配 (包含 DuckDB Binder Error)
         if any(pattern in error_lower for pattern in [
-            'type', 'cast', 'conversion', 'integer', 'text', 'cannot be cast'
+            'type', 'cast', 'conversion', 'integer', 'text', 'cannot be cast',
+            # DuckDB 特有的类型错误模式
+            'no function matches', 'argument types', 'binder error',
+            'cannot be applied to', 'incompatible types'
         ]):
             return SQLErrorType.TYPE_MISMATCH
 

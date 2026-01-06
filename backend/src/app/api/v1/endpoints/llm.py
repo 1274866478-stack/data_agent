@@ -1368,10 +1368,11 @@ async def _fix_sql_with_ai(
     error_message: str,
     schema_context: str,
     original_question: str,
-    db_type: str = "postgresql"  # 新增：数据库类型参数
+    db_type: str = "postgresql",  # 数据库类型参数
+    tenant_id: str = "default_tenant"  # 租户ID，用于llm_service
 ) -> Optional[str]:
     """
-    使用AI修复失败的SQL查询
+    使用AI修复失败的SQL查询（优先使用DeepSeek）
 
     Args:
         original_sql: 原始SQL查询
@@ -1379,6 +1380,7 @@ async def _fix_sql_with_ai(
         schema_context: 数据库schema上下文
         original_question: 用户原始问题
         db_type: 数据库类型（postgresql, mysql, sqlite, xlsx, csv等）
+        tenant_id: 租户ID
 
     Returns:
         修复后的SQL，如果无法修复则返回None
@@ -1411,22 +1413,25 @@ async def _fix_sql_with_ai(
 
         # 更新 system prompt 以反映数据库类型
         system_content = f"你是一个专业的SQL修复专家，擅长根据错误信息和schema修复{db_type.upper()}数据库的SQL查询。"
+
+        # 使用 LLMMessage 格式，通过 llm_service 调用（优先使用 DeepSeek）
         messages = [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": fix_prompt}
+            LLMMessage(role="system", content=system_content),
+            LLMMessage(role="user", content=fix_prompt)
         ]
 
-        # 调用智谱AI修复SQL（跳过安全检查，因为这是内部调用）
-        response = await zhipu_service.chat_completion(
+        # 调用 llm_service 修复SQL（自动优先使用 DeepSeek，回退到 Zhipu）
+        logger.info(f"使用 llm_service 修复SQL (tenant_id={tenant_id})")
+        response = await llm_service.chat_completion(
+            tenant_id=tenant_id,
             messages=messages,
             max_tokens=1000,
             temperature=0.1,  # 低温度确保准确性
-            stream=False,
-            skip_security_check=True  # 内部SQL修复调用，跳过安全检查
+            stream=False
         )
 
-        if response and response.get("content"):
-            fixed_sql = response["content"].strip()
+        if response and response.content:
+            fixed_sql = response.content.strip()
 
             # 清理返回的SQL
             # 移除可能的markdown代码块标记
@@ -1877,7 +1882,8 @@ async def _execute_sql_if_needed(
                             error_message=last_error,
                             schema_context=schema_context,
                             original_question=original_question,
-                            db_type=data_source.db_type  # 传递数据库类型
+                            db_type=data_source.db_type,  # 传递数据库类型
+                            tenant_id=tenant_id  # 传递租户ID用于llm_service
                         )
 
                         if fixed_sql:
@@ -2564,6 +2570,9 @@ async def _stream_response_generator(
                     content_data=sql_content_data
                 )
 
+                # 🔧 修复：在外层初始化图表生成标志，确保fallback路径可以访问
+                chart_already_generated = False
+
                 if sql_matches:
                     # ========== Step 5: 提取SQL语句 ==========
                     yield _create_processing_step(
@@ -2661,24 +2670,68 @@ async def _stream_response_generator(
 
                         # 执行每个SQL查询（带智能重试）
                         total_rows = 0
+                        # 🔧 修复：收集所有SQL执行结果，只在全部失败时显示错误
+                        all_sql_results = []  # 存储每个SQL的执行结果 {'success': bool, 'sql': str, 'result': dict, 'error': str}
+                        any_sql_success = False  # 标记是否有任何SQL成功
+                        # 🔧 重构：收集所有成功的SQL结果，用于循环结束后统一生成图表
+                        successful_query_results = []  # 存储成功的查询结果 [{'sql': str, 'result': dict, 'columns': list}]
+
+                        # 🔧 新增：第6步流式输出 - 用于记录执行进度
+                        step6_query_index = 0
+                        step6_total_queries = len(sql_matches)
+
                         for sql_query in sql_matches:
                             current_sql = sql_query.strip()
                             retry_count = 0
                             max_retries = 2
                             last_error = None
                             execution_success = False
+                            step6_query_index += 1
 
                             while retry_count <= max_retries and not execution_success:
                                 try:
+                                    # 🔧 流式输出：正在验证SQL语句
+                                    step6_update = {
+                                        "type": "step_update",
+                                        "step": 6,
+                                        "description": f"正在验证SQL语句 ({step6_query_index}/{step6_total_queries})...",
+                                        "content_preview": current_sql[:100] + ("..." if len(current_sql) > 100 else ""),
+                                        "streaming": True,
+                                        "tenant_id": tenant_id
+                                    }
+                                    yield f"data: {json.dumps(step6_update, ensure_ascii=False)}\n\n"
+
                                     # 安全检查：只允许SELECT查询（包括WITH...SELECT的CTE查询）
                                     # 使用统一的注释去除和检查函数
                                     sql_for_check, is_select, debug_msg = _strip_sql_comments_and_check_select(current_sql)
                                     logger.info(f"[流式SQL检测] {debug_msg}")
-                                    
+
                                     if not is_select:
                                         logger.warning(f"跳过非SELECT查询: {current_sql[:100]}")
                                         logger.warning(f"检测详情: {debug_msg}")
                                         break
+
+                                    # 🔧 流式输出：正在建立数据库连接
+                                    step6_update = {
+                                        "type": "step_update",
+                                        "step": 6,
+                                        "description": f"正在连接 {data_source.name}...",
+                                        "content_preview": f"数据源类型: {data_source.db_type}",
+                                        "streaming": True,
+                                        "tenant_id": tenant_id
+                                    }
+                                    yield f"data: {json.dumps(step6_update, ensure_ascii=False)}\n\n"
+
+                                    # 🔧 流式输出：正在执行查询
+                                    step6_update = {
+                                        "type": "step_update",
+                                        "step": 6,
+                                        "description": f"正在执行查询 ({step6_query_index}/{step6_total_queries})...",
+                                        "content_preview": f"执行 {data_source.db_type.upper()} 查询中...",
+                                        "streaming": True,
+                                        "tenant_id": tenant_id
+                                    }
+                                    yield f"data: {json.dumps(step6_update, ensure_ascii=False)}\n\n"
 
                                     # 根据数据源类型选择执行方式
                                     if data_source.db_type in ["xlsx", "xls", "csv"]:
@@ -2697,7 +2750,7 @@ async def _stream_response_generator(
                                         # 预处理：去除AI可能错误添加的数据库名前缀
                                         if data_source.database_name:
                                             current_sql = _remove_database_name_prefix(current_sql, data_source.database_name)
-                                        
+
                                         adapter = PostgreSQLAdapter(connection_string)
                                         try:
                                             await adapter.connect()
@@ -2710,6 +2763,18 @@ async def _stream_response_generator(
                                             }
                                         finally:
                                             await adapter.disconnect()
+
+                                    # 🔧 流式输出：正在处理结果集
+                                    row_count_preview = result.get('row_count', 0)
+                                    step6_update = {
+                                        "type": "step_update",
+                                        "step": 6,
+                                        "description": f"正在处理结果集...",
+                                        "content_preview": f"已获取 {row_count_preview} 行数据，正在格式化...",
+                                        "streaming": True,
+                                        "tenant_id": tenant_id
+                                    }
+                                    yield f"data: {json.dumps(step6_update, ensure_ascii=False)}\n\n"
 
                                     # 格式化结果 - 简洁版
                                     row_count = result.get('row_count', 0)
@@ -2778,6 +2843,15 @@ async def _stream_response_generator(
                                     logger.info(f"SQL查询执行成功，返回 {result.get('row_count', 0)} 行")
                                     total_rows += row_count
                                     execution_success = True
+                                    any_sql_success = True  # 🔧 标记有SQL成功执行
+
+                                    # 🔧 重构：收集成功的SQL结果，用于后续统一生成图表
+                                    successful_query_results.append({
+                                        'sql': current_sql,
+                                        'result': result,
+                                        'columns': result.get('columns', []),
+                                        'row_count': row_count
+                                    })
 
                                     # ========== Step 6完成: 执行SQL查询 ==========
                                     # 准备表格数据的content_data
@@ -2804,9 +2878,11 @@ async def _stream_response_generator(
                                         content_type="table" if table_content_data else None,
                                         content_data=table_content_data
                                     )
-                                    
-                                    # 🔧 方案B增强：二次LLM调用，分析数据并生成图表
-                                    if execution_success and result.get('data'):
+
+                                    # 🔧 重构：二次LLM调用移到循环结束后统一处理
+                                    # 这里不再做任何处理，等待所有SQL执行完毕后统一生成图表
+                                    # 旧代码（已废弃）：只对第一个成功的SQL生成图表
+                                    if False:  # 🔧 禁用循环内的二次LLM调用
                                         logger.info("开始二次LLM调用：分析数据并生成图表")
                                         
                                         # --- 🧠 数据特征分析与决策注入 ---
@@ -3190,6 +3266,8 @@ async def _stream_response_generator(
                                                             content_type="chart",
                                                             content_data=chart_content_data
                                                         )
+                                                        # 🔧 修复：标记图表已生成，避免fallback路径重复
+                                                        chart_already_generated = True
 
                                                         # ========== Step 8: 数据分析总结 ==========
                                                         # 移除图表标记，提取纯文本分析
@@ -3233,64 +3311,455 @@ async def _stream_response_generator(
 
                                             except Exception as e:
                                                 logger.error(f"二次LLM调用失败: {e}")
+                                    elif execution_success and result.get('data') and chart_already_generated:
+                                        # 🔧 修复：跳过后续SQL的图表生成，避免多个图表叠加
+                                        logger.info("🔧 跳过此SQL的图表生成，图表已通过之前的SQL结果生成")
 
                                 except Exception as e:
                                     last_error = str(e)
                                     logger.error(f"执行SQL查询失败 (尝试 {retry_count + 1}/{max_retries + 1}): {e}")
 
+                                    # 🔧 流式输出：SQL执行失败通知
+                                    error_preview = str(e)[:100] + ("..." if len(str(e)) > 100 else "")
+                                    step6_error = {
+                                        "type": "step_update",
+                                        "step": 6,
+                                        "description": f"❌ SQL执行失败 (尝试 {retry_count + 1}/{max_retries + 1})",
+                                        "content_preview": f"错误: {error_preview}",
+                                        "streaming": True,
+                                        "tenant_id": tenant_id
+                                    }
+                                    yield f"data: {json.dumps(step6_error, ensure_ascii=False)}\n\n"
+
                                     # 如果还有重试机会，尝试用AI修复SQL
                                     if retry_count < max_retries:
+                                        # 🔧 流式输出：正在使用AI修复SQL
+                                        step6_fixing = {
+                                            "type": "step_update",
+                                            "step": 6,
+                                            "description": f"🔧 正在使用AI修复SQL... (第 {retry_count + 1} 次重试)",
+                                            "content_preview": "分析错误原因并生成修复方案",
+                                            "streaming": True,
+                                            "tenant_id": tenant_id
+                                        }
+                                        yield f"data: {json.dumps(step6_fixing, ensure_ascii=False)}\n\n"
+
                                         logger.info("尝试使用AI修复SQL...")
                                         fixed_sql = await _fix_sql_with_ai(
                                             original_sql=current_sql,
                                             error_message=last_error,
                                             schema_context=schema_context,
                                             original_question=original_question,
-                                            db_type=data_source.db_type  # 传递数据库类型
+                                            db_type=data_source.db_type,  # 传递数据库类型
+                                            tenant_id=tenant_id  # 传递租户ID用于llm_service
                                         )
 
                                         if fixed_sql:
                                             logger.info(f"AI修复成功，准备重试。修复后的SQL: {fixed_sql[:100]}...")
+
+                                            # 🔧 流式输出：AI修复成功通知
+                                            step6_fixed = {
+                                                "type": "step_update",
+                                                "step": 6,
+                                                "description": f"✅ AI修复成功，准备重试",
+                                                "content_preview": fixed_sql[:100] + ("..." if len(fixed_sql) > 100 else ""),
+                                                "streaming": True,
+                                                "tenant_id": tenant_id
+                                            }
+                                            yield f"data: {json.dumps(step6_fixed, ensure_ascii=False)}\n\n"
+
                                             current_sql = fixed_sql
                                             retry_count += 1
                                         else:
                                             logger.warning("AI无法修复SQL，停止重试")
+
+                                            # 🔧 流式输出：AI修复失败通知
+                                            step6_fix_failed = {
+                                                "type": "step_update",
+                                                "step": 6,
+                                                "description": "❌ AI无法修复SQL，停止重试",
+                                                "content_preview": "建议检查SQL语法或数据源结构",
+                                                "streaming": True,
+                                                "tenant_id": tenant_id
+                                            }
+                                            yield f"data: {json.dumps(step6_fix_failed, ensure_ascii=False)}\n\n"
                                             break
                                     else:
                                         # 已达到最大重试次数
                                         logger.error(f"已达到最大重试次数 ({max_retries})，放弃执行")
+
+                                        # 🔧 流式输出：达到最大重试次数通知
+                                        step6_max_retries = {
+                                            "type": "step_update",
+                                            "step": 6,
+                                            "description": f"❌ 已达到最大重试次数 ({max_retries})，放弃执行",
+                                            "content_preview": "所有尝试均失败",
+                                            "streaming": True,
+                                            "tenant_id": tenant_id
+                                        }
+                                        yield f"data: {json.dumps(step6_max_retries, ensure_ascii=False)}\n\n"
                                         break
 
-                            # 如果所有重试都失败了，发送错误信息
+                            # 🔧 修复：如果此SQL的所有重试都失败了，收集错误信息（不立即发送）
                             if not execution_success and last_error:
                                 # 解析错误信息，提取关键信息
                                 error_details = _parse_sql_error(last_error)
 
-                                error_text = f"\n\n❌ **查询执行失败**: {error_details['main_error']}\n"
+                                # 收集错误信息，稍后统一处理
+                                all_sql_results.append({
+                                    'success': False,
+                                    'sql': current_sql,
+                                    'error': last_error,
+                                    'error_details': error_details,
+                                    'retry_count': retry_count
+                                })
+                                logger.info(f"🔧 收集SQL执行错误信息（暂不发送），等待其他SQL结果")
 
-                                # 如果有HINT信息，显示它
-                                if error_details.get('hint'):
-                                    error_text += f"\n💡 **提示**: {error_details['hint']}\n"
+                        # 🔧 修复：for循环结束后，统一处理错误信息
+                        # 只有当所有SQL都失败时才显示错误
+                        if not any_sql_success and all_sql_results:
+                            logger.warning(f"🔧 所有 {len(all_sql_results)} 个SQL查询都失败了，显示错误信息")
 
-                                # 如果经过了重试，显示最后尝试的SQL
-                                if retry_count > 0:
-                                    error_text += f"\n*已尝试自动修复 {retry_count} 次，但仍然失败*\n"
-                                    error_text += f"\n**最后尝试的SQL：**\n```sql\n{current_sql}\n```\n"
+                            # 显示最后一个失败SQL的错误信息（通常是最相关的）
+                            last_failed = all_sql_results[-1]
+                            error_details = last_failed['error_details']
+                            retry_count = last_failed['retry_count']
+                            current_sql = last_failed['sql']
 
-                                # 添加建议
-                                if error_details.get('suggestion'):
-                                    error_text += f"\n💡 **建议**: {error_details['suggestion']}\n"
-                                else:
-                                    error_text += "\n💡 **建议**: 请检查表名和列名是否正确，或查看数据源的schema信息。\n"
+                            error_text = f"\n\n❌ **查询执行失败**: {error_details['main_error']}\n"
 
-                                error_chunk = {
-                                    "type": "content",
-                                    "content": error_text,
-                                    "provider": chunk.provider,
-                                    "finished": False,
-                                    "tenant_id": tenant_id
+                            # 如果有HINT信息，显示它
+                            if error_details.get('hint'):
+                                error_text += f"\n💡 **提示**: {error_details['hint']}\n"
+
+                            # 如果经过了重试，显示最后尝试的SQL
+                            if retry_count > 0:
+                                error_text += f"\n*已尝试自动修复 {retry_count} 次，但仍然失败*\n"
+                                error_text += f"\n**最后尝试的SQL：**\n```sql\n{current_sql}\n```\n"
+
+                            # 添加建议
+                            if error_details.get('suggestion'):
+                                error_text += f"\n💡 **建议**: {error_details['suggestion']}\n"
+                            else:
+                                error_text += "\n💡 **建议**: 请检查表名和列名是否正确，或查看数据源的schema信息。\n"
+
+                            error_chunk = {
+                                "type": "content",
+                                "content": error_text,
+                                "provider": chunk.provider,
+                                "finished": False,
+                                "tenant_id": tenant_id
+                            }
+                            yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
+                        elif any_sql_success and all_sql_results:
+                            # 有SQL成功，但也有失败的，只记录日志不显示错误
+                            failed_count = len([r for r in all_sql_results if not r['success']])
+                            if failed_count > 0:
+                                logger.info(f"🔧 有 {failed_count} 个SQL失败但至少1个成功，不显示错误信息")
+
+                        # ========== 🔧 重构：统一图表生成逻辑（循环结束后） ==========
+                        # 收集所有成功的SQL结果，一次性调用LLM生成分析和图表（支持多图表）
+                        if successful_query_results:
+                            logger.info(f"🔧 开始统一图表生成：共有 {len(successful_query_results)} 个成功的SQL结果")
+
+                            # 构建包含所有查询结果的数据摘要
+                            all_results_summary = []
+                            for idx, query_result in enumerate(successful_query_results, 1):
+                                result_data = query_result['result']
+                                data_for_analysis = result_data.get('data', [])[:20]  # 每个结果最多20行
+                                row_count = query_result['row_count']
+                                columns = query_result['columns']
+
+                                # 将 Decimal 转换为 float
+                                serializable_data = _convert_decimal_to_float(data_for_analysis)
+
+                                result_summary = {
+                                    'query_index': idx,
+                                    'sql': query_result['sql'][:200] + '...' if len(query_result['sql']) > 200 else query_result['sql'],
+                                    'columns': columns,
+                                    'row_count': row_count,
+                                    'data_preview': serializable_data
                                 }
-                                yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
+                                all_results_summary.append(result_summary)
+
+                            # 数据特征分析
+                            total_queries = len(successful_query_results)
+                            total_rows = sum(r['row_count'] for r in successful_query_results)
+
+                            # 分析每个结果集的特征
+                            analysis_hints = []
+                            for idx, query_result in enumerate(successful_query_results, 1):
+                                result_data = query_result['result']
+                                data_preview = result_data.get('data', [])[:5]
+                                columns = query_result['columns']
+                                row_count = query_result['row_count']
+
+                                col_names_str = " ".join([str(c).lower() for c in columns])
+                                has_time_col = any(k in col_names_str for k in ['date', 'time', 'year', 'month', 'day', '日期', '时间', '年', '月'])
+
+                                if row_count <= 1:
+                                    analysis_hints.append(f"查询{idx}: 聚合结果（1行），不需要图表")
+                                elif has_time_col and row_count > 1:
+                                    analysis_hints.append(f"查询{idx}: 时间序列数据（{row_count}行），适合折线图")
+                                elif row_count > 1:
+                                    analysis_hints.append(f"查询{idx}: 分类数据（{row_count}行），适合柱状图或饼图")
+
+                            analysis_hints_text = "\n".join(analysis_hints)
+
+                            # 构建多结果分析prompt
+                            multi_result_json = json.dumps(all_results_summary, ensure_ascii=False, indent=2)
+
+                            multi_analysis_prompt = f"""你刚刚执行了 {total_queries} 个SQL查询，所有结果如下：
+
+```json
+{multi_result_json}
+```
+
+--- 数据特征分析 ---
+{analysis_hints_text}
+
+--- 任务要求 ---
+
+1. **数据分析**：综合分析所有查询结果，用2-3句话解释数据的商业含义
+
+2. **生成图表**（如果需要多个图表，请分别生成）：
+
+   ⚠️ **重要规则**：
+   - 每个需要可视化的数据集，使用独立的 [CHART_START]...[CHART_END] 标记
+   - 如果有多个数据集都需要图表，就生成多个图表配置
+   - 聚合结果（只有1行）不需要生成图表
+   - 时间序列数据用折线图，分类比较用柱状图，占比用饼图
+
+   ✅ **多图表示例**（2个数据集各自生成图表）：
+
+   第一个图表展示销售趋势：
+[CHART_START]
+{{"title":{{"text":"月度销售趋势"}},"xAxis":{{"type":"category","data":["1月","2月","3月"]}},"yAxis":{{"type":"value"}},"series":[{{"type":"line","data":[100,200,150]}}]}}
+[CHART_END]
+
+   第二个图表展示类别分布：
+[CHART_START]
+{{"title":{{"text":"商品类别占比"}},"series":[{{"type":"pie","data":[{{"name":"电子产品","value":60}},{{"name":"服装","value":40}}]}}]}}
+[CHART_END]
+
+   ❌ **禁止**：
+   - 不要使用JavaScript函数
+   - 不要用markdown代码块包裹JSON
+   - 不要把多个图表合并到一个配置里
+
+请直接输出分析和图表："""
+
+                            # 构建系统提示
+                            multi_chart_system_prompt = (
+                                "你是专业的数据分析师。你的任务是分析多个SQL查询结果并生成可视化图表。\n\n"
+                                "**核心原则**：\n"
+                                "1. 每个有意义的数据集都应该有自己的图表\n"
+                                "2. 多个数据集 = 多个独立的图表配置\n"
+                                "3. 聚合结果（1行数据）不生成图表\n"
+                                "4. 使用标准ECharts JSON格式，用[CHART_START]...[CHART_END]标记\n"
+                                "5. 禁止使用JavaScript函数\n\n"
+                                "**图表类型选择**：\n"
+                                "- 时间序列 → 折线图 (line)\n"
+                                "- 排名/对比 → 柱状图 (bar)\n"
+                                "- 占比/分布 → 饼图 (pie)"
+                            )
+
+                            # 构建消息
+                            multi_analysis_messages = [
+                                LLMMessage(role="system", content=multi_chart_system_prompt),
+                                LLMMessage(role="user", content=original_question),
+                                LLMMessage(role="user", content=multi_analysis_prompt)
+                            ]
+
+                            # 获取provider实例并调用
+                            provider_instance = llm_service.get_provider(tenant_id, LLMProvider.DEEPSEEK)
+                            if provider_instance:
+                                try:
+                                    logger.info("🔧 开始统一LLM调用：分析数据并生成多图表")
+
+                                    # 🔧 流式输出：发送 Step 7/8 的 running 状态
+                                    yield _create_processing_step(
+                                        step=7,
+                                        title="生成数据可视化",
+                                        description="正在分析数据结构...",
+                                        status="running",
+                                        tenant_id=tenant_id
+                                    )
+                                    await asyncio.sleep(0.05)
+
+                                    yield _create_processing_step(
+                                        step=8,
+                                        title="数据分析总结",
+                                        description="正在分析查询结果...",
+                                        status="running",
+                                        tenant_id=tenant_id
+                                    )
+                                    await asyncio.sleep(0.05)
+
+                                    analysis_stream = await provider_instance.chat_completion(
+                                        messages=multi_analysis_messages,
+                                        model=None,
+                                        max_tokens=3000,  # 增加token限制以支持多图表
+                                        temperature=0.7,
+                                        stream=True,
+                                        tools=None
+                                    )
+
+                                    # 🔧 流式输出：收集分析内容并实时发送step_update事件
+                                    analysis_content = ""
+                                    last_step7_update = time.time()
+                                    last_step8_update = time.time()
+                                    step7_phase_idx = 0
+                                    step7_phases = ["正在分析数据结构...", "选择合适的图表类型...", "正在生成图表配置..."]
+                                    chart_detected = False
+
+                                    async for analysis_chunk in analysis_stream:
+                                        if analysis_chunk.type == "content" and analysis_chunk.content:
+                                            analysis_content += analysis_chunk.content
+                                            current_time = time.time()
+
+                                            # Step 7: 多阶段状态更新（每800ms切换阶段）
+                                            if "[CHART_START]" in analysis_content and not chart_detected:
+                                                chart_detected = True
+                                                step_update_event = {
+                                                    "type": "step_update",
+                                                    "step": 7,
+                                                    "description": "正在生成图表配置...",
+                                                    "tenant_id": tenant_id
+                                                }
+                                                yield f"data: {json.dumps(step_update_event, ensure_ascii=False)}\n\n"
+                                            elif not chart_detected and current_time - last_step7_update >= 0.8:
+                                                if step7_phase_idx < 2:
+                                                    step7_phase_idx += 1
+                                                    step_update_event = {
+                                                        "type": "step_update",
+                                                        "step": 7,
+                                                        "description": step7_phases[step7_phase_idx],
+                                                        "tenant_id": tenant_id
+                                                    }
+                                                    yield f"data: {json.dumps(step_update_event, ensure_ascii=False)}\n\n"
+                                                last_step7_update = current_time
+
+                                            # Step 8: 流式打字机效果（每100ms更新预览）
+                                            if current_time - last_step8_update >= 0.1:
+                                                # 提取非图表部分作为分析预览
+                                                clean_preview = re.sub(r'\[CHART_START\].*?\[CHART_END\]', '', analysis_content, flags=re.DOTALL)
+                                                clean_preview = re.sub(r'\n{3,}', '\n\n', clean_preview).strip()
+
+                                                if clean_preview:
+                                                    step8_update_event = {
+                                                        "type": "step_update",
+                                                        "step": 8,
+                                                        "description": f"正在分析... ({len(clean_preview)} 字符)",
+                                                        "content_preview": clean_preview,
+                                                        "streaming": True,
+                                                        "tenant_id": tenant_id
+                                                    }
+                                                    yield f"data: {json.dumps(step8_update_event, ensure_ascii=False)}\n\n"
+                                                last_step8_update = current_time
+
+                                    logger.info(f"🔧 统一LLM调用完成，内容长度: {len(analysis_content)}")
+
+                                    # 提取所有图表配置（支持多个）
+                                    chart_pattern = r'\[CHART_START\](.*?)\[CHART_END\]'
+                                    chart_matches = re.findall(chart_pattern, analysis_content, re.DOTALL)
+
+                                    logger.info(f"🔧 提取到 {len(chart_matches)} 个图表配置")
+
+                                    # 为每个图表生成step=7事件
+                                    for chart_idx, chart_json_str in enumerate(chart_matches, 1):
+                                        try:
+                                            chart_json_str = chart_json_str.strip()
+
+                                            # 移除可能的markdown代码块
+                                            if chart_json_str.startswith('```'):
+                                                lines = chart_json_str.split('\n')
+                                                if lines[0].startswith('```'):
+                                                    lines = lines[1:]
+                                                if lines and lines[-1].strip() == '```':
+                                                    lines = lines[:-1]
+                                                chart_json_str = '\n'.join(lines)
+
+                                            # 移除JavaScript函数
+                                            chart_json_str = re.sub(
+                                                r'"formatter":\s*function\s*\([^)]*\)\s*\{[^}]*(?:\{[^}]*\}[^}]*)*\}',
+                                                '"formatter": "{b}: {c}"',
+                                                chart_json_str
+                                            )
+
+                                            echarts_option = json.loads(chart_json_str.strip())
+                                            logger.info(f"✅ 成功解析图表{chart_idx}: {list(echarts_option.keys())}")
+
+                                            # 发送图表配置事件
+                                            chart_event = {
+                                                "type": "chart_config",
+                                                "data": {"echarts_option": echarts_option, "chart_index": chart_idx},
+                                                "provider": "deepseek",
+                                                "finished": False,
+                                                "tenant_id": tenant_id
+                                            }
+                                            yield f"data: {json.dumps(chart_event, ensure_ascii=False)}\n\n"
+
+                                            # 推断图表类型
+                                            chart_type = "图表"
+                                            series_list = echarts_option.get("series", [])
+                                            if series_list and len(series_list) > 0:
+                                                series_type = series_list[0].get("type", "")
+                                                if series_type:
+                                                    chart_type = {
+                                                        "bar": "柱状图", "line": "折线图", "pie": "饼图",
+                                                        "scatter": "散点图", "tree": "树图"
+                                                    }.get(series_type, series_type)
+
+                                            # 获取图表标题
+                                            chart_title = echarts_option.get("title", {}).get("text", f"图表{chart_idx}")
+
+                                            chart_content_data = {
+                                                "chart": {
+                                                    "echarts_option": echarts_option,
+                                                    "chart_type": chart_type,
+                                                    "chart_index": chart_idx
+                                                }
+                                            }
+
+                                            yield _create_processing_step(
+                                                step=7,
+                                                title=f"生成数据可视化 ({chart_idx}/{len(chart_matches)})",
+                                                description=f"{chart_title} - {chart_type}",
+                                                status="completed",
+                                                duration=int((time.time() - ai_start_time) * 1000 * 0.3 / len(chart_matches)),
+                                                tenant_id=tenant_id,
+                                                content_type="chart",
+                                                content_data=chart_content_data
+                                            )
+
+                                            chart_already_generated = True
+
+                                        except json.JSONDecodeError as e:
+                                            logger.warning(f"解析图表{chart_idx} JSON失败: {e}")
+                                            logger.warning(f"失败的JSON (前200字符): {chart_json_str[:200]}")
+
+                                    # 生成数据分析总结（step=8）
+                                    clean_analysis = re.sub(chart_pattern, '', analysis_content, flags=re.DOTALL).strip()
+                                    clean_analysis = re.sub(r'\n{3,}', '\n\n', clean_analysis)
+
+                                    if clean_analysis:
+                                        yield _create_processing_step(
+                                            step=8,
+                                            title="数据分析总结",
+                                            description="AI对查询结果的分析和解读",
+                                            status="completed",
+                                            duration=int((time.time() - ai_start_time) * 1000 * 0.2),
+                                            tenant_id=tenant_id,
+                                            content_type="text",
+                                            content_data={"text": clean_analysis}
+                                        )
+
+                                except Exception as e:
+                                    logger.error(f"🔧 统一LLM调用失败: {e}")
+                            else:
+                                logger.warning("🔧 无法获取LLM provider实例")
+
                     else:
                         logger.warning("没有找到活跃的数据源，无法执行SQL")
                         warning_text = "\n\n⚠️ **注意**: 未找到已连接的数据源，无法执行SQL查询。请先在数据源管理中添加数据库连接。\n"
@@ -3305,10 +3774,11 @@ async def _stream_response_generator(
                         yield f"data: {json.dumps(warning_chunk, ensure_ascii=False)}\n\n"
 
         # 🔧 恢复图表生成功能：检测并提取 [CHART_START]...[CHART_END] 标记中的 ECharts 配置
+        # 🔧 修复：检查是否已通过二次LLM调用生成图表，避免重复发送
         chart_pattern = r'\[CHART_START\](.*?)\[CHART_END\]'
         chart_match = re.search(chart_pattern, full_content, re.DOTALL)
-        
-        if chart_match:
+
+        if chart_match and not chart_already_generated:
             try:
                 chart_json_str = chart_match.group(1).strip()
                 # 解析 JSON
@@ -3368,6 +3838,9 @@ async def _stream_response_generator(
                 logger.warning(f"原始内容: {chart_json_str[:200]}...")
             except Exception as e:
                 logger.error(f"❌ 提取 ECharts 配置时发生错误: {e}")
+        elif chart_match and chart_already_generated:
+            # 🔧 修复：跳过fallback路径，因为图表已通过二次LLM调用生成
+            logger.info("🔧 跳过fallback图表生成路径，图表已通过二次LLM调用生成")
 
         # 发送结束标记
         yield "data: [DONE]\n\n"

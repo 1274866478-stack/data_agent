@@ -5,8 +5,10 @@
 **文件名**: sql_agent.py
 **职责**: 实现基于LangGraph和MCP的SQL智能查询代理 - 自然语言理解、Schema发现、SQL生成、图表可视化、多轮对话
 **作者**: Data Agent Team
-**版本**: 1.0.1
+**版本**: 1.2.0
 **变更记录**:
+- v1.2.0 (2026-01-06): 稳定性增强 - 动态时间上下文注入、JSON解析容错处理
+- v1.1.0 (2026-01-06): 安全增强 - 集成 SQLValidator 模块，增强 should_continue 错误重试逻辑
 - v1.0.1 (2026-01-02): 修复MCP echarts服务器URL配置（本地开发使用localhost）
 - v1.0.0 (2026-01-01): 初始版本 - LangGraph SQL Agent实现
 
@@ -45,6 +47,7 @@
 **上游依赖** (已读取源码):
 - [./config.py](./config.py) - 配置管理（config对象）
 - [./models.py](./models.py) - 数据模型（VisualizationResponse, QueryResult, ChartConfig, ChartType）
+- [./sql_validator.py](./sql_validator.py) - SQL安全校验（SQLValidator, SQLValidationError）
 - [./terminal_viz.py](./terminal_viz.py) - 终端可视化（render_response）
 - [./data_transformer.py](./data_transformer.py) - 数据转换（sql_result_to_echarts_data, sql_result_to_mcp_echarts_data）
 - [./chart_service.py](./chart_service.py) - 图表服务（ChartRequest, generate_chart_simple, ChartResponse）
@@ -137,6 +140,9 @@ except Exception as e:
 import base64
 import os
 from datetime import datetime
+
+# 🔒 导入独立的 SQL 安全校验模块
+from sql_validator import SQLValidator, SQLValidationError
 
 
 # Base system prompt for the SQL Agent (will be dynamically enhanced based on db_type)
@@ -247,18 +253,35 @@ BASE_SYSTEM_PROMPT = """你是一个专业的 PostgreSQL 数据库助手，具�
 
 def get_system_prompt(db_type: str = "postgresql") -> str:
     """
-    根据数据库类型获取系统提示词
+    根据数据库类型获取系统提示词，并注入动态时间上下文
 
     Args:
         db_type: 数据库类型（postgresql, mysql, sqlite, xlsx, csv等）
 
     Returns:
-        str: 系统提示词
+        str: 系统提示词（包含当前时间信息）
     """
     print(f"🔍 [get_system_prompt] 调用参数 db_type='{db_type}'")
+
+    # 🕒 动态时间上下文（对于"昨天"、"上月"等时间查询至关重要）
+    current_time = datetime.now()
+    time_context = f"""
+
+## 🕒 当前时间上下文
+- **当前时间**: {current_time.strftime("%Y-%m-%d %H:%M:%S")}
+- **当前年份**: {current_time.year}
+- **当前月份**: {current_time.month}月
+- **当前日期**: {current_time.day}日
+- **星期**: 星期{['一', '二', '三', '四', '五', '六', '日'][current_time.weekday()]}
+
+在处理时间相关查询时（如"昨天"、"上周"、"上个月"、"今年"等），请以此时间为准进行计算。
+"""
+
     try:
         from prompt_generator import generate_database_aware_system_prompt
         result = generate_database_aware_system_prompt(db_type, BASE_SYSTEM_PROMPT)
+        # 在提示词末尾追加时间上下文
+        result = result + time_context
         print(f"🔍 [get_system_prompt] 成功生成提示词，长度={len(result)}")
         # 打印提示词的前200字符，验证是否包含数据库特定信息
         preview = result[:200].replace('\n', ' ')
@@ -266,10 +289,10 @@ def get_system_prompt(db_type: str = "postgresql") -> str:
         return result
     except ImportError as e:
         print(f"⚠️ 无法导入 prompt_generator: {e}，使用默认PostgreSQL提示词")
-        return BASE_SYSTEM_PROMPT
+        return BASE_SYSTEM_PROMPT + time_context
     except Exception as e:
         print(f"⚠️ 生成动态提示词失败: {e}，使用默认PostgreSQL提示词")
-        return BASE_SYSTEM_PROMPT
+        return BASE_SYSTEM_PROMPT + time_context
 
 
 # 默认提示词（向后兼容）
@@ -287,23 +310,107 @@ def create_llm():
 
 
 def parse_chart_config(content: str) -> Optional[Dict[str, Any]]:
-    """从LLM回复中解析JSON图表配置
+    """从LLM回复中解析JSON图表配置（增强版，支持多种格式和容错）
 
     Args:
         content: LLM的文本回复
 
     Returns:
         解析出的JSON配置，如果没有则返回None
+
+    支持的格式:
+        1. ```json ... ``` 代码块
+        2. ```JSON ... ``` 代码块（大写）
+        3. 直接的 JSON 对象 {...}
+        4. 带有 JavaScript 注释的 JSON（会尝试清理）
     """
-    # 尝试匹配 ```json ... ``` 代码块
-    json_pattern = r'```json\s*([\s\S]*?)\s*```'
+    if not content or not content.strip():
+        return None
+
+    # 策略1: 尝试匹配 ```json ... ``` 代码块（不区分大小写）
+    json_pattern = r'```(?:json|JSON)\s*([\s\S]*?)\s*```'
     match = re.search(json_pattern, content)
 
     if match:
-        try:
-            return json.loads(match.group(1))
-        except json.JSONDecodeError:
-            pass
+        json_str = match.group(1).strip()
+        result = _try_parse_json(json_str)
+        if result is not None:
+            return result
+
+    # 策略2: 尝试匹配任意代码块中的 JSON
+    code_block_pattern = r'```\s*([\s\S]*?)\s*```'
+    for match in re.finditer(code_block_pattern, content):
+        json_str = match.group(1).strip()
+        # 检查是否像 JSON（以 { 或 [ 开头）
+        if json_str.startswith('{') or json_str.startswith('['):
+            result = _try_parse_json(json_str)
+            if result is not None:
+                return result
+
+    # 策略3: 尝试直接匹配 JSON 对象 {...}
+    # 使用贪婪但平衡的匹配（简单版本）
+    direct_json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+    for match in re.finditer(direct_json_pattern, content):
+        json_str = match.group(0)
+        result = _try_parse_json(json_str)
+        if result is not None:
+            # 验证是否是图表配置（至少包含一些预期字段）
+            if any(key in result for key in ['chart_type', 'data', 'title', 'type']):
+                return result
+
+    return None
+
+
+def _try_parse_json(json_str: str) -> Optional[Dict[str, Any]]:
+    """尝试解析 JSON 字符串，支持容错处理
+
+    Args:
+        json_str: JSON 字符串
+
+    Returns:
+        解析后的字典，失败返回 None
+    """
+    if not json_str:
+        return None
+
+    # 尝试1: 直接解析
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError:
+        pass
+
+    # 尝试2: 清理常见的 LLM 错误后再解析
+    cleaned = json_str
+
+    # 移除 JavaScript 风格的单行注释
+    cleaned = re.sub(r'//.*$', '', cleaned, flags=re.MULTILINE)
+
+    # 移除 JavaScript 风格的多行注释
+    cleaned = re.sub(r'/\*[\s\S]*?\*/', '', cleaned)
+
+    # 移除尾随逗号（JSON 不允许，但 JS 允许）
+    cleaned = re.sub(r',\s*}', '}', cleaned)
+    cleaned = re.sub(r',\s*]', ']', cleaned)
+
+    # 将 Python 的 None/True/False 转换为 JSON 的 null/true/false
+    cleaned = re.sub(r'\bNone\b', 'null', cleaned)
+    cleaned = re.sub(r'\bTrue\b', 'true', cleaned)
+    cleaned = re.sub(r'\bFalse\b', 'false', cleaned)
+
+    # 将单引号转换为双引号（JSON 要求双引号）
+    # 注意：这个替换比较危险，只在其他方法都失败时使用
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # 尝试3: 单引号转双引号（最后手段）
+    try:
+        # 简单的单引号到双引号转换（不处理嵌套引号）
+        cleaned_quotes = cleaned.replace("'", '"')
+        return json.loads(cleaned_quotes)
+    except json.JSONDecodeError:
+        pass
 
     return None
 
@@ -748,14 +855,89 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
         response = await llm_with_tools.ainvoke(messages)
         return {"messages": [response]}
 
-    def should_continue(state: MessagesState) -> Literal["tools", END]:
+    def should_continue(state: MessagesState) -> Literal["tools", "agent", END]:
+        """
+        增强的路由逻辑：
+        - 检测工具错误并路由回 Agent 进行自我修正
+        - 检测 SQL 安全问题并阻止执行
+        """
         messages = state["messages"]
         last_message = messages[-1]
-        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+
+        # A. 检查工具执行结果是否出错（ToolMessage 返回错误时路由回 Agent 修复）
+        if isinstance(last_message, ToolMessage):
+            content_str = str(last_message.content).lower()
+            # 常见的 SQL/数据库错误关键词
+            error_indicators = [
+                "error", "exception", "failed", "invalid",
+                "relation does not exist", "column does not exist",
+                "syntax error", "permission denied", "does not exist",
+                "no such table", "undefined column", "ambiguous column",
+                # DuckDB 类型不匹配错误 (如 SUBSTRING 用于 TIMESTAMP 列)
+                "no function matches", "argument types", "binder error",
+                "cannot be applied to", "type mismatch"
+            ]
+            for indicator in error_indicators:
+                if indicator in content_str:
+                    print(f"🚨 检测到工具执行错误，路由回 Agent 进行自我修正...")
+                    return "agent"
+
+        # B. 检查 AI 是否要调用工具
+        if isinstance(last_message, AIMessage) and last_message.tool_calls:
+            # 🔒 SQL 安全拦截：在工具执行前校验 SQL（使用独立的 SQLValidator 模块）
+            for tc in last_message.tool_calls:
+                if tc.get('name') == 'query':
+                    sql = tc.get('args', {}).get('sql', '')
+                    is_safe, error_msg = SQLValidator.validate(sql)
+                    if not is_safe:
+                        # 记录被拦截的 SQL（截断以保护日志）
+                        sanitized_sql = SQLValidator.sanitize_for_logging(sql, 100)
+                        print(f"🛑 SQL 安全拦截: {error_msg}")
+                        print(f"   被拦截的 SQL: {sanitized_sql}")
+                        # 注意：这里返回 "tools" 让 SafeToolNode 处理，它会返回错误消息给 Agent
+                        # 这样 Agent 可以看到错误并尝试修正
             return "tools"
+
         return END
 
-    tool_node = ToolNode(_cached_tools)
+    # 🔒 创建带安全校验的工具节点（使用独立的 SQLValidator 模块）
+    class SafeToolNode:
+        """
+        带 SQL 安全校验的工具节点包装器
+
+        当 Agent 尝试执行危险 SQL 时，不会真正执行，
+        而是返回一个错误消息，让 Agent 有机会修正并重试。
+        """
+        def __init__(self, tools):
+            self._tool_node = ToolNode(tools)
+
+        async def __call__(self, state: MessagesState):
+            messages = state["messages"]
+            last_message = messages[-1]
+
+            # 在执行 query 工具前进行安全校验
+            if isinstance(last_message, AIMessage) and last_message.tool_calls:
+                for tc in last_message.tool_calls:
+                    if tc.get('name') == 'query':
+                        sql = tc.get('args', {}).get('sql', '')
+                        is_safe, error_msg = SQLValidator.validate(sql)
+                        if not is_safe:
+                            # 返回一个错误消息，而不是执行危险的 SQL
+                            # 这让 Agent 知道被拦截了，可以尝试生成安全的查询
+                            return {
+                                "messages": [
+                                    ToolMessage(
+                                        content=f"🚫 SQL 执行被安全系统拦截: {error_msg}\n\n"
+                                                f"请只生成 SELECT 查询语句，不要尝试修改或删除数据。",
+                                        tool_call_id=tc.get('id', 'unknown')
+                                    )
+                                ]
+                            }
+
+            # 安全校验通过，执行原始工具
+            return await self._tool_node.ainvoke(state)
+
+    tool_node = SafeToolNode(_cached_tools)
 
     # 构建图
     builder = StateGraph(MessagesState)

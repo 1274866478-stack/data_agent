@@ -218,12 +218,13 @@ function dispatchStreamEvent(event: StreamEvent, callbacks: StreamCallbacks) {
       break;
 
     case 'step_update':
-      // 🔧 新增：处理步骤更新事件（用于更新正在进行的步骤的描述和内容预览）
+      // 🔧 处理步骤更新事件（用于更新正在进行的步骤的描述、内容预览和流式状态）
       const stepNum = typeof event.step === 'number' ? event.step : parseInt(event.step || '0');
       if (stepNum > 0 && callbacks.onStepUpdate) {
         const description = event.description || '';
         const contentPreview = event.content_preview || '';
-        callbacks.onStepUpdate(stepNum, description, contentPreview);
+        const streaming = event.streaming || false;  // 🔧 新增：传递流式输出状态
+        callbacks.onStepUpdate(stepNum, description, contentPreview, streaming);
       }
       break;
 

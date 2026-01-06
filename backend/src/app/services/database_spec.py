@@ -34,6 +34,7 @@ class DatabaseSpec:
     string_functions: Dict[str, str]
     syntax_notes: List[str]
     common_functions_example: str
+    type_constraints: List[str] = None  # 列类型使用约束 (可选)
 
 
 # 数据库规范映射表
@@ -236,7 +237,12 @@ SELECT strftime(order_date, '%Y-%m-%d') as formatted_date FROM orders;
 
 -- 按月分组
 SELECT DATE_TRUNC('month', order_date) as month, SUM(amount) FROM orders GROUP BY 1;
-"""
+""",
+        type_constraints=[
+            "🚫 TIMESTAMP/DATE 类型禁用: SUBSTRING(), LEFT(), RIGHT(), CONCAT()",
+            "✅ TIMESTAMP/DATE 类型必须使用: EXTRACT(), strftime(), DATE_TRUNC()",
+            "💡 如需对日期做字符串操作，先用 CAST(col AS VARCHAR) 转换",
+        ]
     ),
 }
 

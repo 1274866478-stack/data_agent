@@ -7,9 +7,13 @@
     "allow": [
       "LSP*",
       "Bash(export ENABLE_LSP_TOOLS=1)"
-    ]
+    ],
+    "deny": []
   },
   "env": {
-    "ENABLE_LSP_TOOLS": "1"
+    "ENABLE_LSP_TOOLS": "1",
+    "ANTHROPIC_AUTH_TOKEN": "88_e7860912ad32f203231dbac220ff783718f933f2fb40ba19150e9be40187943c",
+    "ANTHROPIC_BASE_URL": "https://www.88code.ai/api",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   }
 }

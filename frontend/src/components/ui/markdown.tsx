@@ -154,29 +154,60 @@ export function Markdown({ content, className }: MarkdownProps) {
         remarkPlugins={[remarkGfm]}
         components={{
           // 自定义代码块渲染
+          // 注意：react-markdown 对代码块的渲染是 <pre><code>...</code></pre> 结构
+          // pre 组件和 code 组件分别处理这两个元素
           code: ({ className, children, ...props }: any) => {
             const match = /language-(\w+)/.exec(className || '')
             const language = match ? match[1] : ''
             const inline = className?.includes('inline-')
 
             // 过滤掉 SQL 代码块，避免与 AI 推理过程重复显示
+            // 返回 null 后，外层 pre 组件会检测到 children 为空，也不会渲染
             if (!inline && language === 'sql') {
               return null
             }
 
+            // 对于代码块（非 inline），只返回 <code> 元素，外层 <pre> 由 pre 组件处理
             if (!inline && language) {
               return (
-                <div className="relative">
-                  <pre className="bg-muted p-4 rounded-lg overflow-x-auto">
-                    <code className={cn(className, 'text-sm')} {...props}>
-                      {children}
-                    </code>
-                  </pre>
-                </div>
+                <code className={cn(className, 'text-sm')} {...props}>
+                  {children}
+                </code>
               )
             }
 
+            // 对于 inline 代码，使用 Code 组件
             return <Code className={className} {...props}>{children}</Code>
+          },
+
+          // 自定义 pre 元素渲染
+          // 当 code 组件返回 null 时（如 SQL 代码块被过滤），pre 仍会被渲染
+          // 这里检查子元素是否为空，避免渲染空的 <pre></pre> 导致灰色长条
+          pre: ({ children, ...props }) => {
+            // 检查子元素是否为空或全部为 null/undefined
+            if (!children) {
+              return null
+            }
+            // 如果是数组，检查是否所有元素都是空的
+            if (Array.isArray(children)) {
+              const hasValidContent = children.some(child => {
+                if (child === null || child === undefined) return false
+                if (typeof child === 'string' && !child.trim()) return false
+                return true
+              })
+              if (!hasValidContent) {
+                return null
+              }
+            }
+            // 如果是字符串且为空，也不渲染
+            if (typeof children === 'string' && !children.trim()) {
+              return null
+            }
+            return (
+              <pre className="bg-muted p-4 rounded-lg overflow-x-auto" {...props}>
+                {children}
+              </pre>
+            )
           },
 
           // 自定义标题渲染

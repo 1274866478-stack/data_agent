@@ -92,6 +92,8 @@ export interface ProcessingStep {
   content_data?: StepContentData;  // 内容数据
   // 🔧 新增：实时内容预览（用于显示正在生成的内容）
   content_preview?: string;        // 正在生成的内容预览
+  // 🔧 新增：流式输出标识（用于打字机效果）
+  streaming?: boolean;             // 是否正在流式输出中
 }
 
 export interface StreamEvent {
@@ -114,6 +116,7 @@ export interface StreamEvent {
   // step_update 事件专用字段
   description?: string;     // 步骤描述更新
   content_preview?: string; // 内容预览（用于显示正在生成的内容）
+  streaming?: boolean;      // 🔧 新增：是否正在流式输出中
 }
 
 // ECharts 配置接口
@@ -135,7 +138,7 @@ export interface StreamCallbacks {
   onToolResult: (data: any) => void;
   onChartConfig: (echartsOption: EChartsOption) => void;  // 处理图表配置
   onProcessingStep: (step: ProcessingStep) => void;       // 处理AI推理步骤
-  onStepUpdate?: (step: number, description: string, contentPreview?: string) => void;  // 步骤更新回调（可选）
+  onStepUpdate?: (step: number, description: string, contentPreview?: string, streaming?: boolean) => void;  // 🔧 步骤更新回调（新增streaming参数）
   onError: (error: string) => void;
   onDone: () => void;
 }

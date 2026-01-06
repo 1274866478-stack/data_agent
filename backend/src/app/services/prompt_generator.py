@@ -86,6 +86,30 @@ def generate_database_aware_system_prompt(db_type: str, base_system_prompt: str 
         db_specific_instructions += """- ❌ PostgreSQL TO_CHAR()（使用 strftime 或 EXTRACT 替代）
 - ❌ MySQL DATE_FORMAT()（使用 strftime 或 EXTRACT 替代）
 - ❌ Oracle TO_DATE() → 应使用 TRY_CAST(str AS DATE) 或 str::date
+
+### 🚫🚫🚫 DuckDB 列类型约束（极其重要！）
+
+**日期/时间戳列禁止使用字符串函数**：
+- ❌ TIMESTAMP/DATE 列禁用: `SUBSTRING()`, `LEFT()`, `RIGHT()`, `CONCAT()`
+- ✅ TIMESTAMP/DATE 列必须使用: `EXTRACT()`, `strftime()`, `DATE_TRUNC()`, `CAST()`
+
+**错误示例**（会报 "No function matches" 错误）：
+```sql
+-- ❌ 错误: SUBSTRING 不能用于 TIMESTAMP 类型
+SELECT SUBSTRING(date_column, 1, 7) FROM table;
+```
+
+**正确示例**：
+```sql
+-- ✅ 使用 strftime 提取年月
+SELECT strftime(date_column, '%Y-%m') FROM table;
+
+-- ✅ 使用 EXTRACT 提取年份
+SELECT EXTRACT(YEAR FROM date_column) FROM table;
+
+-- ✅ 如需字符串操作，先转换类型
+SELECT SUBSTRING(CAST(date_column AS VARCHAR), 1, 7) FROM table;
+```
 """
     else:  # PostgreSQL
         db_specific_instructions += """- ❌ MySQL 专属函数: DATE_FORMAT(), YEAR(), MONTH()
@@ -225,6 +249,38 @@ def _get_default_postgresql_prompt() -> str:
 - 只生成 SELECT 查询，不执行任何修改操作
 - 调用图表工具时，必须将 SQL 结果转换为正确的 data 格式
 - 用中文回复用户
+
+## 🔮 数据分析与预测能力：
+
+当用户问"预测"、"预估"、"下个月"等预测类问题时，你需要：
+
+### 预测方法（简单线性趋势）：
+1. **查询历史数据**: 获取最近6-12个月的月度数据
+2. **计算增长率**: 平均月环比增长率 = (最近月 - 最早月) / 最早月 / 月份数
+3. **预测下期值**: 预测值 = 最近一期值 × (1 + 平均增长率)
+
+### 回答格式示例：
+```
+📊 **历史数据分析**：
+- 2024年1月: 100万
+- 2024年2月: 110万 (环比+10%)
+- 2024年3月: 125万 (环比+13.6%)
+
+📈 **趋势分析**：
+- 平均月环比增长率: 11.8%
+- 最近3个月呈上升趋势
+
+🔮 **预测结果**：
+- 预测2024年4月销售额: **约139.7万**
+- 计算方法: 125万 × (1 + 11.8%) = 139.75万
+
+⚠️ **注意**: 这是基于历史趋势的简单线性预测，实际结果可能受季节性、市场变化等因素影响。
+```
+
+### 关键要求：
+- 🔴 **必须展示计算过程**，不能只给结论
+- 🔴 **必须给出具体的预测数值**，不能只说"可能增长"
+- 🔴 **必须声明预测的局限性**
 """
 
 
@@ -314,6 +370,18 @@ def generate_sql_fix_prompt_with_db_type(
 - ❌ TO_DATE(str, 'format') → ✅ TRY_CAST(str AS DATE) 或 str::date
 - ❌ TO_CHAR(date, 'YYYY') → ✅ EXTRACT(YEAR FROM date) 或 strftime(date, '%Y')
 - ❌ DATE_TRUNC 仍然可用，或使用 strftime(date, '%Y-%m-01')
+
+### 🔴🔴🔴 DuckDB 类型不匹配修复指南（最常见错误！）
+
+**如果错误包含 "No function matches" 或 "argument types"：**
+这表示你对日期/时间戳列使用了字符串函数！
+
+**修复步骤**：
+1. 找到 SQL 中对 TIMESTAMP/DATE 列使用的 SUBSTRING、LEFT、RIGHT
+2. 替换为日期函数：
+   - `SUBSTRING(date_col, 1, 7)` → `strftime(date_col, '%Y-%m')`
+   - `SUBSTRING(date_col, 1, 4)` → `CAST(EXTRACT(YEAR FROM date_col) AS VARCHAR)`
+3. 如确需字符串操作，先转换：`SUBSTRING(CAST(date_col AS VARCHAR), 1, 7)`
 """
     else:  # PostgreSQL
         prompt += """

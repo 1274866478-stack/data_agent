@@ -603,19 +603,57 @@ export const useChatStore = create<ChatState>()(
             let echartsOption: any = null
             let processingSteps: ProcessingStep[] = []
 
+            // 🔧 新增：标记是否已经收到了正式的处理步骤
+            // 在收到正式步骤之前，所有 content 都视为"规划/思考"阶段
+            let hasReceivedFormalStep = false
+            let planningContent = ''  // 规划阶段的内容
+
+            // 🔧 新增：创建初始的"理解问题"步骤（步骤 0）
+            const initPlanningStep: ProcessingStep = {
+              step: 0,
+              title: '理解问题',
+              description: '正在分析您的问题...',
+              status: 'running',
+            }
+            processingSteps.push(initPlanningStep)
+            state.updateMessage(assistantMessageId, {
+              metadata: {
+                processing_steps: [...processingSteps],
+              },
+            })
+
             // 定义回调函数
             const callbacks: StreamCallbacks = {
               onContent: (delta: string) => {
-                accumulatedContent += delta
-                // 🔧 修复：如果当前状态是 analyzing_sql 或 generating_chart，收到 content 事件时切换回 streaming
-                const currentStatus = get().streamingStatus
-                if (currentStatus === 'analyzing_sql' || currentStatus === 'generating_chart') {
-                  set({ streamingStatus: 'streaming' })
+                // 🔧 重构：区分规划阶段和回答阶段的内容
+                if (!hasReceivedFormalStep) {
+                  // 规划阶段：内容存入步骤 0 的 content_preview
+                  planningContent += delta
+                  const planningStep = processingSteps.find(s => s.step === 0)
+                  if (planningStep) {
+                    planningStep.content_preview = planningContent
+                    planningStep.description = planningContent.length > 100
+                      ? planningContent.slice(0, 100) + '...'
+                      : planningContent
+                  }
+                  state.updateMessage(assistantMessageId, {
+                    metadata: {
+                      processing_steps: [...processingSteps],
+                    },
+                  })
+                } else {
+                  // 回答阶段：累积到 accumulatedContent
+                  accumulatedContent += delta
+                  // 🔧 修复：如果当前状态是 analyzing_sql 或 generating_chart，收到 content 事件时切换回 streaming
+                  const currentStatus = get().streamingStatus
+                  if (currentStatus === 'analyzing_sql' || currentStatus === 'generating_chart') {
+                    set({ streamingStatus: 'streaming' })
+                  }
+                  // 增量更新消息内容（不再直接显示在气泡中，但保留用于其他用途）
+                  state.updateMessage(assistantMessageId, {
+                    content: accumulatedContent,
+                  })
                 }
-                // 增量更新消息内容
-                state.updateMessage(assistantMessageId, {
-                  content: accumulatedContent,
-                })
               },
               onThinking: (delta: string) => {
                 accumulatedThinking += delta
@@ -670,9 +708,53 @@ export const useChatStore = create<ChatState>()(
               onProcessingStep: (step: ProcessingStep) => {
                 // 处理AI推理步骤事件
                 console.log('[ChatStore] 🔄 收到处理步骤:', step)
-                
-                // 查找是否已存在相同步骤号的步骤
-                const existingIndex = processingSteps.findIndex(s => s.step === step.step)
+
+                // 🔧 新增：收到正式步骤时，标记规划阶段结束
+                if (step.step >= 1 && !hasReceivedFormalStep) {
+                  hasReceivedFormalStep = true
+                  // 完成步骤 0（规划步骤）
+                  const planningStep = processingSteps.find(s => s.step === 0)
+                  if (planningStep) {
+                    planningStep.status = 'completed'
+                    // 如果有规划内容，保存为 text 类型
+                    if (planningContent.trim()) {
+                      planningStep.content_type = 'text'
+                      planningStep.content_data = {
+                        text: planningContent
+                      }
+                      planningStep.content_preview = undefined  // 清除预览
+                    }
+                  }
+                }
+
+                // 🔧 重构：支持多图表 - 用 step号 + chart_index 作为唯一标识
+                // 获取 chart_index（如果存在）
+                const chartIndex = step.content_data?.chart?.chart_index
+
+                // 查找是否已存在相同步骤的步骤
+                let existingIndex = processingSteps.findIndex(s => {
+                  // 如果有 chart_index，需要同时匹配 step号 和 chart_index
+                  if (chartIndex !== undefined) {
+                    const existingChartIndex = s.content_data?.chart?.chart_index
+                    return s.step === step.step && existingChartIndex === chartIndex
+                  }
+                  // 否则只匹配 step号（旧逻辑，用于非图表步骤）
+                  return s.step === step.step && !s.content_data?.chart?.chart_index
+                })
+
+                // 🔧 修复：如果有 chart_index 但没找到精确匹配，尝试替换同步骤号的 running 状态步骤
+                // 这解决了 step_update 创建的步骤没有 chart_index，导致后续 completed 事件无法匹配的问题
+                if (existingIndex < 0 && chartIndex !== undefined) {
+                  existingIndex = processingSteps.findIndex(s =>
+                    s.step === step.step &&
+                    s.status === 'running' &&
+                    !s.content_data?.chart?.chart_index
+                  )
+                  if (existingIndex >= 0) {
+                    console.log('[ChatStore] 🔧 找到同步骤号的 running 步骤，将替换:', processingSteps[existingIndex])
+                  }
+                }
+
                 if (existingIndex >= 0) {
                   // 更新已有步骤（例如从running变为completed）
                   processingSteps[existingIndex] = step
@@ -680,10 +762,16 @@ export const useChatStore = create<ChatState>()(
                   // 添加新步骤
                   processingSteps.push(step)
                 }
-                
-                // 按步骤号排序
-                processingSteps.sort((a, b) => a.step - b.step)
-                
+
+                // 按步骤号排序（相同step号的按chart_index排序）
+                processingSteps.sort((a, b) => {
+                  if (a.step !== b.step) return a.step - b.step
+                  // 相同step号，按chart_index排序
+                  const aIdx = a.content_data?.chart?.chart_index || 0
+                  const bIdx = b.content_data?.chart?.chart_index || 0
+                  return aIdx - bIdx
+                })
+
                 // 更新消息的metadata
                 state.updateMessage(assistantMessageId, {
                   metadata: {
@@ -691,18 +779,19 @@ export const useChatStore = create<ChatState>()(
                   },
                 })
               },
-              // 🔧 新增：处理步骤更新事件（用于更新正在进行的步骤）
-              onStepUpdate: (stepNum: number, description: string, contentPreview?: string) => {
-                console.log('[ChatStore] 🔄 收到步骤更新:', stepNum, description, contentPreview?.substring(0, 50))
+              // 🔧 处理步骤更新事件（用于更新正在进行的步骤，支持流式输出状态）
+              onStepUpdate: (stepNum: number, description: string, contentPreview?: string, streaming?: boolean) => {
+                console.log('[ChatStore] 🔄 收到步骤更新:', stepNum, description, contentPreview?.substring(0, 50), streaming ? '(流式)' : '')
 
                 // 查找是否已存在相同步骤号的步骤
                 const existingIndex = processingSteps.findIndex(s => s.step === stepNum)
                 if (existingIndex >= 0) {
-                  // 更新已有步骤的描述和内容预览
+                  // 更新已有步骤的描述、内容预览和流式状态
                   processingSteps[existingIndex] = {
                     ...processingSteps[existingIndex],
                     description: description,
                     content_preview: contentPreview,
+                    streaming: streaming,  // 🔧 新增：流式输出状态
                   }
                 } else {
                   // 如果步骤不存在，创建一个新步骤
@@ -712,6 +801,7 @@ export const useChatStore = create<ChatState>()(
                     description: description,
                     status: 'running',
                     content_preview: contentPreview,
+                    streaming: streaming,  // 🔧 新增：流式输出状态
                   })
                 }
 
@@ -735,19 +825,39 @@ export const useChatStore = create<ChatState>()(
               },
               onDone: () => {
                 set({ streamingStatus: 'done' })
+
+                // 🔧 修复：将所有 running 状态的步骤更新为 completed
+                // 这确保了即使后端没有发送完成事件，前端也不会一直显示"正在生成..."
+                processingSteps.forEach(step => {
+                  if (step.status === 'running') {
+                    step.status = 'completed'
+                    // 清除流式标识
+                    step.streaming = false
+                    // 对于规划步骤（步骤0），保存累积的规划内容
+                    if (step.step === 0 && planningContent.trim()) {
+                      step.content_type = 'text'
+                      step.content_data = {
+                        text: planningContent
+                      }
+                      step.content_preview = undefined
+                    }
+                  }
+                })
+
                 // 流结束，更新最终消息状态（合并所有累积的内容）
                 // 🔧 修复：如果有 processing_steps，说明内容已在 ProcessingSteps 中展示，不需要默认错误消息
                 const hasProcessingSteps = processingSteps.length > 0
-                const finalContent = accumulatedContent || (hasProcessingSteps ? '' : '抱歉，我现在无法回答这个问题。')
-                
+                // 🔧 重构：消息 content 保持为空，所有内容都在 ProcessingSteps 中展示
+                const finalContent = hasProcessingSteps ? '' : (accumulatedContent || '抱歉，我现在无法回答这个问题。')
+
                 // 如果 toolInput 有内容但还没添加到 content 中，添加它
                 if (toolInput && !finalContent.includes('```sql')) {
                   accumulatedContent += `\n\`\`\`sql\n${toolInput}\n\`\`\`\n`
                 }
-                
+
                 state.updateMessage(assistantMessageId, {
                   status: 'sent',
-                  content: accumulatedContent || finalContent,
+                  content: finalContent,  // 🔧 修改：有 processing_steps 时为空
                   metadata: {
                     reasoning: accumulatedThinking || undefined,
                     sources: [],
