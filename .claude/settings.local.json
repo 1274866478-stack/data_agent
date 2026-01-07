@@ -39,7 +39,8 @@
       "mcp__chrome-devtools__wait_for",
       "mcp__chrome-devtools__take_screenshot",
       "mcp__chrome-devtools__evaluate_script",
-      "mcp__chrome-devtools__list_console_messages"
+      "mcp__chrome-devtools__list_console_messages",
+      "mcp__zai-mcp-server__ui_to_artifact"
     ]
   },
   "enableAllProjectMcpServers": true,

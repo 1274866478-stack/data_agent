@@ -2481,8 +2481,11 @@ async def _stream_response_generator(
         # 🔧 导入QuestionType用于判断是否需要图表
         from src.app.services.processing_steps import QuestionType
 
-        # 🔧 判断是否需要生成图表（SCHEMA_QUERY不需要图表）
-        should_generate_chart = question_type not in [QuestionType.SCHEMA_QUERY]
+        # 🔧 判断是否需要生成图表（只有VISUALIZATION类型需要图表）
+        # DATA_QUERY: 5步，不生成图表
+        # VISUALIZATION: 6-8步，生成图表
+        # SCHEMA_QUERY: 3步，不生成图表
+        should_generate_chart = question_type == QuestionType.VISUALIZATION
 
         logger.info(f"[_stream_response_generator] question_type={question_type.value if question_type else 'None'}, should_generate_chart={should_generate_chart}")
 
@@ -2706,12 +2709,14 @@ async def _stream_response_generator(
                         tenant_id=tenant_id
                     )
 
-                    # ========== Step 6: 执行SQL查询 ==========
+                    # ========== Step 6: 执行SQL查询（或返回结果，取决于是否需要图表）==========
                     ds_start_time = time.time()
+                    step6_title = "执行SQL查询" if should_generate_chart else "返回结果"
+                    step6_desc = "正在连接数据源并执行查询..." if should_generate_chart else "正在整理查询结果..."
                     yield _create_processing_step(
                         step=6,
-                        title="执行SQL查询",
-                        description="正在连接数据源并执行查询...",
+                        title=step6_title,
+                        description=step6_desc,
                         status="running",
                         tenant_id=tenant_id
                     )
@@ -2748,10 +2753,12 @@ async def _stream_response_generator(
 
                         # 更新Step 6进度
                         exec_start_time = time.time()
+                        step6_title = "执行SQL查询" if should_generate_chart else "返回结果"
+                        step6_desc = f"已连接 {data_source.name}，正在执行 {len(sql_matches)} 个查询..." if should_generate_chart else f"已从 {data_source.name} 获取查询结果..."
                         yield _create_processing_step(
                             step=6,
-                            title="执行SQL查询",
-                            description=f"已连接 {data_source.name}，正在执行 {len(sql_matches)} 个查询...",
+                            title=step6_title,
+                            description=step6_desc,
                             status="running",
                             details=f"数据源: {data_source.name}\n类型: {data_source.db_type}",
                             tenant_id=tenant_id
@@ -2958,8 +2965,8 @@ async def _stream_response_generator(
 
                                     yield _create_processing_step(
                                         step=6,
-                                        title="执行SQL查询",
-                                        description=f"✅ 查询成功，返回 {row_count} 行数据",
+                                        title="返回结果" if not should_generate_chart else "执行SQL查询",
+                                        description=f"✅ 查询完成，返回 {row_count} 行数据",
                                         status="completed",
                                         duration=int((time.time() - exec_start_time) * 1000),
                                         details=f"数据源: {data_source.name}\n返回行数: {row_count}\n执行耗时: {int((time.time() - exec_start_time) * 1000)}ms",
@@ -3922,11 +3929,12 @@ async def _stream_response_generator(
                         yield f"data: {json.dumps(warning_chunk, ensure_ascii=False)}\n\n"
 
         # 🔧 恢复图表生成功能：检测并提取 [CHART_START]...[CHART_END] 标记中的 ECharts 配置
-        # 🔧 修复：检查是否已通过二次LLM调用生成图表，避免重复发送
+        # 🔧 修复：检查是否需要生成图表，以及是否已通过二次LLM调用生成图表
         chart_pattern = r'\[CHART_START\](.*?)\[CHART_END\]'
         chart_match = re.search(chart_pattern, full_content, re.DOTALL)
 
-        if chart_match and not chart_already_generated:
+        # 🔧 只有当问题类型需要图表时才从full_content中提取图表（fallback路径）
+        if chart_match and should_generate_chart and not chart_already_generated:
             try:
                 chart_json_str = chart_match.group(1).strip()
                 # 解析 JSON

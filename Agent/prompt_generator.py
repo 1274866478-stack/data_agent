@@ -381,6 +381,17 @@ def generate_sql_fix_prompt_with_db_type(
    - `SUBSTRING(date_col, 1, 7)` → `strftime(date_col, '%Y-%m')`
    - `SUBSTRING(date_col, 1, 4)` → `CAST(EXTRACT(YEAR FROM date_col) AS VARCHAR)`
 3. 如确需字符串操作，先转换：`SUBSTRING(CAST(date_col AS VARCHAR), 1, 7)`
+
+### 🔴🔴🔴 日期 LIKE 查询修复（最常见错误！）
+
+**如果SQL中使用了 `date_col LIKE '2024-05%'`：**
+- ❌ **错误**: `WHERE order_date LIKE '2024-05%'` （对日期类型无效！）
+- ✅ **修复为**: `WHERE strftime(order_date, '%Y-%m') = '2024-05'`
+
+**常见错误模式**：
+- `LIKE '2024%'` → `EXTRACT(YEAR FROM date_col) = 2024`
+- `LIKE '2024-05%'` → `strftime(date_col, '%Y-%m') = '2024-05'`
+- `LIKE '2024-12-25%'` → `date_col = '2024-12-25'::date`
 """
     else:  # PostgreSQL
         prompt += """
