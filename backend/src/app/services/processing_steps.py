@@ -161,7 +161,13 @@ def classify_question(question: str, has_data_source: bool = False) -> QuestionT
         "总数", "平均", "最大", "最小", "汇总", "count",
         "select", "from", "top", "前", "排名"
     ]
-    has_data_query = any(kw in question for kw in data_keywords)
+    # 🆕 模糊业务查询关键词（生意、销售、业绩等）
+    business_keywords = [
+        "生意", "销售", "业绩", "营收", "收入", "利润",
+        "订单", "客户", "用户", "产品", "怎么样", "如何",
+        "最近", "本月", "上月", "今年", "去年", "趋势"
+    ]
+    has_data_query = any(kw in question for kw in data_keywords) or any(kw in question for kw in business_keywords)
     if has_data_source and has_data_query:
         logger.info(f"[classify_question] ✓ DATA_QUERY: question='{question_stripped}', has_data_source=True")
         return QuestionType.DATA_QUERY

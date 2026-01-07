@@ -38,7 +38,8 @@
       "mcp__chrome-devtools__press_key",
       "mcp__chrome-devtools__wait_for",
       "mcp__chrome-devtools__take_screenshot",
-      "mcp__chrome-devtools__evaluate_script"
+      "mcp__chrome-devtools__evaluate_script",
+      "mcp__chrome-devtools__list_console_messages"
     ]
   },
   "enableAllProjectMcpServers": true,

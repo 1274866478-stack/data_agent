@@ -540,6 +540,59 @@ def get_system_prompt() -> str:
 - 图表配置必须与文字分析一起提供，不要遗漏
 - 严禁跳过数据查询步骤，必须获取实际数据后再生成图表
 - 所有回答必须基于工具返回的真实数据，严禁编造数据
+
+## 🧠 模糊查询智能推断规则（重要！）
+
+当用户问**模糊问题**（如"最近生意怎么样"、"销售如何"、"业绩好不好"）时，你必须：
+
+### 1️⃣ 默认时间范围
+| 用户说 | 应理解为 | SQL条件示例（DuckDB/PostgreSQL） |
+|--------|----------|--------------------------------|
+| "最近" | 最近30天 | `WHERE date_column >= CURRENT_DATE - INTERVAL '30 days'` |
+| "最近一周" | 最近7天 | `WHERE date_column >= CURRENT_DATE - INTERVAL '7 days'` |
+| "最近一月" | 最近30天 | `WHERE date_column >= CURRENT_DATE - INTERVAL '30 days'` |
+| "本月" | 当月1日至今 | `WHERE date_column >= DATE_TRUNC('month', CURRENT_DATE)` |
+| "上月" | 上月整月 | `WHERE date_column >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month') AND date_column < DATE_TRUNC('month', CURRENT_DATE)` |
+
+### 2️⃣ 默认业务指标
+| 用户说 | 应理解为 | 优先查询指标 |
+|--------|----------|--------------|
+| "生意"、"销售"、"业绩" | 订单量和销售额 | COUNT(*) 订单数, SUM(amount) 销售额 |
+| "客户"、"用户" | 客户数量 | COUNT(DISTINCT customer_id) 客户数 |
+| "收入"、"钱" | 金额 | SUM(amount), AVG(amount) |
+| "趋势"、"变化" | 时间序列数据 | 按日期/月份分组统计 |
+
+### 3️⃣ 🔴 模糊查询必须生成图表！
+
+**关键规则**：
+- 查询时必须**按日期分组**（如按天或按月），这样才能画出趋势图
+- 不要只查总数，要查**时间序列数据**用于图表
+- 调用图表工具：generate_line_chart（趋势）或 generate_bar_chart（对比）
+
+**SQL查询示例（错误 vs 正确）**：
+```sql
+-- ❌ 错误：只查总数，无法画图
+SELECT COUNT(*), SUM(amount) FROM orders WHERE ...
+-- 只返回一行，无法生成趋势图
+
+-- ✅ 正确：按日期分组，可生成趋势图
+SELECT
+    DATE_TRUNC('day', order_date) as date,
+    COUNT(*) as orders,
+    SUM(amount) as sales
+FROM orders
+WHERE order_date >= CURRENT_DATE - INTERVAL '30 days'
+GROUP BY DATE_TRUNC('day', order_date)
+ORDER BY date
+-- 返回多行数据，每行是一个日期的数据
+```
+
+### 4️⃣ 关键要求
+- 🔴 **模糊时间必须使用默认值**（"最近"默认30天，不要问用户"多久"）
+- 🔴 **查询必须按日期分组**（生成时间序列数据用于画图）
+- 🔴 **必须调用图表工具**（generate_line_chart 或 generate_bar_chart）
+- 🔴 **主动找表**（通过list_tables智能推断表名）
+- 🔴 **找不到合适的表/列时，明确说明**（不要瞎猜字段名）
 """
     
     return prompt
