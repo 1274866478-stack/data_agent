@@ -364,3 +364,135 @@ def prepare_mcp_chart_request(
     
     return mcp_data, chart_config, echarts_option
 
+
+def convert_simple_chart_to_echarts(simple_chart: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    将简化格式的图表配置转换为完整的 ECharts 配置
+
+    支持的简化格式:
+    {
+        "chart_type": "line" | "bar" | "pie" | "scatter",
+        "title": "图表标题",
+        "x_data": [...],           # X轴数据（类别/时间）
+        "y_data": [...],           # Y轴数据（数值）
+        "series_name": "系列名称"   # 可选
+    }
+
+    Args:
+        simple_chart: 简化格式的图表配置
+
+    Returns:
+        完整的 ECharts 配置，如果格式无效则返回 None
+    """
+    if not simple_chart or not isinstance(simple_chart, dict):
+        return None
+
+    # 提取必需字段
+    chart_type = simple_chart.get("chart_type", "bar")
+    title = simple_chart.get("title", "数据可视化")
+    x_data = simple_chart.get("x_data", [])
+    y_data = simple_chart.get("y_data", [])
+    series_name = simple_chart.get("series_name", "数值")
+
+    # 验证数据
+    if not x_data or not y_data:
+        return None
+
+    # 饼图需要特殊处理（需要 category + value 格式）
+    if chart_type == "pie":
+        # 将 x_data 和 y_data 转换为饼图格式
+        pie_data = []
+        for i, x in enumerate(x_data):
+            if i < len(y_data):
+                pie_data.append({"name": str(x), "value": y_data[i]})
+
+        return {
+            "title": {"text": title},
+            "tooltip": {"trigger": "item", "formatter": "{a} <br/>{b}: {c} ({d}%)"},
+            "legend": {"orient": "vertical", "left": "left"},
+            "series": [{
+                "name": series_name,
+                "type": "pie",
+                "radius": "50%",
+                "data": pie_data,
+                "emphasis": {
+                    "itemStyle": {
+                        "shadowBlur": 10,
+                        "shadowOffsetX": 0,
+                        "shadowColor": "rgba(0, 0, 0, 0.5)"
+                    }
+                }
+            }]
+        }
+
+    # 柱状图、折线图、散点图（坐标系图表）
+    return {
+        "title": {"text": title},
+        "tooltip": {"trigger": "axis"},
+        "xAxis": {
+            "type": "category",
+            "data": [str(x) for x in x_data]
+        },
+        "yAxis": {
+            "type": "value"
+        },
+        "series": [{
+            "name": series_name,
+            "type": chart_type,
+            "data": y_data,
+            "smooth": chart_type == "line"  # 折线图启用平滑
+        }],
+        "grid": {
+            "left": "15%",
+            "right": "5%",
+            "bottom": "10%",
+            "top": "15%",
+            "containLabel": True
+        }
+    }
+
+
+def extract_simple_charts_from_text(text: str) -> List[Dict[str, Any]]:
+    """
+    从文本中提取所有简化格式的图表配置
+
+    支持从 markdown 代码块中提取 JSON，格式如：
+    ```json
+    {"chart_type": "line", "x_data": [...], "y_data": [...]}
+    ```
+
+    Args:
+        text: 要解析的文本内容
+
+    Returns:
+        提取到的图表配置列表（已转换为完整的 ECharts 格式）
+    """
+    import re
+    import json
+
+    charts = []
+
+    if not text:
+        return charts
+
+    # 尝试匹配 markdown 代码块中的 JSON
+    # 格式：```json ... ``` 或 ``` ... ```
+    code_block_pattern = r'```(?:json)?\s*\n(\{[\s\S]*?\})\s*```'
+    matches = re.findall(code_block_pattern, text)
+
+    for json_str in matches:
+        try:
+            chart_data = json.loads(json_str)
+            # 检查是否是简化格式（包含 x_data 和 y_data）
+            if "x_data" in chart_data and "y_data" in chart_data:
+                echarts_option = convert_simple_chart_to_echarts(chart_data)
+                if echarts_option:
+                    charts.append(echarts_option)
+            # 如果已经是完整的 ECharts 格式，直接添加
+            elif "xAxis" in chart_data or "series" in chart_data:
+                charts.append(chart_data)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    return charts
+

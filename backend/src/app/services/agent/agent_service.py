@@ -90,6 +90,8 @@ from .data_transformer import (
     infer_chart_type,
     sql_result_to_mcp_echarts_data,
     sql_result_to_echarts_data,
+    extract_simple_charts_from_text,
+    convert_simple_chart_to_echarts,
 )
 from .response_formatter import format_api_response, format_error_response
 
@@ -1034,15 +1036,93 @@ async def build_agent(
         else:
             messages = system_msgs + non_system_msgs
 
+        # 🔧 图表拆分/合并关键词检测（用于强制工具调用）
+        CHART_SPLIT_KEYWORDS = ["分开", "拆分", "分别显示", "单独展示", "单独显示", "各自显示", "拆成"]
+        CHART_MERGE_KEYWORDS = ["合并", "合在一起", "放到一起", "合并在一张图", "合并到一起", "合并显示", "组合"]
+
+        # 检测是否是拆分或合并请求
+        last_human_message = None
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                last_human_message = msg.content
+                break
+
+        is_split_request = False
+        is_merge_request = False
+        if last_human_message:
+            is_split_request = any(keyword in str(last_human_message) for keyword in CHART_SPLIT_KEYWORDS)
+            is_merge_request = any(keyword in str(last_human_message) for keyword in CHART_MERGE_KEYWORDS)
+
+        # 记录检测结果
+        if is_split_request:
+            logger.info(f"📊 [拆分请求] 检测到图表拆分请求: '{last_human_message[:50]}...'")
+        if is_merge_request:
+            logger.info(f"📊 [合并请求] 检测到图表合并请求: '{last_human_message[:50]}...'")
+
         # Inject system prompt if not present
         if not any(isinstance(m, SystemMessage) for m in messages):
             # 🔥 修复：检测文件模式，添加早期停止规则
             # 检查是否有文件数据源工具（inspect_file 或 analyze_dataframe）
             is_file_mode = any(
-                getattr(tool, "name", "") in ["inspect_file", "analyze_dataframe"] 
+                getattr(tool, "name", "") in ["inspect_file", "analyze_dataframe"]
                 for tool in _cached_tools
             ) if _cached_tools else False
-            
+
+            # 🔧 图表拆分/合并请求的增强系统提示词
+            chart_instructions = ""
+            if is_split_request:
+                chart_instructions = """
+## 🚨🚨🚨【图表拆分请求 - 必须执行工具调用】🚨🚨🚨
+
+用户刚刚请求将图表拆分（说"分开"、"拆分"等）。
+
+**你必须执行以下操作，不能只输出文本：**
+
+1. **第1步**：调用 `execute_sql_safe` 工具执行SQL查询获取数据
+2. **第2步**：为每个指标调用单独的图表工具（如 `generate_echarts`）
+
+**禁止行为**：
+- ❌ 只输出SQL语句而不调用 `execute_sql_safe` 工具
+- ❌ 只输出JSON配置而不调用图表工具
+- ❌ 解释SQL而不执行
+
+**正确响应示例**：
+用户说：把这张图分开
+你的响应：
+1. 调用 execute_sql_safe 工具执行 SQL
+2. 调用 generate_echarts 工具生成第一个指标的图表
+3. 调用 generate_echarts 工具生成第二个指标的图表
+
+现在请执行工具调用，不要只输出文本！
+"""
+            elif is_merge_request:
+                chart_instructions = """
+## 🚨🚨🚨【图表合并请求 - 必须执行工具调用】🚨🚨🚨
+
+用户刚刚请求将图表合并（说"合并"、"合在一起"等）。
+
+**你必须执行以下操作：**
+
+1. **分析历史对话**：从对话历史中找出之前生成的所有图表配置
+2. **提取图表数据**：提取每个图表的 xAxis、yAxis、series 等配置
+3. **生成合并图表**：调用 `generate_echarts` 工具生成双Y轴合并图表
+
+**合并规则**：
+- 数值量级差异>10倍的分配到不同Y轴
+- 金额类指标（销售额、收入）→ 左Y轴（yAxisIndex: 0）
+- 数量类指标（订单数、人数）→ 右Y轴（yAxisIndex: 1）
+- 使用不同图表类型区分（折线图表示趋势，柱状图表示数量）
+
+**禁止行为**：
+- ❌ 只输出文本说明而不生成图表
+- ❌ 要求用户手动选择图表
+- ❌ 解释如何合并而不实际执行
+
+**输出格式**：必须使用 [CHART_START]...[CHART_END] 格式输出完整的图表配置。
+
+现在请执行工具调用生成合并图表！
+"""
+
             # 如果是文件模式，添加强制早期停止规则（核弹级严格版本）
             if is_file_mode:
                 file_mode_instructions = (
@@ -1075,10 +1155,46 @@ async def build_agent(
                     "- SQL 工具已被禁用。\n\n"
                     "**记住：看到数据 = 立即停止 = 立即回答。不要犹豫，不要完善，不要分析分类！**\n"
                 )
-                enhanced_system_prompt = system_prompt + file_mode_instructions
+                enhanced_system_prompt = system_prompt + chart_instructions + file_mode_instructions
                 messages = [SystemMessage(content=enhanced_system_prompt)] + messages
             else:
-                messages = [SystemMessage(content=system_prompt)] + messages
+                enhanced_system_prompt = system_prompt + chart_instructions
+                messages = [SystemMessage(content=enhanced_system_prompt)] + messages
+
+        # 🔧 如果已有系统消息且是拆分/合并请求，需要替换系统消息以包含增强提示词
+        elif is_split_request or is_merge_request:
+            # 移除旧的系统消息，添加增强的系统消息
+            messages = [m for m in messages if not isinstance(m, SystemMessage)]
+
+            # 添加增强的系统提示词
+            if is_split_request:
+                chart_instructions = """
+## 🚨🚨🚨【图表拆分请求 - 必须执行工具调用】🚨🚨🚨
+
+用户刚刚请求将图表拆分。
+
+**你必须执行以下操作：**
+1. 调用 `execute_sql_safe` 工具执行SQL
+2. 为每个指标调用单独的图表工具
+
+**禁止只输出文本而不调用工具！**
+"""
+            else:  # is_merge_request
+                chart_instructions = """
+## 🚨🚨🚨【图表合并请求 - 必须执行工具调用】🚨🚨🚨
+
+用户刚刚请求将图表合并。
+
+**你必须执行以下操作：**
+1. 从对话历史中提取之前生成的图表配置
+2. 调用 `generate_echarts` 工具生成双Y轴合并图表
+
+**禁止只输出文本而不调用工具！**
+"""
+
+            enhanced_system_prompt = system_prompt + chart_instructions
+            messages = [SystemMessage(content=enhanced_system_prompt)] + messages
+            logger.info(f"📊 [增强提示词] 已为{'拆分' if is_split_request else '合并'}请求添加增强系统提示词")
 
         try:
             response = await llm_with_tools.ainvoke(messages)
@@ -1105,6 +1221,55 @@ async def build_agent(
                 response = await fallback_llm_with_tools.ainvoke(messages)
             else:
                 raise Exception(f"所有LLM Provider都不可用。原始错误: {e}")
+
+        # 🔧 强制工具调用逻辑：如果是拆分/合并请求但LLM没有调用工具，强制提取SQL并创建工具调用
+        if (is_split_request or is_merge_request) and not response.tool_calls:
+            logger.warning(f"📊 [强制工具调用] 检测到{'拆分' if is_split_request else '合并'}请求但LLM未调用工具，尝试强制执行...")
+            content = response.content or ""
+
+            # 尝试提取SQL（使用正则表达式）
+            import re
+            sql_pattern = r'```sql\s*([\s\S]*?)\s*```'
+            sql_matches = re.findall(sql_pattern, str(content))
+
+            if sql_matches:
+                # 提取所有SQL
+                extracted_sqls = [match.strip() for match in sql_matches]
+                logger.info(f"📊 [强制工具调用] 提取到 {len(extracted_sqls)} 个SQL: {[s[:50] + '...' for s in extracted_sqls]}")
+
+                # 验证SQL安全性并创建工具调用
+                from src.app.core.security import SQLValidator
+                import uuid
+
+                forced_tool_calls = []
+                for sql in extracted_sqls:
+                    is_safe, error_msg = SQLValidator.validate(sql)
+                    if not is_safe:
+                        logger.warning(f"⚠️ [强制工具调用] 提取的SQL不安全，跳过: {error_msg}")
+                        continue
+
+                    # 创建强制工具调用
+                    forced_tool_call = {
+                        "name": "execute_sql_safe",  # 正确的工具名称
+                        "args": {"sql": sql},
+                        "id": str(uuid.uuid4()),
+                    }
+                    forced_tool_calls.append(forced_tool_call)
+
+                if forced_tool_calls:
+                    # 创建新的响应，带有工具调用
+                    from langchain_core.messages import AIMessage
+                    enhanced_response = AIMessage(
+                        content=f"好的，我来执行查询{'拆分图表' if is_split_request else '合并图表'}。",
+                        tool_calls=forced_tool_calls
+                    )
+                    logger.info(f"📊 [强制工具调用] 已创建 {len(forced_tool_calls)} 个强制工具调用")
+                    return {"messages": [enhanced_response]}
+                else:
+                    logger.warning("⚠️ [强制工具调用] 所有SQL都不安全，无法强制执行")
+            else:
+                logger.warning("⚠️ [强制工具调用] 未能从响应中提取SQL")
+
         return {"messages": [response]}
 
     # Define routing logic
@@ -1342,10 +1507,43 @@ async def run_agent(
         hallucination_detected = False
         hallucination_reason = []
 
+        # 🔧 修复：从 checkpointer 恢复历史对话状态
+        # 获取当前 thread 的状态，以便恢复之前的对话上下文
+        current_state = None
+        try:
+            state_snapshot = agent.get_state(config)
+            if state_snapshot and hasattr(state_snapshot, 'values') and state_snapshot.values:
+                current_state = state_snapshot.values
+                existing_messages = current_state.get("messages", [])
+                logger.info(f"📋 [多轮对话] 检查到 thread_id={thread_id} 已有 {len(existing_messages)} 条历史消息")
+                # 记录历史消息的类型和内容概要（用于诊断）
+                for i, msg in enumerate(existing_messages[-3:]):  # 只记录最后3条
+                    msg_type = type(msg).__name__
+                    if hasattr(msg, 'content'):
+                        content_preview = str(msg.content)[:100] if msg.content else "(empty)"
+                    else:
+                        content_preview = "(no content)"
+                    logger.info(f"📋 [历史消息 {i+1}] {msg_type}: {content_preview}")
+            else:
+                logger.info(f"📋 [多轮对话] thread_id={thread_id} 没有历史消息，开始新对话")
+        except Exception as e:
+            logger.warning(f"⚠️ 获取 checkpointer 状态失败，将创建新对话: {e}")
+            current_state = None
+
+        # 构建输入消息：如果有历史消息，在其后追加；否则创建新消息
+        if current_state and "messages" in current_state:
+            # 追加新消息到历史对话
+            input_messages = current_state["messages"] + [HumanMessage(content=question)]
+            logger.info(f"📋 [多轮对话] 追加新消息到历史对话，总消息数: {len(input_messages)}")
+        else:
+            # 新对话
+            input_messages = [HumanMessage(content=question)]
+            logger.info(f"📋 [多轮对话] 创建新对话")
+
         # Stream execution
         try:
             async for step in agent.astream(
-                {"messages": [HumanMessage(content=question)]},
+                {"messages": input_messages},
                 config,
                 stream_mode="updates",
             ):
@@ -1691,7 +1889,15 @@ async def run_agent(
                     # Keep original content if parsing fails
                     cleaned_content = final_content
             else:
-                # No chart configuration found, keep original content
+                # No [CHART_START]...[CHART_END] marker found, try to extract simple format
+                logger.info("[DEBUG] No [CHART_START] marker found, trying to extract simple chart format...")
+                simple_charts = extract_simple_charts_from_text(final_content)
+                if simple_charts:
+                    # 使用第一个提取到的图表（如果有多个图表，这里只取第一个）
+                    echarts_option_from_text = simple_charts[0]
+                    logger.info(f"✅ Successfully extracted {len(simple_charts)} simple chart(s) from markdown code blocks")
+                    # 可选：如果需要支持多图表，可以将所有图表保存到列表中
+                    # simple_charts_list = simple_charts
                 cleaned_content = final_content
 
         # 🔥 第一步修复：SQL 提取兜底逻辑（被动触发）

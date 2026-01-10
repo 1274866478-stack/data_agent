@@ -192,27 +192,27 @@ function SQLCodeRenderer({ sql, defaultExpanded = false }: SQLCodeRendererProps)
   const charCount = sql.length
 
   return (
-    <div className="mt-2 rounded-md bg-gray-900 overflow-hidden">
+    <div className="mt-2 rounded-md bg-slate-100 overflow-hidden border border-slate-200">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center justify-between px-3 py-1.5 bg-gray-800 border-b border-gray-700 hover:bg-gray-700 transition-colors"
+        className="w-full flex items-center justify-between px-3 py-1.5 bg-slate-200 border-b border-slate-300 hover:bg-slate-300 transition-colors"
       >
-        <span className="text-xs font-medium text-gray-300 flex items-center gap-2">
-          <Code2 className="w-3.5 h-3.5" />
+        <span className="text-xs font-medium text-slate-700 flex items-center gap-2">
+          <Code2 className="w-3.5 h-3.5 text-indigo-600" />
           SQL
-          <span className="text-gray-500 font-normal">
+          <span className="text-slate-500 font-normal">
             ({lineCount} 行, {charCount} 字符)
           </span>
         </span>
         {isExpanded ? (
-          <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
+          <ChevronUp className="w-3.5 h-3.5 text-slate-500" />
         ) : (
-          <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+          <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
         )}
       </button>
       {isExpanded && (
-        <pre className="p-3 overflow-x-auto max-h-64 overflow-y-auto">
-          <code className="text-xs text-green-400 font-mono">{sql}</code>
+        <pre className="p-3 overflow-x-auto max-h-64 overflow-y-auto bg-white">
+          <code className="text-xs text-slate-800 font-mono">{sql}</code>
         </pre>
       )}
     </div>
@@ -222,12 +222,15 @@ function SQLCodeRenderer({ sql, defaultExpanded = false }: SQLCodeRendererProps)
 // 渲染SQL代码块（简单版本，用于非步骤4）
 function renderSQLCode(sql: string) {
   return (
-    <div className="mt-2 rounded-md bg-gray-900 overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-gray-800 border-b border-gray-700">
-        <span className="text-xs font-medium text-gray-300">SQL</span>
+    <div className="mt-2 rounded-md bg-slate-100 overflow-hidden border border-slate-200">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-200 border-b border-slate-300">
+        <span className="text-xs font-medium text-slate-700 flex items-center gap-2">
+          <Code2 className="w-3.5 h-3.5 text-indigo-600" />
+          SQL
+        </span>
       </div>
-      <pre className="p-3 overflow-x-auto">
-        <code className="text-xs text-green-400 font-mono">{sql}</code>
+      <pre className="p-3 overflow-x-auto bg-white">
+        <code className="text-xs text-slate-800 font-mono">{sql}</code>
       </pre>
     </div>
   )
@@ -318,45 +321,190 @@ function TableDataRenderer({ table }: TableDataRendererProps) {
   )
 }
 
+/**
+ * 解析数据分析文本，提取总结和图表说明
+ * 返回: { summary: 总结部分, chartDescriptions: 图表说明数组 }
+ */
+function parseAnalysisText(text: string): { summary: string; chartDescriptions: string[] } {
+  if (!text) return { summary: '', chartDescriptions: [] }
+
+  // 查找第一个图表标题的位置（如"第一个图表"、"图表1"等）
+  const chartTitlePattern = /(?:第\s*[一二三四五六七八九十\d]+\s*个?图表[:：]?\s*)|(?:图表\s*[一二三四五六七八九十\d]+[:：]?\s*)/i
+  const firstChartIndex = text.search(chartTitlePattern)
+
+  // 如果找到图表标题，分割文本
+  if (firstChartIndex > 0) {
+    const summaryPart = text.substring(0, firstChartIndex).trim()
+    const chartPart = text.substring(firstChartIndex)
+
+    // 解析图表说明
+    const chartDescriptions: string[] = []
+    const parts = chartPart.split(chartTitlePattern)
+
+    // 找到所有图表标题
+    const chartTitles = chartPart.match(/(?:第\s*[一二三四五六七八九十\d]+\s*个?图表[:：]?\s*[^。\n]*)|(?:图表\s*[一二三四五六七八九十\d]+[:：]?\s*[^。\n]*)/gi)
+
+    if (chartTitles && chartTitles.length > 0) {
+      let contentIndex = 1  // 跳过第一个空部分
+      for (let i = 0; i < chartTitles.length; i++) {
+        const title = chartTitles[i].trim()
+        const content = parts[contentIndex]?.trim() || ''
+        if (title || content) {
+          chartDescriptions.push(`${title}${content ? '：' + content : ''}`)
+        }
+        contentIndex++
+      }
+    }
+
+    return {
+      summary: summaryPart,
+      chartDescriptions: chartDescriptions.length > 0 ? chartDescriptions : []
+    }
+  }
+
+  // 没有找到图表标题，返回整个文本作为总结
+  return { summary: text, chartDescriptions: [] }
+}
+
+/**
+ * 规范化 ECharts 配置，确保纵坐标标签完整显示
+ * 自动添加合理的 grid 配置和坐标轴边距
+ */
+function normalizeEChartsOption(option: any): any {
+  if (!option || typeof option !== 'object') return option
+
+  // 深拷贝避免修改原始配置
+  const normalized = JSON.parse(JSON.stringify(option))
+
+  // 如果已有 grid 配置，确保 left 值足够大
+  if (normalized.grid) {
+    if (Array.isArray(normalized.grid)) {
+      normalized.grid.forEach((g: any) => {
+        if (!g.left || g.left === '3%' || g.left === '10%') {
+          g.left = '15%'
+        }
+        if (!g.right || g.right === '4%' || g.right === '10%') {
+          g.right = '5%'
+        }
+        if (!g.bottom || g.bottom === '3%') {
+          g.bottom = '10%'
+        }
+        if (!g.containLabel) {
+          g.containLabel = true
+        }
+      })
+    } else {
+      if (!normalized.grid.left || normalized.grid.left === '3%' || normalized.grid.left === '10%') {
+        normalized.grid.left = '15%'
+      }
+      if (!normalized.grid.right || normalized.grid.right === '4%' || normalized.grid.right === '10%') {
+        normalized.grid.right = '5%'
+      }
+      if (!normalized.grid.bottom || normalized.grid.bottom === '3%') {
+        normalized.grid.bottom = '10%'
+      }
+      if (!normalized.grid.containLabel) {
+        normalized.grid.containLabel = true
+      }
+    }
+  } else {
+    // 没有 grid 配置时，添加默认配置
+    normalized.grid = {
+      left: '15%',
+      right: '5%',
+      bottom: '10%',
+      top: '15%',
+      containLabel: true
+    }
+  }
+
+  // 确保 yAxis 有足够的空间显示标签
+  if (normalized.yAxis) {
+    if (Array.isArray(normalized.yAxis)) {
+      normalized.yAxis.forEach((axis: any) => {
+        if (axis.axisLabel && axis.axisLabel.margin === undefined) {
+          axis.axisLabel.margin = 20
+        }
+      })
+    } else if (normalized.yAxis.axisLabel && normalized.yAxis.axisLabel.margin === undefined) {
+      normalized.yAxis.axisLabel.margin = 20
+    }
+  }
+
+  // 确保 xAxis 也有合理配置
+  if (normalized.xAxis) {
+    if (Array.isArray(normalized.xAxis)) {
+      normalized.xAxis.forEach((axis: any) => {
+        if (axis.axisLabel && axis.axisLabel.margin === undefined) {
+          axis.axisLabel.margin = 15
+        }
+      })
+    } else if (normalized.xAxis.axisLabel && normalized.xAxis.axisLabel.margin === undefined) {
+      normalized.xAxis.axisLabel.margin = 15
+    }
+  }
+
+  return normalized
+}
+
 // 渲染图表
-function renderChart(chart: StepChartData) {
+function renderChart(chart: StepChartData, description?: string) {
+  // 图表说明文字（显示在图表上方）
+  const descriptionElement = description && description.trim() && (
+    <div className="mb-2 p-3 rounded-md bg-blue-50 border border-blue-200">
+      <div className="text-xs font-medium text-blue-700 mb-1">图表说明</div>
+      <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+        {description}
+      </p>
+    </div>
+  )
+
   if (chart.echarts_option) {
+    // 规范化配置，确保坐标轴标签完整显示
+    const normalizedOption = normalizeEChartsOption(chart.echarts_option)
+
     return (
-      <div className="mt-2 rounded-md border border-blue-200 overflow-hidden bg-white">
-        <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border-b border-blue-200">
-          <span className="text-xs font-medium text-blue-700">数据可视化</span>
-          {chart.chart_type && (
-            <span className="text-xs text-blue-500 uppercase">{chart.chart_type}</span>
-          )}
+      <>
+        {descriptionElement}
+        <div className="mt-2 rounded-md border border-blue-200 overflow-hidden bg-white">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border-b border-blue-200">
+            <span className="text-xs font-medium text-blue-700">数据可视化</span>
+            {chart.chart_type && (
+              <span className="text-xs text-blue-500 uppercase">{chart.chart_type}</span>
+            )}
+          </div>
+          <div className="p-2">
+            <ReactECharts
+              option={normalizedOption}
+              style={{ width: '100%', minHeight: '400px' }}
+              opts={{ renderer: 'canvas' }}
+              notMerge={false}
+              lazyUpdate={false}
+            />
+          </div>
         </div>
-        <div className="p-2">
-          <ReactECharts
-            option={chart.echarts_option}
-            style={{ width: '100%', minHeight: '400px' }}
-            opts={{ renderer: 'canvas' }}
-            notMerge={false}
-            lazyUpdate={false}
-          />
-        </div>
-      </div>
+      </>
     )
   }
 
   if (chart.chart_image) {
     return (
-      <div className="mt-2 rounded-md border border-blue-200 overflow-hidden bg-white">
-        <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border-b border-blue-200">
-          <span className="text-xs font-medium text-blue-700">数据可视化</span>
+      <>
+        {descriptionElement}
+        <div className="mt-2 rounded-md border border-blue-200 overflow-hidden bg-white">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border-b border-blue-200">
+            <span className="text-xs font-medium text-blue-700">数据可视化</span>
+          </div>
+          <div className="p-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={chart.chart_image}
+              alt={chart.title || '图表'}
+              className="w-full h-auto rounded"
+            />
+          </div>
         </div>
-        <div className="p-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={chart.chart_image}
-            alt={chart.title || '图表'}
-            className="w-full h-auto rounded"
-          />
-        </div>
-      </div>
+      </>
     )
   }
 
@@ -370,9 +518,9 @@ function renderStepContent(step: ProcessingStep) {
   switch (step.content_type) {
     case 'sql':
       if (step.content_data.sql) {
-        // 步骤4（SQL生成）使用可折叠版本
+        // 步骤4（SQL生成）使用可折叠版本，默认展开
         if (step.step === 4) {
-          return <SQLCodeRenderer sql={step.content_data.sql} defaultExpanded={false} />
+          return <SQLCodeRenderer sql={step.content_data.sql} defaultExpanded={true} />
         }
         return renderSQLCode(step.content_data.sql)
       }
@@ -413,13 +561,64 @@ function renderStepContent(step: ProcessingStep) {
   return null
 }
 
+// 🔧 新增：渲染步骤内容（带图表说明配对功能）
+interface RenderStepContentOptions {
+  step: ProcessingStep
+  chartDescriptions: string[]
+  chartIndex: number
+  summary?: string  // 数据分析总结（非图表部分）
+}
+
+function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex, summary }: RenderStepContentOptions) {
+  if (!step.content_type || !step.content_data) return null
+
+  // 如果是步骤7（图表），且有可用的图表说明，配对显示
+  if (step.content_type === 'chart' && step.content_data.chart && step.step === 7) {
+    const description = chartDescriptions[chartIndex]
+    return renderChart(step.content_data.chart, description)
+  }
+
+  // 如果是步骤8（text类型的数据分析），显示总结部分（如果有）
+  if (step.step === 8 && step.content_type === 'text') {
+    // 如果有总结（summary），显示总结；否则显示原始文本
+    const textToShow = summary && summary.trim() ? summary : step.content_data.text
+    if (!textToShow) return null
+
+    return (
+      <div className="mt-2 p-3 rounded-md bg-blue-50 border border-blue-200">
+        <div className="text-xs font-medium text-blue-700 mb-1">数据分析总结</div>
+        <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+          {textToShow}
+        </p>
+      </div>
+    )
+  }
+
+  // 其他情况使用原有逻辑
+  return renderStepContent(step)
+}
+
 export function ProcessingSteps({ steps, className, defaultExpanded = true }: ProcessingStepsProps) {
   const [isExpanded, setIsExpanded] = React.useState(defaultExpanded)
-  
+
   // 调试日志
   console.log('[ProcessingSteps] 渲染，steps数量:', steps?.length, steps)
-  
+
   if (!steps || steps.length === 0) return null
+
+  // 🔧 新增：提取和配对图表说明
+  // 1. 查找步骤8（数据分析文本）
+  const step8 = steps.find(s => s.step === 8 && s.content_type === 'text' && s.content_data?.text)
+  const analysisText = step8?.content_data?.text || ''
+
+  // 2. 解析文本：提取总结和图表说明
+  const { summary, chartDescriptions } = React.useMemo(
+    () => parseAnalysisText(analysisText),
+    [analysisText]
+  )
+
+  // 3. 统计图表数量和当前图表索引
+  let currentChartIndex = 0
 
   // 计算总耗时
   const totalDuration = steps.reduce((sum, step) => sum + (step.duration || 0), 0)
@@ -472,76 +671,97 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
       {/* 步骤列表 */}
       {isExpanded && (
         <div className="px-3 pb-3 space-y-2">
-          {steps.map((step, index) => {
-            // 🔧 重构：支持多图表 - 使用 step号 + chart_index 作为唯一key
-            const chartIndex = step.content_data?.chart?.chart_index
-            const uniqueKey = chartIndex !== undefined
-              ? `step-${step.step}-chart-${chartIndex}`
-              : `step-${step.step || index}`
+          {(() => {
+            // 🔧 在 map 外部维护图表索引计数器
+            let currentChartIndex = 0
 
-            return (
-            <div
-              key={uniqueKey}
-              className={cn(
-                'rounded-md border p-2 transition-all duration-300',
-                getStatusColor(step.status)
-              )}
-            >
-              <div className="flex items-start gap-2">
-                {/* 步骤图标 */}
-                <div className="mt-0.5">
-                  {getStepIcon(step.step, step.title, step.status)}
-                </div>
-                
-                {/* 步骤内容 */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={cn(
-                      'text-xs font-medium',
-                      step.status === 'completed' ? 'text-green-700' :
-                      step.status === 'running' ? 'text-blue-700' :
-                      step.status === 'error' ? 'text-red-700' :
-                      'text-gray-600'
-                    )}>
-                      {step.step}. {step.title}
-                    </span>
-                    {step.duration && step.status === 'completed' && (
-                      <span className="text-xs text-gray-500">
-                        {formatDuration(step.duration)}
-                      </span>
-                    )}
+            return steps.map((step, index) => {
+              // 🔧 重构：支持多图表 - 使用 step号 + chart_index 作为唯一key
+              const chartIndexAttr = step.content_data?.chart?.chart_index
+              const uniqueKey = chartIndexAttr !== undefined
+                ? `step-${step.step}-chart-${chartIndexAttr}`
+                : `step-${step.step || index}`
+
+              // 🔧 计算当前步骤的图表索引（用于配对说明）
+              let thisChartIndex = currentChartIndex
+              if (step.step === 7 && step.content_type === 'chart') {
+                thisChartIndex = currentChartIndex
+                currentChartIndex++  // 为下一个图表递增索引
+              }
+
+              return (
+              <div
+                key={uniqueKey}
+                className={cn(
+                  'rounded-md border p-2 transition-all duration-300',
+                  getStatusColor(step.status)
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  {/* 步骤图标 */}
+                  <div className="mt-0.5">
+                    {getStepIcon(step.step, step.title, step.status)}
                   </div>
-                  
-                  {step.description && (
-                    <p className="text-xs text-gray-600 mt-0.5">
-                      {step.description}
-                    </p>
-                  )}
 
-                  {/* 🔧 实时内容预览（当步骤正在运行时），支持打字机光标效果 */}
-                  {step.status === 'running' && step.content_preview && (
-                    <div className="mt-2 p-2 rounded-md bg-blue-50 border border-blue-200">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
-                        <span className="text-xs font-medium text-blue-700">
-                          {step.step === 8 ? '正在生成分析...' : '正在生成...'}
-                        </span>
-                      </div>
-                      <div className={cn(
-                        "text-xs text-gray-700 whitespace-pre-wrap break-words max-h-48 overflow-y-auto",
-                        step.step === 8 ? "font-normal leading-relaxed" : "font-mono"
+                  {/* 步骤内容 */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={cn(
+                        'text-xs font-medium',
+                        step.status === 'completed' ? 'text-green-700' :
+                        step.status === 'running' ? 'text-blue-700' :
+                        step.status === 'error' ? 'text-red-700' :
+                        'text-gray-600'
                       )}>
-                        {step.content_preview}
-                        {/* 🔧 打字机光标效果（仅在流式输出时显示） */}
-                        {step.streaming && (
-                          <span className="inline-block w-0.5 h-4 bg-blue-500 animate-pulse ml-0.5 align-middle" />
-                        )}
-                      </div>
+                        {step.step}. {step.title}
+                      </span>
+                      {step.duration && step.status === 'completed' && (
+                        <span className="text-xs text-gray-500">
+                          {formatDuration(step.duration)}
+                        </span>
+                      )}
                     </div>
-                  )}
 
-                  {/* 渲染步骤内容（SQL、表格、图表） */}
-                  {renderStepContent(step)}
+                    {step.description && (
+                      <p className="text-xs text-gray-600 mt-0.5">
+                        {step.description}
+                      </p>
+                    )}
+
+                    {/* 🔧 实时内容预览（当步骤正在运行时），支持打字机光标效果 */}
+                    {/* 🔧 修改：步骤0即使在 completed 状态也显示 content_preview（用于显示临时内容） */}
+                    {(step.status === 'running' || (step.step === 0 && step.content_preview)) && step.content_preview && (
+                      <div className="mt-2 p-2 rounded-md bg-blue-50 border border-blue-200">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          {step.status === 'running' ? (
+                            <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
+                          ) : (
+                            <CheckCircle2 className="w-3 h-3 text-green-500" />
+                          )}
+                          <span className="text-xs font-medium text-blue-700">
+                            {step.step === 8 ? '正在生成分析...' : '正在生成...'}
+                          </span>
+                        </div>
+                        <div className={cn(
+                          "text-xs text-gray-700 whitespace-pre-wrap break-words max-h-48 overflow-y-auto",
+                          step.step === 8 ? "font-normal leading-relaxed" : "font-mono"
+                        )}>
+                          {step.content_preview}
+                          {/* 🔧 打字机光标效果（仅在流式输出时显示） */}
+                          {step.streaming && (
+                            <span className="inline-block w-0.5 h-4 bg-blue-500 animate-pulse ml-0.5 align-middle" />
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 🔧 渲染步骤内容（使用配对版本的函数） */}
+                    {renderStepContentWithDescriptions({
+                      step,
+                      chartDescriptions,
+                      chartIndex: thisChartIndex,
+                      summary
+                    })}
 
                   {/* 详情（如SQL内容） - 仅当没有content_type时显示 */}
                   {step.details && !step.content_type && (
@@ -554,10 +774,12 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
                       </pre>
                     </details>
                   )}
+                  </div>
                 </div>
               </div>
-            </div>
-          )})}  {/* 🔧 闭合 map 回调函数的 return 和函数体 */}
+            )
+            })
+          })()}
         </div>
       )}
     </div>

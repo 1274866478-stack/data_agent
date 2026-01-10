@@ -92,12 +92,32 @@ export function EChartsRenderer({
   }
 
   // 确保配置有基本的图表结构
+  const titleConfig = echartsOption.title || (title ? { text: title } : { text: '数据可视化' })
+
+  // 标题样式配置 - 调整字体大小避免压住图表内容
+  const normalizedTitle = typeof titleConfig === 'string'
+    ? {
+        text: titleConfig,
+        textStyle: { fontSize: 14, fontWeight: 'normal' },
+        padding: [5, 0, 10, 0], // 上右下左内边距
+      }
+    : {
+        ...titleConfig,
+        textStyle: {
+          fontSize: 14,
+          fontWeight: 'normal',
+          ...titleConfig.textStyle,
+        },
+        padding: titleConfig.padding || [5, 0, 10, 0],
+      }
+
   const validatedOption = {
     ...echartsOption,
-    // 如果没有 title，使用传入的 title 或默认值
-    title: echartsOption.title || (title ? { text: title } : { text: '数据可视化' }),
+    title: normalizedTitle,
     // 确保 tooltip 存在
     tooltip: echartsOption.tooltip || { trigger: 'axis' },
+    // 增加 grid 顶部间距，为标题预留空间
+    grid: echartsOption.grid || { top: 60, containLabel: true },
   }
 
   return (

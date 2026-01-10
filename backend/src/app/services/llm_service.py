@@ -252,10 +252,13 @@ class ZhipuProvider(BaseLLMProvider):
                 "stream": stream
             }
 
-            # 启用思考模式
-            if enable_thinking:
+            # 🔧 修复：思考模式(thinking参数)仅在流式模式下启用
+            # 非流式模式下该参数会导致 [Errno 22] Invalid argument 错误
+            if enable_thinking and stream:
                 params["thinking"] = {"type": "enabled"}
-                logger.debug(f"智谱AI启用思考模式: {model}")
+                logger.debug(f"智谱AI启用思考模式(流式): {model}")
+            elif enable_thinking and not stream:
+                logger.info(f"思考模式仅在流式模式下支持，已禁用(model={model})")
 
             if stream:
                 return self._stream_response(params, model)

@@ -2489,6 +2489,43 @@ async def _stream_response_generator(
 
         logger.info(f"[_stream_response_generator] question_type={question_type.value if question_type else 'None'}, should_generate_chart={should_generate_chart}")
 
+        # 🔧🔧🔧 检测图表拆分请求（重要！）
+        # 当用户说"把图分开"、"拆分"、"分别显示"等关键词时，需要特殊处理
+        CHART_SPLIT_KEYWORDS = ["分开", "拆分", "分别显示", "单独展示", "单独显示", "各自显示", "拆成", "单独画", "各自画"]
+        is_split_request = False
+        chart_count = None  # 🔴 用户指定的图表数量
+        if original_question:
+            is_split_request = any(keyword in original_question for keyword in CHART_SPLIT_KEYWORDS)
+
+            # 🔴🔴🔴 检测用户指定的图表数量
+            if is_split_request:
+                # re 模块已在文件顶部导入，无需重复导入
+                number_patterns = [
+                    r'拆(?:分)?(?:成)?([一二三四五六七八九十\d]+)个',
+                    r'分成([一二三四五六七八九十\d]+)个',
+                    r'分[别成]([一二三四五六七八九十\d]+)个',
+                    r'分别显示([一二三四五六七八九十\d]+)个',
+                    r'单独展示([一二三四五六七八九十\d]+)个',
+                ]
+                for pattern in number_patterns:
+                    match = re.search(pattern, original_question)
+                    if match:
+                        num_str = match.group(1)
+                        cn_nums = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+                                  '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
+                                  '1': 1, '2': 2, '3': 3, '4': 4, '5': 5,
+                                  '6': 6, '7': 7, '8': 8, '9': 9, '10': 10}
+                        chart_count = cn_nums.get(num_str, int(num_str) if num_str.isdigit() else None)
+                        if chart_count:
+                            logger.info(f"🔍 [图表数量检测] 匹配值: {num_str} → {chart_count} 个图表")
+                            break
+
+        if is_split_request:
+            count_info = f", 要求生成 {chart_count} 个图表" if chart_count else ""
+            logger.info(f"🔧🔧🔧 检测到图表拆分请求{count_info}！original_question={original_question[:50]}")
+        else:
+            logger.debug(f"未检测到拆分请求，original_question={original_question[:50]}")
+
         # 收集完整的响应内容
         full_content = ""
         thinking_content = ""
@@ -3664,6 +3701,62 @@ async def _stream_response_generator(
                                 # 构建多结果分析prompt
                                 multi_result_json = json.dumps(all_results_summary, ensure_ascii=False, indent=2)
 
+                                # 🔧 根据是否为拆分请求，添加不同的指令
+                                # 🔴🔴🔴 关键修复：根据用户指定的图表数量生成不同的指令
+                                if is_split_request and chart_count:
+                                    # 用户明确指定了图表数量
+                                    split_instruction = f"""
+**🚨🚨🚨 图表拆分要求（用户明确要求生成 {chart_count} 个独立图表）！**
+
+用户刚刚说"拆成{chart_count}个"或类似表达，**你必须生成恰好 {chart_count} 个图表配置！**
+
+🔴 **关键规则（必须严格遵守）**：
+1. 识别SQL结果中有哪些可度量指标（数值列）
+2. 如果指标数量 < {chart_count}，用不同图表类型展示同一指标：
+   - 同一指标可以生成：折线图 + 柱状图 + 饼图（如果是占比数据）
+   - 例如：2个指标要生成4个图 → 指标1折线图 + 指标1柱状图 + 指标2折线图 + 指标2柱状图
+3. 每个图表使用独立的 [CHART_START]...[CHART_END] 标记
+4. **必须生成恰好 {chart_count} 个图表，不能多也不能少！**
+
+🔴 **示例：生成 {chart_count} 个图表**
+假设有2个指标（销售额、订单数），用户要求 {chart_count} 个图表：
+第1个图表：销售额折线图
+[CHART_START]
+{{"title":{{"text":"销售额趋势"}},"series":[{{"type":"line"}}]}}
+[CHART_END]
+
+第2个图表：销售额柱状图
+[CHART_START]
+{{"title":{{"text":"销售额对比"}},"series":[{{"type":"bar"}}]}}
+[CHART_END]
+
+... 继续生成直到 {chart_count} 个图表 ...
+"""
+                                elif is_split_request:
+                                    # 用户只说拆分，没有指定数量
+                                    split_instruction = """
+**🚨🚨🚨 图表拆分要求（用户明确请求将图表拆分）！**
+
+用户要求将组合图表拆分成多个独立图表。你必须：
+1. 识别每个SQL结果中有哪些可度量指标（数值列）
+2. 为每个指标生成一个独立的图表配置
+3. 每个图表只包含一个指标的数据
+4. 例如：如果结果有"员工人数"和"平均薪资"两列，生成两个独立图表
+
+🔴 **拆分后图表示例**：
+第一个图表（员工人数柱状图）：
+[CHART_START]
+{"title":{"text":"各部门员工人数"},"xAxis":{"type":"category","data":["技术部","销售部"]},"yAxis":{"type":"value","name":"人数"},"series":[{"type":"bar","data":[10,8]}]}
+[CHART_END]
+
+第二个图表（平均薪资柱状图）：
+[CHART_START]
+{"title":{"text":"各部门平均薪资"},"xAxis":{"type":"category","data":["技术部","销售部"]},"yAxis":{"type":"value","name":"薪资(元)"},"series":[{"type":"bar","data":[15000,12000]}]}
+[CHART_END]
+"""
+                                else:
+                                    split_instruction = ""
+
                                 multi_analysis_prompt = f"""你刚刚执行了 {total_queries} 个SQL查询，所有结果如下：
 
 ```json
@@ -3672,6 +3765,8 @@ async def _stream_response_generator(
 
 --- 数据特征分析 ---
 {analysis_hints_text}
+
+{split_instruction}
 
 --- 任务要求 ---
 
@@ -3705,6 +3800,26 @@ async def _stream_response_generator(
 请直接输出分析和图表："""
 
                                 # 构建系统提示
+                                # 图表拆分指令（当用户请求拆分时添加）
+                                split_instruction_prompt = ""
+                                if is_split_request and chart_count:
+                                    # 用户明确指定了图表数量
+                                    split_instruction_prompt = (
+                                        f"**🚨🚨🚨 用户请求将图表拆分成 {chart_count} 个独立图表！**\n"
+                                        f"你必须生成恰好 {chart_count} 个图表配置！\n"
+                                        f"如果指标数量少于 {chart_count}，用不同图表类型（折线图、柱状图、饼图）展示同一指标。\n"
+                                        f"使用多个[CHART_START]...[CHART_END]标记，每个标记一个图表！\n\n"
+                                    )
+                                elif is_split_request:
+                                    split_instruction_prompt = (
+                                        "**🚨🚨🚨 用户请求将图表拆分！**\n"
+                                        "如果SQL结果包含多个指标（如员工人数和平均薪资），你必须：\n"
+                                        "1. 为每个指标生成独立的图表配置\n"
+                                        "2. 每个图表只包含一个指标的数据\n"
+                                        "3. 使用多个[CHART_START]...[CHART_END]标记\n"
+                                        "4. 不要把多个指标放在同一个图表里！\n\n"
+                                    )
+
                                 multi_chart_system_prompt = (
                                     "你是专业的数据分析师。你的任务是分析多个SQL查询结果并生成可视化图表。\n\n"
                                     "**核心原则**：\n"
@@ -3713,6 +3828,7 @@ async def _stream_response_generator(
                                     "3. 聚合结果（1行数据）不生成图表\n"
                                     "4. 使用标准ECharts JSON格式，用[CHART_START]...[CHART_END]标记\n"
                                     "5. 禁止使用JavaScript函数\n\n"
+                                    + split_instruction_prompt +
                                     "**图表类型选择**：\n"
                                     "- 时间序列 → 折线图 (line)\n"
                                     "- 排名/对比 → 柱状图 (bar)\n"
@@ -3842,8 +3958,23 @@ async def _stream_response_generator(
                                                     chart_json_str
                                                 )
 
-                                                echarts_option = json.loads(chart_json_str.strip())
-                                                logger.info(f"✅ 成功解析图表{chart_idx}: {list(echarts_option.keys())}")
+                                                # 尝试解析为 ECharts 配置
+                                                parsed_data = json.loads(chart_json_str.strip())
+
+                                                # 🔧 检测是否为简化格式（包含 x_data 和 y_data）
+                                                if "x_data" in parsed_data and "y_data" in parsed_data:
+                                                    # 转换简化格式为完整 ECharts 配置
+                                                    from src.app.services.agent.data_transformer import convert_simple_chart_to_echarts
+                                                    echarts_option = convert_simple_chart_to_echarts(parsed_data)
+                                                    if echarts_option:
+                                                        logger.info(f"✅ 成功转换简化格式图表{chart_idx}")
+                                                    else:
+                                                        logger.warning(f"⚠️ 简化格式转换失败，跳过图表{chart_idx}")
+                                                        continue
+                                                else:
+                                                    # 已经是完整的 ECharts 配置
+                                                    echarts_option = parsed_data
+                                                    logger.info(f"✅ 成功解析图表{chart_idx}: {list(echarts_option.keys())}")
 
                                                 # 发送图表配置事件
                                                 chart_event = {
@@ -3938,7 +4069,19 @@ async def _stream_response_generator(
             try:
                 chart_json_str = chart_match.group(1).strip()
                 # 解析 JSON
-                echarts_option = json.loads(chart_json_str)
+                parsed_data = json.loads(chart_json_str)
+
+                # 🔧 检测是否为简化格式（包含 x_data 和 y_data）
+                if "x_data" in parsed_data and "y_data" in parsed_data:
+                    # 转换简化格式为完整 ECharts 配置
+                    from src.app.services.agent.data_transformer import convert_simple_chart_to_echarts
+                    echarts_option = convert_simple_chart_to_echarts(parsed_data)
+                    if not echarts_option:
+                        logger.warning("⚠️ 简化格式转换失败，跳过图表显示")
+                        raise json.JSONDecodeError("转换失败", chart_json_str, 0)
+                else:
+                    echarts_option = parsed_data
+
                 logger.info(f"✅ 成功提取 ECharts 配置: {list(echarts_option.keys())}")
 
                 # 发送图表配置事件
@@ -3997,6 +4140,72 @@ async def _stream_response_generator(
         elif chart_match and chart_already_generated:
             # 🔧 修复：跳过fallback路径，因为图表已通过二次LLM调用生成
             logger.info("🔧 跳过fallback图表生成路径，图表已通过二次LLM调用生成")
+        elif should_generate_chart and not chart_already_generated:
+            # 🔧 新增：尝试从 markdown 代码块中提取简化格式的图表
+            # AI 可能没有使用 [CHART_START]...[CHART_END] 标记
+            logger.info("🔧 未找到 [CHART_START] 标记，尝试从 markdown 代码块提取简化格式图表...")
+            from src.app.services.agent.data_transformer import extract_simple_charts_from_text
+            simple_charts = extract_simple_charts_from_text(full_content)
+
+            if simple_charts:
+                logger.info(f"✅ 从 markdown 代码块提取到 {len(simple_charts)} 个简化格式图表")
+
+                for chart_idx, echarts_option in enumerate(simple_charts, 1):
+                    try:
+                        # 发送图表配置事件
+                        chart_chunk = {
+                            "type": "chart_config",
+                            "data": {
+                                "echarts_option": echarts_option,
+                                "chart_index": chart_idx
+                            },
+                            "provider": "deepseek",
+                            "finished": False,
+                            "tenant_id": tenant_id
+                        }
+                        yield f"data: {json.dumps(chart_chunk, ensure_ascii=False)}\n\n"
+
+                        # 推断图表类型
+                        chart_type = "图表"
+                        series_list = echarts_option.get("series", [])
+                        if series_list and len(series_list) > 0:
+                            series_type = series_list[0].get("type", "")
+                            if series_type:
+                                chart_type = {
+                                    "bar": "柱状图", "line": "折线图", "pie": "饼图",
+                                    "scatter": "散点图", "effectScatter": "气泡图",
+                                    "tree": "树图", "treemap": "矩形树图",
+                                    "sunburst": "旭日图", "funnel": "漏斗图",
+                                    "gauge": "仪表盘"
+                                }.get(series_type, series_type)
+
+                        # 获取图表标题
+                        chart_title = echarts_option.get("title", {}).get("text", f"图表{chart_idx}")
+
+                        # 创建 processing step
+                        chart_content_data = {
+                            "chart": {
+                                "echarts_option": echarts_option,
+                                "chart_type": chart_type,
+                                "chart_index": chart_idx
+                            }
+                        }
+
+                        yield _create_processing_step(
+                            step=7,
+                            title=f"生成数据可视化 ({chart_idx}/{len(simple_charts)})",
+                            description=f"{chart_title} - {chart_type}",
+                            status="completed",
+                            duration=200,
+                            tenant_id=tenant_id,
+                            content_type="chart",
+                            content_data=chart_content_data
+                        )
+
+                    except Exception as e:
+                        logger.error(f"❌ 处理简化格式图表{chart_idx}失败: {e}")
+            else:
+                logger.info("🔧 未从 markdown 代码块中提取到简化格式图表")
 
         # 发送结束标记
         yield "data: [DONE]\n\n"

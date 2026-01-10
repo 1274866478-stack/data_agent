@@ -100,8 +100,11 @@ class QueryRequest(BaseModel):
     """查询请求模型"""
     query: str = Field(..., description="自然语言查询")
     connection_id: Optional[str] = Field(None, description="数据源连接ID")
+    session_id: Optional[str] = Field(None, description="会话ID，用于多轮对话上下文管理（如图表拆分）")
     enable_cache: bool = Field(True, description="是否启用缓存")
     force_refresh: bool = Field(False, description="是否强制刷新")
+    # 图表合并请求
+    merge_request: Optional[Dict[str, Any]] = Field(None, description="图表合并请求配置，包含待合并的图表信息")
 
 
 class QueryResponseV3(BaseModel):

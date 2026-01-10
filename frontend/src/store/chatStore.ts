@@ -121,11 +121,15 @@ interface ChatState {
   error: string | null
   isOnline: boolean
   isSyncing: boolean
-  
+
   // 流式响应状态
   streamingStatus: StreamingStatus
   currentAbortController: AbortController | null
   streamingMessageId: string | null  // 当前正在流式更新的消息ID
+
+  // 图表合并状态
+  selectedCharts: string[]  // 选中的图表消息ID列表
+  isMergingCharts: boolean   // 是否正在合并图表
 
   // 统计信息
   stats: {
@@ -155,6 +159,11 @@ interface ChatState {
   // 流式响应控制
   stopStreaming: () => void
   setStreamingStatus: (status: StreamingStatus) => void
+
+  // 图表合并操作
+  toggleChartSelection: (messageId: string) => void
+  clearChartSelection: () => void
+  mergeCharts: (messageIds: string[]) => Promise<void>
 
   // 状态管理
   setLoading: (loading: boolean) => void
@@ -194,6 +203,8 @@ export const useChatStore = create<ChatState>()(
       streamingStatus: 'idle',
       currentAbortController: null,
       streamingMessageId: null,
+      selectedCharts: [],
+      isMergingCharts: false,
       stats: {
         totalMessages: 0,
         totalSessions: 0,
@@ -625,34 +636,41 @@ export const useChatStore = create<ChatState>()(
             // 定义回调函数
             const callbacks: StreamCallbacks = {
               onContent: (delta: string) => {
-                // 🔧 重构：区分规划阶段和回答阶段的内容
-                if (!hasReceivedFormalStep) {
-                  // 规划阶段：内容存入步骤 0 的 content_preview
-                  planningContent += delta
-                  const planningStep = processingSteps.find(s => s.step === 0)
-                  if (planningStep) {
-                    planningStep.content_preview = planningContent
-                    planningStep.description = planningContent.length > 100
-                      ? planningContent.slice(0, 100) + '...'
-                      : planningContent
+                // 🔧 修改：所有内容都存入步骤 0 的 content_preview（包括规划阶段和回答阶段）
+                // 这样可以让临时内容在步骤0中显示，而不是在消息气泡中
+                planningContent += delta
+
+                // 确保 processingSteps 中有步骤 0
+                let planningStep = processingSteps.find(s => s.step === 0)
+                if (!planningStep) {
+                  planningStep = {
+                    step: 0,
+                    title: '理解问题',
+                    description: '正在分析您的问题...',
+                    status: 'running' as const,
                   }
-                  state.updateMessage(assistantMessageId, {
-                    metadata: {
-                      processing_steps: [...processingSteps],
-                    },
-                  })
-                } else {
-                  // 回答阶段：累积到 accumulatedContent
-                  accumulatedContent += delta
-                  // 🔧 修复：如果当前状态是 analyzing_sql 或 generating_chart，收到 content 事件时切换回 streaming
-                  const currentStatus = get().streamingStatus
-                  if (currentStatus === 'analyzing_sql' || currentStatus === 'generating_chart') {
-                    set({ streamingStatus: 'streaming' })
-                  }
-                  // 增量更新消息内容（不再直接显示在气泡中，但保留用于其他用途）
-                  state.updateMessage(assistantMessageId, {
-                    content: accumulatedContent,
-                  })
+                  processingSteps.push(planningStep)
+                }
+
+                // 更新步骤 0 的 content_preview
+                planningStep.content_preview = planningContent
+                planningStep.description = planningContent.length > 100
+                  ? planningContent.slice(0, 100) + '...'
+                  : planningContent
+
+                state.updateMessage(assistantMessageId, {
+                  metadata: {
+                    processing_steps: [...processingSteps],
+                  },
+                })
+
+                // 同时累积到 accumulatedContent（用于其他用途，如错误恢复）
+                accumulatedContent += delta
+
+                // 🔧 修复：如果当前状态是 analyzing_sql 或 generating_chart，收到 content 事件时切换回 streaming
+                const currentStatus = get().streamingStatus
+                if (currentStatus === 'analyzing_sql' || currentStatus === 'generating_chart') {
+                  set({ streamingStatus: 'streaming' })
                 }
               },
               onThinking: (delta: string) => {
@@ -716,13 +734,14 @@ export const useChatStore = create<ChatState>()(
                   const planningStep = processingSteps.find(s => s.step === 0)
                   if (planningStep) {
                     planningStep.status = 'completed'
-                    // 如果有规划内容，保存为 text 类型
+                    // 🔧 修改：保留 content_preview，让步骤0继续显示后续的临时内容
+                    // 同时也保存为 text 类型（用于最终展示）
                     if (planningContent.trim()) {
                       planningStep.content_type = 'text'
                       planningStep.content_data = {
                         text: planningContent
                       }
-                      planningStep.content_preview = undefined  // 清除预览
+                      // 注意：不清除 content_preview，让步骤0继续显示临时内容
                     }
                   }
                 }
@@ -839,7 +858,8 @@ export const useChatStore = create<ChatState>()(
                       step.content_data = {
                         text: planningContent
                       }
-                      step.content_preview = undefined
+                      // 🔧 修改：保留 content_preview，让步骤0继续显示临时内容
+                      // 注意：不清除 content_preview
                     }
                   }
                 })
@@ -1212,6 +1232,77 @@ export const useChatStore = create<ChatState>()(
       // 设置流式状态
       setStreamingStatus: (status: StreamingStatus) => {
         set({ streamingStatus: status })
+      },
+
+      // ========================================
+      // 图表合并功能
+      // ========================================
+
+      // 切换图表选中状态
+      toggleChartSelection: (messageId: string) => {
+        const state = get()
+        const isSelected = state.selectedCharts.includes(messageId)
+        set({
+          selectedCharts: isSelected
+            ? state.selectedCharts.filter(id => id !== messageId)
+            : [...state.selectedCharts, messageId]
+        })
+      },
+
+      // 清空图表选择
+      clearChartSelection: () => {
+        set({ selectedCharts: [] })
+      },
+
+      // 合并选中的图表
+      mergeCharts: async (messageIds: string[]) => {
+        const state = get()
+        const currentSession = state.currentSession
+        if (!currentSession) {
+          state.setError('没有活跃的会话')
+          return
+        }
+
+        // 从消息中提取图表配置
+        const messages = currentSession.messages
+        const chartConfigs = messages
+          .filter(m => messageIds.includes(m.id) && m.metadata?.echarts_option)
+          .map(m => ({
+            messageId: m.id,
+            echarts_option: m.metadata.echarts_option,
+            title: m.metadata.echarts_option?.title?.text || '图表'
+          }))
+
+        if (chartConfigs.length < 2) {
+          state.setError('请至少选择两个图表进行合并')
+          return
+        }
+
+        set({ isMergingCharts: true })
+
+        try {
+          // 构建合并提示
+          const mergePrompt = `请将这些图表合并为一个双Y轴图表：
+
+${chartConfigs.map((c, i) => `## 图表${i + 1}：${c.title}\n${JSON.stringify(c.echarts_option, null, 2)}`).join('\n\n')}
+
+请分析这些图表的数据结构，生成一个合并的双Y轴图表配置。注意：
+1. 提取并合并X轴数据（确保对齐）
+2. 将不同指标分配到合适的Y轴（数值量级差异大的分配到不同轴）
+3. 使用不同图表类型区分（折线图/柱状图）
+4. 返回完整的 [CHART_START]...[CHART_END] 配置格式`
+
+          // 发送合并请求
+          await state.sendMessage(mergePrompt)
+
+          // 清空选择
+          set({ selectedCharts: [] })
+        } catch (error) {
+          console.error('[ChatStore] 合并图表失败:', error)
+          state.setError(`合并图表失败: ${error instanceof Error ? error.message : '未知错误'}`)
+        } finally {
+          set({ isMergingCharts: false })
+        }
       },
 
       // 从本地存储加载

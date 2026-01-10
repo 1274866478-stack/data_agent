@@ -82,7 +82,7 @@ export function extractEChartsOption(content: string): Record<string, any> | nul
 
 /**
  * 从消息文本中移除图表配置标记
- * 
+ *
  * @param content - 消息文本内容
  * @returns 移除图表配置后的文本
  */
@@ -94,5 +94,41 @@ export function removeChartMarkers(content: string): string {
   // 使用贪婪匹配，支持跨行匹配，忽略 JSON 前后的多余空格
   const chartPattern = /\[CHART_START\]\s*\{[\s\S]*?\}\s*\[CHART_END\]/g
   return content.replace(chartPattern, '').trim()
+}
+
+/**
+ * 从消息文本中提取所有 ECharts JSON 配置（支持多个图表）
+ *
+ * @param content - 消息文本内容
+ * @returns 所有解析后的 ECharts 配置对象数组
+ *
+ * @example
+ * // 多个图表场景（如图表拆分）
+ * const charts = extractAllEChartsOptions(content)
+ * // 返回: [{ chart1配置 }, { chart2配置 }, ...]
+ */
+export function extractAllEChartsOptions(content: string): Record<string, any>[] {
+  if (!content) {
+    return []
+  }
+
+  const charts: Record<string, any>[] = []
+  // 使用全局匹配找到所有图表
+  const chartPattern = /\[CHART_START\]\s*(\{[\s\S]*?\})\s*\[CHART_END\]/g
+  let match: RegExpExecArray | null
+
+  while ((match = chartPattern.exec(content)) !== null) {
+    const jsonStr = match[1].trim()
+    try {
+      const option = JSON.parse(jsonStr)
+      if (option && typeof option === 'object') {
+        charts.push(option)
+      }
+    } catch (error) {
+      console.warn('Failed to parse ECharts JSON configuration:', error)
+    }
+  }
+
+  return charts
 }
 
