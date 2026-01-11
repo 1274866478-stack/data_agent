@@ -70,6 +70,7 @@ from .services.chromadb_client import chromadb_service
 from .services.zhipu_client import zhipu_service
 from .services.query_performance_monitor import query_perf_monitor
 from .api.v1 import api_router
+from .api.v2 import api_router_v2
 
 # 设置结构化日志
 print("[ROCKET] System Initializing: Data Agent Backend v1.0.0")
@@ -182,11 +183,11 @@ async def lifespan(app: FastAPI):
         if settings.environment == "production":
             raise
 
-    # 5. 启动性能监控服务
+    # 5. 启动性能监控服务 (暂时禁用以测试超时问题)
     try:
-        query_perf_monitor.start_monitoring()
-        await query_perf_monitor.resource_monitor.start_background_monitoring(interval_seconds=30)
-        logger.info("Performance monitoring service started")
+        # query_perf_monitor.start_monitoring()
+        # await query_perf_monitor.resource_monitor.start_background_monitoring(interval_seconds=30)
+        logger.info("Performance monitoring service disabled for testing")
     except Exception as e:
         logger.error(f"Failed to start performance monitoring: {e}")
 
@@ -587,7 +588,11 @@ async def api_info():
 
 
 # 注册API路由
+# V1 API (Legacy LangGraph)
 app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+# V2 API (DeepAgents)
+app.include_router(api_router_v2, prefix="/api/v2")
 
 
 if __name__ == "__main__":

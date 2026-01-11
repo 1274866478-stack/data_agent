@@ -85,6 +85,44 @@ except ImportError:
     PSYCOPG2_AVAILABLE = False
 
 
+# ============================================================================
+# 工具函数
+# ============================================================================
+
+def _adapt_connection_string_for_docker(connection_string: str) -> str:
+    """
+    Docker环境适配: 将连接字符串中的 localhost/127.0.0.1 替换为 host.docker.internal
+
+    在 Docker 容器内，localhost 指向容器自己，无法访问宿主机服务。
+    Docker Desktop 提供了 host.docker.internal 作为访问宿主机的标准方式。
+
+    Args:
+        connection_string: 原始连接字符串
+
+    Returns:
+        适配后的连接字符串（如果不包含localhost则原样返回）
+    """
+    import re
+
+    # PostgreSQL: postgresql://user:pass@localhost:5432/db
+    pg_pattern = r'(postgresql://[^:]+:[^@]+@)(localhost|127\.0\.0\.1)(:\d+/)'
+    pg_match = re.search(pg_pattern, connection_string)
+    if pg_match:
+        result = re.sub(pg_pattern, r'\1host.docker.internal\3', connection_string)
+        logger.info(f"Docker环境: PostgreSQL连接字符串已适配 (localhost -> host.docker.internal)")
+        return result
+
+    # MySQL: mysql://user:pass@localhost:3306/db
+    mysql_pattern = r'(mysql://[^:]+:[^@]+@)(localhost|127\.0\.0\.1)(:\d+/)'
+    mysql_match = re.search(mysql_pattern, connection_string)
+    if mysql_match:
+        result = re.sub(mysql_pattern, r'\1host.docker.internal\3', connection_string)
+        logger.info(f"Docker环境: MySQL连接字符串已适配 (localhost -> host.docker.internal)")
+        return result
+
+    return connection_string
+
+
 class ConnectionTestResult:
     """连接测试结果类"""
 
@@ -222,6 +260,9 @@ class ConnectionTestService:
             )
 
         try:
+            # 🔧 Docker环境适配: 自动替换 localhost 为 host.docker.internal
+            connection_string = _adapt_connection_string_for_docker(connection_string)
+
             # 验证连接字符串格式
             parsed_info = self._parse_postgresql_connection_string(connection_string)
             if not parsed_info:

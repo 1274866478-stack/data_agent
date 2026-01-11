@@ -661,20 +661,26 @@ async def _create_database_if_not_exists(connection_string: str, db_type: str) -
     """
     if db_type != "postgresql":
         return False, "仅支持 PostgreSQL 数据库自动创建"
-    
+
     import re
     from sqlalchemy import create_engine, text
-    
+
     # 解析连接字符串获取数据库名
     # 格式: postgresql://user:password@host:port/database_name
     pattern = r"postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/([^/?]+)"
     match = re.match(pattern, connection_string)
-    
+
     if not match:
         return False, "无法解析连接字符串"
-    
+
     user, password, host, port, database_name = match.groups()
-    
+
+    # 🔧 Docker环境修复: 将 localhost 替换为 host.docker.internal
+    # 在 Docker 容器内，localhost 指向容器自己，需要使用 host.docker.internal 访问宿主机
+    if host in ("localhost", "127.0.0.1"):
+        host = "host.docker.internal"
+        logger.info(f"Docker环境: 检测到localhost，自动替换为 host.docker.internal")
+
     # 连接到 postgres 默认数据库来创建新数据库
     master_connection_string = f"postgresql://{user}:{password}@{host}:{port}/postgres"
     
