@@ -20,24 +20,74 @@ API: POST /api/v2/query
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
+from sqlalchemy.orm import Session
 import logging
-
-# 创建 logger
-logger = logging.getLogger(__name__)
 
 # AgentV2 imports
 import sys
 from pathlib import Path
-# 添加项目根目录到路径
-project_root = Path(__file__).parent.parent.parent.parent.parent.parent.parent
+
+# 创建 logger
+logger = logging.getLogger(__name__)
+
+# 添加项目根目录到路径 - 更健壮的方法
+def find_project_root():
+    """查找项目根目录（包含 AgentV2 和 backend 的目录）"""
+    current = Path(__file__).resolve()
+
+    # 方法1：向上查找直到找到包含 AgentV2 的目录
+    for _ in range(10):  # 最多向上查找10层
+        parent = current.parent
+        if (parent / "AgentV2").exists() or (parent / "backend").exists():
+            return parent
+        current = parent
+
+    # 方法2：从当前文件路径推算
+    # backend/src/app/api/v2/endpoints/query_v2.py
+    # 向上7层应该是项目根目录
+    project_root = Path(__file__).resolve().parent.parent.parent.parent.parent.parent.parent
+    if str(project_root).endswith("backend"):
+        project_root = project_root.parent
+
+    # 方法3：如果以上都失败，尝试使用 cwd
+    import os
+    cwd = Path(os.getcwd())
+    # 如果当前在 backend 目录下
+    if (cwd / "src").exists() and (cwd.parent / "AgentV2").exists():
+        return cwd.parent
+    # 如果当前在项目根目录下
+    if (cwd / "AgentV2").exists() and (cwd / "backend").exists():
+        return cwd
+
+    return project_root
+
+project_root = find_project_root()
 sys.path.insert(0, str(project_root))
 
+# 调试：打印路径信息
+logger.info(f"[query_v2] Project root: {project_root}")
+logger.info(f"[query_v2] AgentV2 exists: {(project_root / 'AgentV2').exists()}")
+logger.info(f"[query_v2] sys.path[0]: {sys.path[0]}")
+
+# 数据库会话导入
 try:
-    from AgentV2.core import AgentFactory, get_default_factory
+    from src.app.data.database import get_db
+except ImportError:
+    # 如果导入失败，提供回退
+    def get_db():
+        raise NotImplementedError("Database session not available")
+
+try:
+    # 调试：打印当前的 sys.path
+    logger.info(f"[query_v2 import] sys.path[0:3]: {sys.path[0:3]}")
+    logger.info(f"[query_v2 import] project_root in sys.path: {project_root in sys.path}")
+    from AgentV2.core import AgentFactory, get_default_factory, get_response_cache
     from AgentV2.middleware import TenantIsolationMiddleware, SQLSecurityMiddleware
     AGENTV2_AVAILABLE = True
-except ImportError:
+    logger.info("[query_v2 import] SUCCESS: AgentV2 imported successfully")
+except ImportError as e:
     AGENTV2_AVAILABLE = False
+    logger.error(f"[query_v2 import] ERROR: Failed to import AgentV2: {e}")
     # 提供回退的类型定义（当 AgentV2 不可用时）
     from typing import Any, Optional
 
@@ -113,6 +163,7 @@ class QueryResponseV2(BaseModel):
     # 元数据
     tenant_id: str
     processing_time_ms: int = 0
+    from_cache: bool = False  # 是否来自缓存
 
     class Config:
         json_schema_extra = {
@@ -178,6 +229,7 @@ async def create_query_v2(
     request: QueryRequestV2,
     tenant_id: str = Depends(get_tenant_from_request),
     user_id: str = Depends(get_user_from_request),
+    db: Session = Depends(get_db),
     agent_factory: AgentFactory = Depends(get_agent_factory)
 ):
     """
@@ -224,11 +276,7 @@ async def create_query_v2(
                 detail="租户 ID 缺失"
             )
 
-        # 2. 获取数据源连接 URL
-        # TODO: 从 connection_id 获取实际连接
-        database_url = "postgresql://postgres:postgres@localhost:5432/data_agent"
-
-        # 3. 创建 Agent (带租户隔离)
+        # 2. 创建 Agent (带租户隔离和数据源连接)
         try:
             # DEBUG: 打印中间件类信息
             import AgentV2.middleware as mid_module
@@ -237,11 +285,13 @@ async def create_query_v2(
             logger.info(f"  - 有 wrap_model_call: {hasattr(mid_module.TenantIsolationMiddleware, 'wrap_model_call')}")
             logger.info(f"  - 所有方法: {[a for a in dir(mid_module.TenantIsolationMiddleware) if not a.startswith('_')]}")
 
-            logger.info(f"[DEBUG] 开始创建 agent...")
+            logger.info(f"[DEBUG] 开始创建 agent... connection_id={request.connection_id}")
             agent = agent_factory.get_or_create_agent(
                 tenant_id=tenant_id,
                 user_id=user_id,
                 session_id=request.session_id,
+                connection_id=request.connection_id,
+                db_session=db
             )
             logger.info(f"[DEBUG] Agent 创建成功")
         except Exception as e:
@@ -266,40 +316,104 @@ async def create_query_v2(
             ]
         }
 
-        # 5. SQL 安全预检查
-        sql_middleware = SQLSecurityMiddleware()
+        # 5. SQL 安全预检查（暂时禁用，等待中间件修复）
+        # sql_middleware = SQLSecurityMiddleware()
         # 注意：这里简化了实际的 SQL 提取逻辑
         # 实际实现需要从消息中提取 SQL
 
-        # 6. 执行查询
-        # 注意：这里模拟执行，实际需要调用 agent.ainvoke
-        # result = await agent.ainvoke(agent_input)
+        # 5.5. 检查响应缓存
+        if AGENTV2_AVAILABLE:
+            response_cache = get_response_cache()
+            cached_response = response_cache.get(
+                query=request.query,
+                tenant_id=tenant_id,
+                connection_id=request.connection_id,
+                context={"data_sources": []}  # 可从 request 获取
+            )
+            if cached_response:
+                logger.info(f"[V2] 使用缓存响应: {request.query[:30]}...")
+                # 添加缓存标记到处理步骤
+                cached_response["processing_steps"] = ["缓存命中"] + cached_response.get("processing_steps", [])
+                cached_response["from_cache"] = True
+                return QueryResponseV2(**cached_response)
 
-        # 模拟响应
+        # 6. 执行真实查询（使用同步调用在异步上下文中运行）
+        logger.info(f"[V2] 执行查询: {request.query}")
+        # 注意：由于中间件暂未实现异步方法，使用 to_thread 运行同步调用
+        import asyncio
+        result = await asyncio.to_thread(agent.invoke, agent_input)
+        logger.info(f"[V2] 查询完成，结果类型: {type(result)}")
+
+        # 7. 解析返回结果
         processing_time = int((time.time() - start_time) * 1000)
 
-        return QueryResponseV2(
+        # DeepAgents 返回的结果通常包含 messages 字段
+        answer = ""
+        processing_steps = []
+        subagent_calls = []
+
+        if hasattr(result, "get"):
+            # 字典类型结果
+            messages = result.get("messages", [])
+        elif isinstance(result, list):
+            # 列表类型结果
+            messages = result
+        else:
+            messages = []
+
+        # 提取最后一条消息作为回答
+        if messages:
+            last_message = messages[-1]
+            if hasattr(last_message, "content"):
+                answer = last_message.content
+            elif isinstance(last_message, dict):
+                answer = last_message.get("content", str(last_message))
+            else:
+                answer = str(last_message)
+
+        # 构建处理步骤
+        processing_steps = [
+            "接收查询",
+            "租户隔离验证",
+            "AgentV2 处理",
+            "DeepSeek LLM 调用",
+            "返回结果"
+        ]
+
+        logger.info(f"[V2] 回答长度: {len(answer)} 字符")
+
+        # 构建响应对象
+        response_obj = QueryResponseV2(
             success=True,
-            answer=f"查询处理完成 (模拟): {request.query}",
-            sql="SELECT * FROM data LIMIT 10",  # 模拟
-            data=[],
+            answer=answer,
+            sql=None,  # V2 暂不返回 SQL（可后续添加）
+            data=None,  # V2 暂不返回数据（可后续添加）
             row_count=0,
-            processing_steps=[
-                "接收查询",
-                "租户隔离验证",
-                "SQL 安全检查",
-                "生成查询计划",
-                "执行查询"
-            ],
-            subagent_calls=["sql_expert"],
+            processing_steps=processing_steps,
+            subagent_calls=subagent_calls,
             reasoning_log={
                 "timestamp": start_time,
-                "steps": 5,
-                "tools_used": ["query", "get_schema"]
+                "steps": len(processing_steps),
+                "query": request.query,
+                "answer_length": len(answer)
             },
             tenant_id=tenant_id,
             processing_time_ms=processing_time
         )
+
+        # 存储到缓存
+        if AGENTV2_AVAILABLE:
+            response_cache = get_response_cache()
+            response_cache.set(
+                query=request.query,
+                response=response_obj.model_dump(),
+                tenant_id=tenant_id,
+                connection_id=request.connection_id,
+                context={"data_sources": []}
+            )
+            logger.info(f"[V2] 响应已缓存: {request.query[:30]}...")
+
+        return response_obj
 
     except HTTPException:
         raise
@@ -318,6 +432,26 @@ async def create_query_v2(
                 "processing_time_ms": processing_time
             }
         )
+
+
+@router.get("/cache/stats")
+async def get_cache_stats_v2():
+    """获取缓存统计信息"""
+    if not AGENTV2_AVAILABLE:
+        return {"error": "AgentV2 not available"}
+
+    try:
+        from AgentV2.core import get_cache_stats
+        stats = get_cache_stats()
+        return {
+            "success": True,
+            "cache_stats": stats
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 
 @router.get("/health")

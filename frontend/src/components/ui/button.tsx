@@ -71,19 +71,19 @@
  * - **CVA类型安全**: VariantProps<typeof buttonVariants>提供类型提示
  */
 
-import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
+import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
         default:
-          "bg-primary text-primary-foreground shadow hover:bg-primary/90",
+          "bg-primary text-primary-foreground shadow hover:bg-primary/90 hover:-translate-y-0.5 hover:shadow-md",
         destructive:
           "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
         outline:
@@ -92,6 +92,15 @@ const buttonVariants = cva(
           "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80",
         ghost: "hover:bg-accent hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
+        // UX-modern 新增变体
+        gradient:
+          "bg-gradient-modern-primary text-white shadow-md hover:-translate-y-0.5 hover:shadow-lg",
+        modernPrimary:
+          "bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-md hover:-translate-y-0.5 hover:shadow-lg",
+        modernAccent:
+          "bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-md hover:-translate-y-0.5 hover:shadow-lg",
+        modernSuccess:
+          "bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-md hover:-translate-y-0.5 hover:shadow-lg",
       },
       size: {
         default: "h-9 px-4 py-2",
@@ -128,3 +137,4 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 Button.displayName = "Button"
 
 export { Button, buttonVariants }
+

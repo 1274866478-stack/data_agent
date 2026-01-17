@@ -5,7 +5,7 @@
  * **文件名**: ProcessingSteps.tsx
  * **职责**: 可视化展示AI推理和SQL生成的各个处理步骤，支持折叠展开和耗时统计
  * **作者**: Data Agent Team
- * **版本**: 1.0.0
+ * **版本**: 1.1.0
  *
  * ## [INPUT]
  * - **steps**: ProcessingStep[] - 处理步骤数组
@@ -36,36 +36,38 @@
  * - 根据步骤状态自动选择对应图标（6步AI流程）
  * - 自动计算总耗时和完成进度
  * - 支持查看详情（如SQL语句）的折叠面板
+ *
+ * ## [PERFORMANCE]
+ * - 使用 React.memo 防止不必要的重新渲染
+ * - 使用 useMemo 缓存计算结果
+ * - 使用 useCallback 稳定回调函数引用
  */
 'use client'
 
-import React from 'react'
-import { cn } from '@/lib/utils'
-import {
-  Database,
-  Search,
-  FileCode,
-  Play,
-  CheckCircle2,
-  XCircle,
-  Loader2,
-  ChevronDown,
-  ChevronUp,
-  Clock,
-  MessageSquare,
-  TableProperties,
-  Wand2,
-  Code2,
-  Zap,
-  BarChart3,
-  Table,
-  Brain,      // 新增：思考/上下文检索
-  Sparkles,   // 新增：内容生成
-  Shield,     // 新增：安全检查
-} from 'lucide-react'
-import { ProcessingStep, StepContentType, StepContentData, StepTableData, StepChartData } from '@/types/chat'
-import ReactECharts from 'echarts-for-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { cn } from '@/lib/utils'
+import { ProcessingStep, StepChartData, StepTableData } from '@/types/chat'
+import ReactECharts from 'echarts-for-react'
+import {
+    BarChart3,
+    Brain,
+    CheckCircle2,
+    ChevronDown,
+    ChevronUp,
+    Clock,
+    Code2,
+    Database,
+    FileCode,
+    Loader2,
+    MessageSquare, // 新增：内容生成
+    Shield, // 新增：思考/上下文检索
+    Sparkles,
+    TableProperties,
+    Wand2,
+    XCircle,
+    Zap
+} from 'lucide-react'
+import React, { useCallback, useMemo } from 'react'
 
 interface ProcessingStepsProps {
   steps: ProcessingStep[]
@@ -184,17 +186,22 @@ interface SQLCodeRendererProps {
   defaultExpanded?: boolean
 }
 
-function SQLCodeRenderer({ sql, defaultExpanded = false }: SQLCodeRendererProps) {
+const SQLCodeRenderer = React.memo(function SQLCodeRenderer({ sql, defaultExpanded = false }: SQLCodeRendererProps) {
   const [isExpanded, setIsExpanded] = React.useState(defaultExpanded)
 
-  // 计算SQL行数
+  // 使用 useCallback 稳定回调函数
+  const handleToggle = useCallback(() => {
+    setIsExpanded(prev => !prev)
+  }, [])
+
+  // 计算SQL行数和字符数
   const lineCount = sql.split('\n').length
   const charCount = sql.length
 
   return (
     <div className="mt-2 rounded-md bg-slate-100 overflow-hidden border border-slate-200">
       <button
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={handleToggle}
         className="w-full flex items-center justify-between px-3 py-1.5 bg-slate-200 border-b border-slate-300 hover:bg-slate-300 transition-colors"
       >
         <span className="text-xs font-medium text-slate-700 flex items-center gap-2">
@@ -217,7 +224,7 @@ function SQLCodeRenderer({ sql, defaultExpanded = false }: SQLCodeRendererProps)
       )}
     </div>
   )
-}
+})
 
 // 渲染SQL代码块（简单版本，用于非步骤4）
 function renderSQLCode(sql: string) {
@@ -241,25 +248,38 @@ interface TableDataRendererProps {
   table: StepTableData
 }
 
-function TableDataRenderer({ table }: TableDataRendererProps) {
+const TableDataRenderer = React.memo(function TableDataRenderer({ table }: TableDataRendererProps) {
   const [isExpanded, setIsExpanded] = React.useState(false)
+
+  // 使用 useCallback 稳定回调函数
+  const handleToggle = useCallback(() => {
+    setIsExpanded(prev => !prev)
+  }, [])
 
   // 默认显示更多行（50行），列数不限
   const DEFAULT_MAX_ROWS = 50
   const MAX_COLUMNS = 10  // 增加列数限制
-  const limitedColumns = table.columns.slice(0, MAX_COLUMNS)
 
-  // 根据展开状态决定显示行数
-  const displayRows = isExpanded ? table.rows : table.rows.slice(0, DEFAULT_MAX_ROWS)
+  // 使用 useMemo 缓存计算结果
+  const limitedColumns = useMemo(
+    () => table.columns.slice(0, MAX_COLUMNS),
+    [table.columns]
+  )
+
+  const displayRows = useMemo(
+    () => isExpanded ? table.rows : table.rows.slice(0, DEFAULT_MAX_ROWS),
+    [isExpanded, table.rows]
+  )
+
   const hasMoreRows = table.row_count > DEFAULT_MAX_ROWS
   const hasMoreColumns = table.columns.length > MAX_COLUMNS
 
   return (
-    <div className="mt-2 rounded-md border border-gray-200 overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-200">
-        <span className="text-xs font-medium text-gray-700">查询结果</span>
-        <span className="text-xs text-gray-500">
-          {table.row_count} 行 × {table.columns.length} 列
+    <div className="mt-2 rounded-md border border-blue-200 overflow-hidden bg-white">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border-b border-blue-200">
+        <span className="text-xs font-medium text-blue-700">可视化数据</span>
+        <span className="text-xs text-blue-500">
+          表格 · {table.row_count} 行 × {table.columns.length} 列
           {hasMoreColumns && ` (显示前${MAX_COLUMNS}列)`}
         </span>
       </div>
@@ -299,8 +319,8 @@ function TableDataRenderer({ table }: TableDataRendererProps) {
       </ScrollArea>
       {/* 展开/收起按钮 */}
       {(hasMoreRows || hasMoreColumns) && (
-        <div className="px-3 py-1.5 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
-          <span className="text-xs text-gray-500">
+        <div className="px-3 py-1.5 bg-blue-50 border-t border-blue-200 flex items-center justify-between">
+          <span className="text-xs text-blue-600">
             {isExpanded
               ? `显示全部 ${table.row_count} 行`
               : `共 ${table.row_count} 行，当前显示前 ${Math.min(DEFAULT_MAX_ROWS, table.row_count)} 行`
@@ -309,7 +329,7 @@ function TableDataRenderer({ table }: TableDataRendererProps) {
           </span>
           {hasMoreRows && (
             <button
-              onClick={() => setIsExpanded(!isExpanded)}
+              onClick={handleToggle}
               className="text-xs text-blue-600 hover:text-blue-800 font-medium"
             >
               {isExpanded ? '收起' : '展开全部'}
@@ -319,7 +339,7 @@ function TableDataRenderer({ table }: TableDataRendererProps) {
       )}
     </div>
   )
-}
+})
 
 /**
  * 解析数据分析文本，提取总结和图表说明
@@ -511,6 +531,95 @@ function renderChart(chart: StepChartData, description?: string) {
   return null
 }
 
+// 🔧 新增：将图表和表格合并渲染到同一个"可视化数据"区域
+function renderVisualization(
+  chart: StepChartData | null,
+  table: StepTableData | null,
+  description?: string
+) {
+  if (!chart && !table) return null
+
+  const descriptionElement = description && description.trim() && (
+    <div className="mb-2 p-3 rounded-md bg-blue-50 border border-blue-200">
+      <div className="text-xs font-medium text-blue-700 mb-1">图表说明</div>
+      <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{description}</p>
+    </div>
+  )
+
+  const chartTypeLabel = chart?.chart_type || ''
+
+  const chartElement = chart?.echarts_option ? (
+    <div className="p-2">
+      <ReactECharts
+        option={normalizeEChartsOption(chart.echarts_option)}
+        style={{ width: '100%', minHeight: '400px' }}
+        opts={{ renderer: 'canvas' }}
+        notMerge={false}
+        lazyUpdate={false}
+      />
+    </div>
+  ) : chart?.chart_image ? (
+    <div className="p-2">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={chart.chart_image} alt={chart.title || '图表'} className="w-full h-auto rounded" />
+    </div>
+  ) : null
+
+  const tableElement = table ? (
+    <div className="border-t border-blue-200">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50/50">
+        <span className="text-xs font-medium text-blue-600">数据明细</span>
+        <span className="text-xs text-blue-500">{table.row_count} 行 × {table.columns.length} 列</span>
+      </div>
+      <ScrollArea>
+        <table className="w-full text-xs border-collapse">
+          <thead className="bg-gray-50 sticky top-0 z-10">
+            <tr>
+              {table.columns.slice(0, 10).map(col => (
+                <th key={col} className="px-3 py-2 border-b text-left font-medium text-gray-700 whitespace-nowrap bg-gray-50">{col}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.rows.slice(0, 20).map((row, rowIndex) => (
+              <tr key={rowIndex} className="odd:bg-white even:bg-gray-50/60 hover:bg-blue-50/30">
+                {table.columns.slice(0, 10).map(col => (
+                  <td key={col} className="px-3 py-1.5 border-b text-gray-800 align-top">
+                    <span className="break-words whitespace-pre-wrap">
+                      {row[col] !== undefined && row[col] !== null ? String(row[col]) : ''}
+                    </span>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ScrollArea>
+      {table.row_count > 20 && (
+        <div className="px-3 py-1.5 bg-blue-50/50 text-center">
+          <span className="text-xs text-blue-600">共 {table.row_count} 行，显示前 20 行</span>
+        </div>
+      )}
+    </div>
+  ) : null
+
+  return (
+    <>
+      {descriptionElement}
+      <div className="mt-2 rounded-md border border-blue-200 overflow-hidden bg-white">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border-b border-blue-200">
+          <span className="text-xs font-medium text-blue-700">可视化数据</span>
+          <span className="text-xs text-blue-500">
+            {chartTypeLabel}{chartTypeLabel && table && ' · '}{table && '表格'}
+          </span>
+        </div>
+        {chartElement}
+        {tableElement}
+      </div>
+    </>
+  )
+}
+
 // 渲染步骤内容
 function renderStepContent(step: ProcessingStep) {
   if (!step.content_type || !step.content_data) return null
@@ -556,6 +665,18 @@ function renderStepContent(step: ProcessingStep) {
         )
       }
       break
+    case 'answer':
+      if (step.content_data.text) {
+        return (
+          <div className="mt-2 p-3 rounded-md bg-emerald-50 border border-emerald-200">
+            <div className="text-xs font-medium text-emerald-700 mb-1">AI 回答</div>
+            <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+              {step.content_data.text}
+            </p>
+          </div>
+        )
+      }
+      break
   }
 
   return null
@@ -567,15 +688,17 @@ interface RenderStepContentOptions {
   chartDescriptions: string[]
   chartIndex: number
   summary?: string  // 数据分析总结（非图表部分）
+  step6Table?: StepTableData | null  // 🔧 步骤6的表格数据，用于与图表合并显示
 }
 
-function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex, summary }: RenderStepContentOptions) {
+function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex, summary, step6Table }: RenderStepContentOptions) {
   if (!step.content_type || !step.content_data) return null
 
-  // 如果是步骤7（图表），且有可用的图表说明，配对显示
-  if (step.content_type === 'chart' && step.content_data.chart && step.step === 7) {
+  // 🔧 修改：任何图表类型的步骤都使用 renderVisualization 合并表格和图表（不再检查固定步骤号）
+  if (step.content_type === 'chart' && step.content_data.chart) {
     const description = chartDescriptions[chartIndex]
-    return renderChart(step.content_data.chart, description)
+    // 使用新的 renderVisualization 函数合并图表和表格
+    return renderVisualization(step.content_data.chart, step6Table || null, description)
   }
 
   // 如果是步骤8（text类型的数据分析），显示总结部分（如果有）
@@ -598,8 +721,13 @@ function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex
   return renderStepContent(step)
 }
 
-export function ProcessingSteps({ steps, className, defaultExpanded = true }: ProcessingStepsProps) {
+export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, className, defaultExpanded = true }: ProcessingStepsProps) {
   const [isExpanded, setIsExpanded] = React.useState(defaultExpanded)
+
+  // 使用 useCallback 稳定回调函数
+  const handleToggle = useCallback(() => {
+    setIsExpanded(prev => !prev)
+  }, [])
 
   // 调试日志
   console.log('[ProcessingSteps] 渲染，steps数量:', steps?.length, steps)
@@ -608,47 +736,75 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
 
   // 🔧 新增：提取和配对图表说明
   // 1. 查找步骤8（数据分析文本）
-  const step8 = steps.find(s => s.step === 8 && s.content_type === 'text' && s.content_data?.text)
+  const step8 = useMemo(
+    () => steps.find(s => s.step === 8 && s.content_type === 'text' && s.content_data?.text),
+    [steps]
+  )
   const analysisText = step8?.content_data?.text || ''
 
   // 2. 解析文本：提取总结和图表说明
-  const { summary, chartDescriptions } = React.useMemo(
+  const { summary, chartDescriptions } = useMemo(
     () => parseAnalysisText(analysisText),
     [analysisText]
   )
 
-  // 3. 统计图表数量和当前图表索引
-  let currentChartIndex = 0
+  // 🔧 修改：按内容类型提取表格数据（不再依赖固定步骤号）
+  // 找到最后一个包含表格数据的步骤
+  const tableDataStep = useMemo(() => {
+    const tableSteps = steps.filter(s => s.content_type === 'table' && s.content_data?.table)
+    return tableSteps.length > 0 ? tableSteps[tableSteps.length - 1] : null
+  }, [steps])
+  const tableData = tableDataStep?.content_data?.table || null
 
-  // 计算总耗时
-  const totalDuration = steps.reduce((sum, step) => sum + (step.duration || 0), 0)
-  const completedSteps = steps.filter(s => s.status === 'completed').length
-  const hasError = steps.some(s => s.status === 'error')
-  const isRunning = steps.some(s => s.status === 'running')
+  // 🔧 修改：按内容类型检测是否有图表（不再依赖固定步骤号）
+  const hasChart = useMemo(() => {
+    return steps.some(s => s.content_type === 'chart' && s.content_data?.chart)
+  }, [steps])
 
-  return (
-    <div className={cn(
+  // 3. 使用 useMemo 计算统计信息
+  const stats = useMemo(() => {
+    const totalDuration = steps.reduce((sum, step) => sum + (step.duration || 0), 0)
+    const completedSteps = steps.filter(s => s.status === 'completed').length
+    const hasError = steps.some(s => s.status === 'error')
+    const isRunning = steps.some(s => s.status === 'running')
+    return { totalDuration, completedSteps, hasError, isRunning }
+  }, [steps])
+
+  // 4. 使用 useMemo 缓存容器类名
+  const containerClassName = useMemo(
+    () => cn(
       'mt-3 rounded-lg border overflow-hidden',
-      hasError ? 'border-red-200 bg-red-50/50' : 
-      isRunning ? 'border-blue-200 bg-blue-50/50' : 
+      stats.hasError ? 'border-red-200 bg-red-50/50' :
+      stats.isRunning ? 'border-blue-200 bg-blue-50/50' :
       'border-emerald-200 bg-emerald-50/50',
       className
-    )}>
+    ),
+    [stats.hasError, stats.isRunning, className]
+  )
+
+  // 5. 使用 useMemo 缓存标题栏类名
+  const headerClassName = useMemo(
+    () => cn(
+      'w-full px-3 py-2 flex items-center justify-between text-sm font-medium',
+      'hover:bg-black/5 transition-colors',
+      stats.hasError ? 'text-red-800' :
+      stats.isRunning ? 'text-blue-800' :
+      'text-emerald-800'
+    ),
+    [stats.hasError, stats.isRunning]
+  )
+
+  return (
+    <div className={containerClassName}>
       {/* 标题栏 */}
       <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className={cn(
-          'w-full px-3 py-2 flex items-center justify-between text-sm font-medium',
-          'hover:bg-black/5 transition-colors',
-          hasError ? 'text-red-800' : 
-          isRunning ? 'text-blue-800' : 
-          'text-emerald-800'
-        )}
+        onClick={handleToggle}
+        className={headerClassName}
       >
         <div className="flex items-center gap-2">
-          {isRunning ? (
+          {stats.isRunning ? (
             <Loader2 className="w-4 h-4 animate-spin" />
-          ) : hasError ? (
+          ) : stats.hasError ? (
             <XCircle className="w-4 h-4" />
           ) : (
             <CheckCircle2 className="w-4 h-4" />
@@ -656,8 +812,8 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
           <span>
             AI 推理过程 
             <span className="ml-2 text-xs font-normal opacity-75">
-              ({completedSteps}/{steps.length} 步骤完成
-              {totalDuration > 0 && ` · ${formatDuration(totalDuration)}`})
+              ({stats.completedSteps}/{steps.length} 步骤完成
+              {stats.totalDuration > 0 && ` · ${formatDuration(stats.totalDuration)}`})
             </span>
           </span>
         </div>
@@ -667,6 +823,25 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
           <ChevronDown className="w-4 h-4" />
         )}
       </button>
+
+      {/* 进度条 */}
+      <div className="px-3 pb-2">
+        <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
+          <div
+            className={cn(
+              'h-full rounded-full transition-all duration-500 ease-out',
+              stats.isRunning ? 'bg-blue-500 animate-pulse' :
+              stats.hasError ? 'bg-red-500' :
+              'bg-emerald-500'
+            )}
+            style={{ width: `${(stats.completedSteps / steps.length) * 100}%` }}
+          />
+        </div>
+        <div className="flex justify-between mt-1 text-xs text-gray-600">
+          <span>{stats.completedSteps} / {steps.length} 步骤</span>
+          <span>{Math.round((stats.completedSteps / steps.length) * 100)}%</span>
+        </div>
+      </div>
 
       {/* 步骤列表 */}
       {isExpanded && (
@@ -682,21 +857,24 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
                 ? `step-${step.step}-chart-${chartIndexAttr}`
                 : `step-${step.step || index}`
 
-              // 🔧 计算当前步骤的图表索引（用于配对说明）
+              // 🔧 修改：按内容类型计算图表索引（不再依赖固定步骤号）
               let thisChartIndex = currentChartIndex
-              if (step.step === 7 && step.content_type === 'chart') {
+              if (step.content_type === 'chart') {
                 thisChartIndex = currentChartIndex
                 currentChartIndex++  // 为下一个图表递增索引
               }
 
+              // 🔧 修改：按内容类型判断，如果有表格数据且有图表，则跳过表格步骤的独立渲染
+              const shouldSkipTableStep = step.content_type === 'table' && hasChart
+
               return (
-              <div
-                key={uniqueKey}
-                className={cn(
-                  'rounded-md border p-2 transition-all duration-300',
-                  getStatusColor(step.status)
-                )}
-              >
+                <div
+                  key={uniqueKey}
+                  className={cn(
+                    'rounded-md border p-2 transition-all duration-300',
+                    getStatusColor(step.status)
+                  )}
+                >
                 <div className="flex items-start gap-2">
                   {/* 步骤图标 */}
                   <div className="mt-0.5">
@@ -756,11 +934,13 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
                     )}
 
                     {/* 🔧 渲染步骤内容（使用配对版本的函数） */}
-                    {renderStepContentWithDescriptions({
+                    {/* 🔧 步骤6表格在有步骤7图表时跳过（会合并到步骤7显示） */}
+                    {!shouldSkipTableStep && renderStepContentWithDescriptions({
                       step,
                       chartDescriptions,
                       chartIndex: thisChartIndex,
-                      summary
+                      summary,
+                      step6Table: tableData
                     })}
 
                   {/* 详情（如SQL内容） - 仅当没有content_type时显示 */}
@@ -784,5 +964,5 @@ export function ProcessingSteps({ steps, className, defaultExpanded = true }: Pr
       )}
     </div>
   )
-}
+})
 

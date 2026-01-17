@@ -63,6 +63,7 @@ import { MessageList, MessageListRef } from './MessageList'
 import { MessageInput } from './MessageInput'
 import { SearchPanel } from './SearchPanel'
 import { OfflineStatusIndicator } from './OfflineStatusIndicator'
+import { StreamControlPanel } from './StreamControlPanel'
 import { cn } from '@/lib/utils'
 
 interface ChatInterfaceProps {
@@ -85,7 +86,9 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
     updateSessionTitle,
     clearHistory,
     error,
-    setError
+    setError,
+    v2Session,
+    streamingStatus,
   } = useChatStore()
 
   // 过滤后的会话列表
@@ -411,6 +414,15 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
           messages={currentSession?.messages || []}
           highlightedMessageId={highlightedMessageId}
         />
+
+        {/* V2 流式会话控制面板 - 仅在流式状态时显示 */}
+        {streamingStatus === 'streaming' ||
+         streamingStatus === 'paused' ||
+         (v2Session.currentSessionId && v2Session.sessionState?.status !== 'completed') ? (
+          <div className="px-6 py-2">
+            <StreamControlPanel />
+          </div>
+        ) : null}
 
         {/* 消息输入 */}
         <MessageInput onFileAttach={(files) => {

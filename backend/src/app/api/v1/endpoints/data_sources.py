@@ -721,6 +721,11 @@ async def create_data_source(
     创建新的数据源连接
     自动加密连接字符串并解析连接信息
     如果 create_db_if_not_exists=True，会自动创建不存在的数据库
+
+    🆕 Excel 文件自动转换为 SQLite:
+    - 当 db_type 为 'xlsx' 或 'xls' 时，自动将 Excel 文件转换为 SQLite 数据库
+    - 转换后的数据库支持完整的 SQL 语法（JOIN, GROUP BY, 聚合函数等）
+    - SQLite 文件存储在 backend/data/sqlite_databases/ 目录下
     """
     logger.info(f"收到创建数据源请求: tenant_id={tenant_id}")
     logger.info(f"  - name: '{request.name}'")
@@ -735,11 +740,50 @@ async def create_data_source(
             detail="tenant_id is required"
         )
 
+    # 最终使用的连接字符串和类型（可能会被修改）
+    final_connection_string = request.connection_string
+    final_db_type = request.db_type
+    conversion_metadata = None
+
     try:
-        # 如果需要自动创建数据库
-        if request.create_db_if_not_exists and request.db_type == "postgresql":
+        # 🆕 Excel 文件自动转换为 SQLite
+        if request.db_type in ["xlsx", "xls"]:
+            logger.info(f"📊 检测到 Excel 文件，开始自动转换为 SQLite...")
+
+            from src.app.services.excel_to_sqlite_service import get_excel_to_sqlite_service
+
+            excel_service = get_excel_to_sqlite_service()
+
+            try:
+                # 转换 Excel 为 SQLite
+                sqlite_db_path, metadata = excel_service.convert_excel_to_sqlite(
+                    excel_file_path=request.connection_string,
+                    db_name=request.name,
+                    tenant_id=tenant_id
+                )
+
+                # 使用 SQLite 连接字符串
+                final_connection_string = excel_service.get_sqlite_connection_string(sqlite_db_path)
+                final_db_type = "sqlite"
+                conversion_metadata = metadata
+
+                logger.info(f"✅ Excel 转换成功:")
+                logger.info(f"  - SQLite 路径: {sqlite_db_path}")
+                logger.info(f"  - 表数量: {metadata.get('total_tables')}")
+                logger.info(f"  - 总行数: {metadata.get('total_rows')}")
+                logger.info(f"  - 转换耗时: {metadata.get('conversion_time_seconds')}s")
+
+            except Exception as e:
+                logger.error(f"❌ Excel 转换失败: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Excel 文件转换失败: {str(e)}"
+                )
+
+        # 如果需要自动创建数据库（PostgreSQL）
+        elif request.create_db_if_not_exists and request.db_type == "postgresql":
             success, message = await _create_database_if_not_exists(
-                request.connection_string, 
+                request.connection_string,
                 request.db_type
             )
             logger.info(f"自动创建数据库结果: success={success}, message={message}")
@@ -751,22 +795,22 @@ async def create_data_source(
 
         # 先加密连接字符串
         encrypted_string = data_source_service.encryption_service.encrypt_connection_string(
-            request.connection_string
+            final_connection_string
         )
 
         # 创建数据源连接(直接使用加密后的字符串)
         new_connection = DataSourceConnection(
             tenant_id=tenant_id,
             name=request.name,
-            db_type=request.db_type,
+            db_type=final_db_type,
             _connection_string=encrypted_string,  # 直接设置加密后的字符串到私有字段
             status=DataSourceConnectionStatus.TESTING
         )
 
         # 解析连接字符串获取连接信息
         parsed_info = data_source_service._parse_connection_string(
-            request.connection_string,
-            request.db_type
+            final_connection_string,
+            final_db_type
         )
         new_connection.host = parsed_info.get("host")
         new_connection.port = parsed_info.get("port")
@@ -958,6 +1002,11 @@ async def delete_data_source(
 ):
     """
     删除数据源连接（软删除）
+
+    🆕 SQLite 文件自动清理:
+    - 如果数据源是从 Excel 转换的 SQLite 数据库
+    - 删除数据源时会同时删除对应的 SQLite 文件
+    - 释放磁盘空间
     """
     if not tenant_id:
         raise HTTPException(
@@ -966,6 +1015,52 @@ async def delete_data_source(
         )
 
     try:
+        # 🆕 在删除前先获取数据源信息，用于清理 SQLite 文件
+        connection = await data_source_service.get_data_source_by_id(
+            data_source_id=connection_id,
+            tenant_id=tenant_id,
+            db=db
+        )
+
+        sqlite_file_deleted = False
+        if connection:
+            # 检查是否是从 Excel 转换的 SQLite 数据源
+            # 特征：db_type 为 sqlite，连接字符串包含我们的存储路径
+            if connection.db_type == "sqlite":
+                from pathlib import Path
+                from src.app.services.excel_to_sqlite_service import get_excel_to_sqlite_service
+
+                try:
+                    # 获取解密后的连接字符串
+                    decrypted_connection = connection.connection_string
+
+                    # 提取 SQLite 文件路径
+                    # 格式: sqlite:///path/to/database.db
+                    if "sqlite:///" in decrypted_connection:
+                        sqlite_file_path = decrypted_connection.replace("sqlite:///", "")
+
+                        # 验证文件是否在我们的存储目录中（安全检查）
+                        excel_service = get_excel_to_sqlite_service()
+                        storage_path_str = str(excel_service.SQLITE_STORAGE_PATH.absolute())
+
+                        if sqlite_file_path.startswith(storage_path_str):
+                            # 安全删除 SQLite 文件
+                            sqlite_file = Path(sqlite_file_path)
+                            if sqlite_file.exists():
+                                sqlite_file.unlink()
+                                sqlite_file_deleted = True
+                                logger.info(f"🗑️ Deleted SQLite database file: {sqlite_file_path}")
+                            else:
+                                logger.warning(f"SQLite file not found (may have been already deleted): {sqlite_file_path}")
+                        else:
+                            logger.warning(f"SQLite file path outside storage directory, skipping deletion: {sqlite_file_path}")
+
+                except Exception as e:
+                    # SQLite 文件删除失败不应阻止数据源删除
+                    logger.warning(f"Failed to delete SQLite file for data source {connection_id}: {e}")
+                    logger.warning(f"Proceeding with data source deletion anyway...")
+
+        # 执行数据源软删除
         success = await data_source_service.delete_data_source(
             data_source_id=connection_id,
             tenant_id=tenant_id,
@@ -977,7 +1072,8 @@ async def delete_data_source(
             return {
                 "message": f"Data source connection {connection_id} has been deactivated",
                 "connection_id": connection_id,
-                "status": "deactivated"
+                "status": "deactivated",
+                "sqlite_file_deleted": sqlite_file_deleted
             }
         else:
             raise HTTPException(

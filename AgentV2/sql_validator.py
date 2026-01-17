@@ -71,7 +71,8 @@ class SQLValidator:
         r"\bGRANT\b",       # 授权
         r"\bREVOKE\b",      # 撤销权限
         r"\bCREATE\b",      # 创建对象
-        r"\bREPLACE\b",     # 替换对象
+        r"\bREPLACE\s+INTO\b",  # REPLACE INTO 语句 (MySQL/SQLite UPSERT, DANGEROUS)
+                                # 注意: REPLACE() 字符串函数是安全的,不被此规则阻止
         r"\bRENAME\b",      # 重命名
         r"\bCOMMENT\b",     # 添加注释（DDL）
         r"\bLOCK\b",        # 锁表
@@ -231,6 +232,9 @@ if __name__ == "__main__":
         ("WITH cte AS (SELECT 1) SELECT * FROM cte", True),
         ("EXPLAIN SELECT * FROM orders", True),
         ("SHOW TABLES", True),
+        # REPLACE() 字符串函数是安全的 (PostgreSQL/MySQL)
+        ("SELECT REPLACE(name, 'old', 'new') FROM users", True),
+        ("SELECT REPLACE(product_name, '2023', '2024'), COUNT(*) FROM sales GROUP BY 1", True),
 
         # 危险的查询
         ("DELETE FROM users WHERE id = 1", False),
@@ -243,6 +247,8 @@ if __name__ == "__main__":
         ("ALTER TABLE users ADD COLUMN hacked INT", False),
         ("CREATE TABLE malicious (id INT)", False),
         ("GRANT ALL ON users TO public", False),
+        # REPLACE INTO 语句是危险的 (MySQL/SQLite UPSERT)
+        ("REPLACE INTO users VALUES (1, 'hacker')", False),
     ]
 
     print("=" * 60)

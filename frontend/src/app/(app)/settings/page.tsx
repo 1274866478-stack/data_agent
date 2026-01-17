@@ -40,13 +40,13 @@
  */
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Settings, Save, AlertCircle, Bell, Shield, Database } from 'lucide-react'
+import { AlertCircle, Bell, Database, Save, Settings } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 interface TenantSettings {
   display_name: string
@@ -125,7 +125,7 @@ export default function SettingsPage() {
           <h1 className="text-3xl font-bold">系统设置</h1>
           <p className="text-muted-foreground mt-2">管理租户配置和系统偏好</p>
         </div>
-        <Button onClick={handleSave} disabled={loading}>
+        <Button onClick={handleSave} disabled={loading} className="bg-gradient-modern-primary hover:opacity-90 transition-opacity">
           <Save className="h-4 w-4 mr-2" />
           {loading ? '保存中...' : '保存设置'}
         </Button>
@@ -154,7 +154,7 @@ export default function SettingsPage() {
       )}
 
       {/* 基本设置 */}
-      <Card>
+      <Card className="hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Settings className="h-5 w-5" />
@@ -198,7 +198,7 @@ export default function SettingsPage() {
       </Card>
 
       {/* 通知设置 */}
-      <Card>
+      <Card className="hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Bell className="h-5 w-5" />
@@ -232,7 +232,7 @@ export default function SettingsPage() {
       </Card>
 
       {/* 存储设置 */}
-      <Card>
+      <Card className="hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Database className="h-5 w-5" />

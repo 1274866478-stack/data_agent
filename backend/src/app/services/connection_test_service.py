@@ -58,12 +58,30 @@
 import logging
 import asyncio
 import time
+import os
 from typing import Dict, Any, Optional
 from datetime import datetime
 
 from .encryption_service import encryption_service
 
 logger = logging.getLogger(__name__)
+
+# 可选导入文件处理库
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    logger.warning("pandas未安装,Excel/CSV文件验证功能将不可用")
+    pd = None
+    PANDAS_AVAILABLE = False
+
+try:
+    import sqlite3
+    SQLITE_AVAILABLE = True
+except ImportError:
+    logger.warning("sqlite3未安装")
+    sqlite3 = None
+    SQLITE_AVAILABLE = False
 
 # 可选导入数据库驱动
 try:
@@ -539,7 +557,208 @@ class ConnectionTestService:
 
     async def _test_file_connection(self, connection_string: str, db_type: str) -> ConnectionTestResult:
         """
-        测试文件类型数据源连接（验证MinIO中的文件是否存在）
+        测试文件类型数据源连接（支持本地文件和MinIO文件）
+
+        优先级：
+        1. Windows本地路径直接检查（非容器环境）
+        2. Docker容器路径转换（容器环境）
+        3. 路径解析器解析（容器环境）
+        4. MinIO文件验证（降级）
+
+        Args:
+            connection_string: 文件路径（支持多种格式）
+            db_type: 文件类型（xlsx, xls, csv, sqlite）
+
+        Returns:
+            连接测试结果
+        """
+        logger.info(f"Testing file connection: {connection_string} (type: {db_type})")
+
+        # 1. Windows路径优先检查（非容器环境直接使用）
+        # 检测是否为Windows绝对路径（包含盘符和反斜杠）
+        is_windows_path = len(connection_string) > 1 and connection_string[1] == ":" and connection_string[0].isalpha()
+        if is_windows_path:
+            if os.path.exists(connection_string):
+                logger.info(f"Windows path exists locally, using directly: {connection_string}")
+                return self._verify_local_file(connection_string, db_type)
+            # Windows路径在容器内不存在，尝试转换为容器路径
+            container_path = self._convert_windows_to_container_path(connection_string)
+            if container_path and os.path.exists(container_path):
+                logger.info(f"Windows path converted to container path: {container_path}")
+                return self._verify_local_file(container_path, db_type)
+
+        # 2. 尝试导入路径解析器（容器环境）
+        try:
+            from .agent.path_extractor import resolve_file_path_with_fallback
+            path_resolver_available = True
+        except ImportError:
+            logger.warning("path_extractor not available, using fallback logic")
+            path_resolver_available = False
+
+        # 3. 使用路径解析器或降级逻辑
+        resolved_path = None
+        if path_resolver_available:
+            resolved_path = resolve_file_path_with_fallback(connection_string)
+        else:
+            # 降级：简单本地文件检查
+            if os.path.exists(connection_string):
+                resolved_path = connection_string
+            elif connection_string.startswith("file://"):
+                raw_path = connection_string[7:]
+                if os.path.exists(raw_path):
+                    resolved_path = raw_path
+            elif connection_string.startswith("local://"):
+                raw_path = connection_string[8:]
+                if os.path.exists(raw_path):
+                    resolved_path = raw_path
+
+        # 4. 本地文件存在性验证
+        if resolved_path and os.path.exists(resolved_path):
+            logger.info(f"Local file found: {resolved_path}")
+            return self._verify_local_file(resolved_path, db_type)
+
+        # 5. MinIO文件验证（当解析失败或路径格式为MinIO时）
+        if not resolved_path or resolved_path == connection_string:
+            logger.info(f"Path not resolved locally, trying MinIO: {connection_string}")
+            return await self._test_minio_file(connection_string, db_type)
+
+        # 6. 文件不存在
+        logger.warning(f"File not found: {connection_string}")
+        return ConnectionTestResult(
+            success=False,
+            message=f"文件不存在或无法访问",
+            error_code="FILE_NOT_FOUND",
+            details={"path": connection_string, "resolved_path": resolved_path}
+        )
+
+    def _convert_windows_to_container_path(self, windows_path: str) -> Optional[str]:
+        """
+        将Windows路径转换为Docker容器路径
+
+        映射规则（基于docker-compose.yml）：
+        - C:\\data_agent\\scripts\\ -> /app/data/
+        - C:\\data_agent\\data_storage\\ -> /app/uploads/
+
+        Args:
+            windows_path: Windows绝对路径
+
+        Returns:
+            容器内路径，如果无法转换返回None
+        """
+        if not windows_path or "\\" not in windows_path:
+            return None
+
+        # 规范化路径
+        windows_path = os.path.normpath(windows_path)
+
+        # 项目路径映射
+        path_mappings = [
+            (r"C:\data_agent\scripts", "/app/data"),
+            (r"C:\data_agent\data_storage", "/app/uploads"),
+        ]
+
+        for windows_prefix, container_prefix in path_mappings:
+            if windows_path.lower().startswith(windows_prefix.lower()):
+                # 提取相对路径
+                relative_path = windows_path[len(windows_prefix):].lstrip("\\/")
+                container_path = os.path.join(container_prefix, relative_path)
+                logger.info(f"Converted Windows path: {windows_path} -> {container_path}")
+                return container_path
+
+        logger.warning(f"No mapping found for Windows path: {windows_path}")
+        return None
+
+    def _verify_local_file(self, file_path: str, db_type: str) -> ConnectionTestResult:
+        """
+        验证本地文件的存在性、可读性和类型匹配
+
+        Args:
+            file_path: 本地文件路径
+            db_type: 文件类型（xlsx, xls, csv, sqlite）
+
+        Returns:
+            连接测试结果
+        """
+        logger.info(f"Verifying local file: {file_path} (type: {db_type})")
+
+        # 1. 检查文件扩展名匹配
+        ext_map = {
+            'xlsx': ['.xlsx'],
+            'xls': ['.xls'],
+            'csv': ['.csv'],
+            'sqlite': ['.sqlite', '.db']
+        }
+
+        file_ext = os.path.splitext(file_path)[1].lower()
+        expected_exts = ext_map.get(db_type, [])
+
+        if expected_exts and file_ext not in expected_exts:
+            return ConnectionTestResult(
+                success=False,
+                message=f"文件类型不匹配：期望 {db_type}，实际 {file_ext}",
+                error_code="FILE_TYPE_MISMATCH",
+                details={"expected": expected_exts, "actual": file_ext}
+            )
+
+        # 2. 检查文件可读性
+        if not os.access(file_path, os.R_OK):
+            return ConnectionTestResult(
+                success=False,
+                message="文件不可读（权限问题）",
+                error_code="FILE_NOT_READABLE",
+                details={"file_path": file_path}
+            )
+
+        # 3. 尝试读取文件头部验证完整性
+        try:
+            if db_type in ['xlsx', 'xls']:
+                if not PANDAS_AVAILABLE:
+                    return ConnectionTestResult(
+                        success=False,
+                        message="pandas未安装，无法验证Excel文件",
+                        error_code="PANDAS_NOT_AVAILABLE"
+                    )
+                pd.ExcelFile(file_path, engine='openpyxl')
+            elif db_type == 'csv':
+                if not PANDAS_AVAILABLE:
+                    return ConnectionTestResult(
+                        success=False,
+                        message="pandas未安装，无法验证CSV文件",
+                        error_code="PANDAS_NOT_AVAILABLE"
+                    )
+                pd.read_csv(file_path, nrows=1)
+            elif db_type == 'sqlite':
+                if not SQLITE_AVAILABLE:
+                    return ConnectionTestResult(
+                        success=False,
+                        message="sqlite3未安装",
+                        error_code="SQLITE_NOT_AVAILABLE"
+                    )
+                conn = sqlite3.connect(file_path)
+                conn.execute("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1")
+                conn.close()
+        except Exception as e:
+            return ConnectionTestResult(
+                success=False,
+                message=f"文件读取失败：{str(e)}",
+                error_code="FILE_READ_ERROR",
+                details={"error": str(e), "file_path": file_path}
+            )
+
+        # 4. 验证通过
+        return ConnectionTestResult(
+            success=True,
+            message=f"本地文件验证通过 ({db_type.upper()})",
+            details={
+                "file_path": file_path,
+                "file_type": db_type,
+                "storage_type": "local"
+            }
+        )
+
+    async def _test_minio_file(self, connection_string: str, db_type: str) -> ConnectionTestResult:
+        """
+        测试MinIO中的文件（原有逻辑，作为降级方案）
 
         Args:
             connection_string: 文件路径（格式：file://... 或直接路径）
@@ -548,6 +767,8 @@ class ConnectionTestService:
         Returns:
             连接测试结果
         """
+        logger.info(f"Testing MinIO file: {connection_string} (type: {db_type})")
+
         try:
             from .minio_client import minio_service
 
@@ -591,7 +812,7 @@ class ConnectionTestService:
                     file_exists = file_data is not None
 
             except Exception as e:
-                logger.warning(f"检查文件时出错: {e}")
+                logger.warning(f"检查MinIO文件时出错: {e}")
                 file_exists = False
 
             if file_exists:
@@ -601,7 +822,8 @@ class ConnectionTestService:
                     details={
                         "file_type": db_type,
                         "storage_path": storage_path,
-                        "bucket": bucket_name
+                        "bucket": bucket_name,
+                        "storage_type": "minio"
                     }
                 )
             else:
@@ -609,7 +831,7 @@ class ConnectionTestService:
                     success=False,
                     message=f"文件不存在或无法访问: {storage_path}",
                     error_code="FILE_NOT_FOUND",
-                    details={"storage_path": storage_path}
+                    details={"storage_path": storage_path, "storage_type": "minio"}
                 )
 
         except ImportError:
@@ -619,7 +841,7 @@ class ConnectionTestService:
                 error_code="MINIO_NOT_AVAILABLE"
             )
         except Exception as e:
-            logger.error(f"文件连接测试失败: {e}")
+            logger.error(f"MinIO文件连接测试失败: {e}")
             return ConnectionTestResult(
                 success=False,
                 message=f"文件连接测试失败: {str(e)}",

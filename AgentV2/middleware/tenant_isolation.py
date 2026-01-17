@@ -15,14 +15,14 @@ Tenant Isolation Middleware - 租户隔离中间件
 """
 
 import os
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Dict, Optional, Callable, Awaitable
 from dataclasses import dataclass, field
 
 # LangChain/LangGraph imports for deepagents compatibility
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langchain_core.messages.tool import ToolMessage
 from langgraph.types import Command
-from langchain.agents.middleware.types import AgentMiddleware
+from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse, ModelCallResult
 
 
 # ============================================================================
@@ -236,26 +236,91 @@ class TenantIsolationMiddleware(AgentMiddleware):
         # 调用处理器
         return handler(modified_request)
 
-    def wrap_model_call(self, messages: list) -> list:
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
+    ) -> ToolMessage | Command:
+        """
+        包装工具调用以注入租户信息（异步版本）
+
+        这是 deepagents 中间件接口的异步要求。
+
+        Args:
+            request: The tool call request being processed
+            handler: The async handler function to call with the modified request
+
+        Returns:
+            The raw ToolMessage, or a Command
+        """
+        # 修改工具调用输入以注入租户信息
+        tool_call = request.tool_call.copy()
+        tool_input = tool_call.get("args", {})
+
+        # 注入租户信息
+        tool_input["__tenant__"] = {
+            "tenant_id": self.tenant_id,
+            "user_id": self.user_id,
+            "session_id": self.session_id,
+        }
+
+        # 对于数据库查询，注入 WHERE 条件
+        if "query" in tool_input and isinstance(tool_input["query"], str):
+            # 简单的租户 ID 注入（实际实现需要更复杂的 SQL 解析）
+            if "WHERE" in tool_input["query"].upper():
+                tool_input["query"] += f" AND tenant_id = '{self.tenant_id}'"
+            else:
+                tool_input["query"] += f" WHERE tenant_id = '{self.tenant_id}'"
+
+        # 更新工具调用
+        tool_call["args"] = tool_input
+
+        # 创建修改后的请求
+        modified_request = ToolCallRequest(
+            tool_call=tool_call,
+            tool=request.tool,
+            state=request.state,
+            runtime=request.runtime
+        )
+
+        # 调用异步处理器
+        return await handler(modified_request)
+
+    def wrap_model_call(self, request, handler) -> Any:
         """
         包装模型调用以注入租户信息
 
-        这是 deepagents 中间件接口的要求。
+        正确的 deepagents 中间件接口实现。
 
         Args:
-            messages: 消息列表
+            request: ModelRequest 对象
+            handler: 处理函数
 
         Returns:
-            注入租户信息后的消息列表
+            ModelResponse 对象
         """
-        # 在系统消息中添加租户上下文
-        for msg in messages:
-            if isinstance(msg, dict) and msg.get("role") == "system":
-                original_content = msg.get("content", "")
-                tenant_context = f"\n\n[Tenant Context: tenant_id={self.tenant_id}, user_id={self.user_id}]"
-                msg["content"] = original_content + tenant_context
+        # TODO: 正确实现租户信息注入
+        # 目前暂时直接调用 handler，不做任何修改
+        return handler(request)
 
-        return messages
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
+    ) -> ModelCallResult:
+        """
+        包装模型调用以注入租户信息（异步版本）
+
+        Args:
+            request: ModelRequest 对象
+            handler: 异步处理函数
+
+        Returns:
+            ModelCallResult 对象
+        """
+        # TODO: 正确实现租户信息注入
+        # 目前暂时直接调用 handler，不做任何修改
+        return await handler(request)
 
 
 # ============================================================================

@@ -73,10 +73,12 @@
 """
 
 import logging
+import os
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
+from dataclasses import dataclass
 
 try:
     from ..data.models import DataSourceConnection, Tenant, DataSourceConnectionStatus
@@ -93,6 +95,35 @@ except ImportError as e:
     encryption_service = None
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# 数据源连接信息数据类
+# ============================================================================
+
+@dataclass
+class DataSourceConnectionInfo:
+    """
+    数据源连接信息（用于AgentV2）
+
+    Attributes:
+        connection_type: str - 连接类型 ("excel", "postgresql", "mysql")
+        connection_string: Optional[str] - 数据库连接字符串（解密后）
+        file_path: Optional[str] - Excel 文件路径（对于Excel类型）
+        sheets: Optional[List[str]] - Excel 工作表列表（对于Excel类型）
+        table_name: Optional[str] - 默认表名/工作表名
+        host: Optional[str] - 数据库主机（对于数据库类型）
+        port: Optional[int] - 数据库端口（对于数据库类型）
+        database_name: Optional[str] - 数据库名（对于数据库类型）
+    """
+    connection_type: str
+    connection_string: Optional[str] = None
+    file_path: Optional[str] = None
+    sheets: Optional[List[str]] = None
+    table_name: Optional[str] = None
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database_name: Optional[str] = None
 
 
 class DataSourceService:
@@ -418,43 +449,204 @@ class DataSourceService:
 
     def _parse_postgresql_connection_string(self, connection_string: str) -> Dict[str, Any]:
         """解析PostgreSQL连接字符串"""
-        # 示例: postgresql://username:password@host:port/database
+        # 支持格式: postgresql://username:password@host:port/database 或 postgresql://username:password@host/database
         try:
-            import re
-            pattern = r"postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/([^/]+)"
-            match = re.match(pattern, connection_string)
+            from urllib.parse import urlparse
+            parsed = urlparse(connection_string)
 
-            if match:
-                return {
-                    "username": match.group(1),
-                    "password": match.group(2),
-                    "host": match.group(3),
-                    "port": int(match.group(4)),
-                    "database": match.group(5)
-                }
-            return {}
-        except Exception:
+            if parsed.scheme not in ['postgresql', 'postgres']:
+                return {}
+
+            result = {
+                "username": parsed.username or "",
+                "password": parsed.password or "",
+                "host": parsed.hostname or "",
+                "port": parsed.port or 5432,  # PostgreSQL 默认端口
+                "database": parsed.path.lstrip('/') if parsed.path else ""
+            }
+
+            # 验证必需字段
+            if not result["host"] or not result["database"]:
+                return {}
+
+            return result
+        except Exception as e:
+            logger.warning(f"Failed to parse PostgreSQL connection string: {e}")
             return {}
 
     def _parse_mysql_connection_string(self, connection_string: str) -> Dict[str, Any]:
         """解析MySQL连接字符串"""
-        # 示例: mysql://username:password@host:port/database
+        # 支持格式: mysql://username:password@host:port/database 或 mysql://username:password@host/database
         try:
-            import re
-            pattern = r"mysql://([^:]+):([^@]+)@([^:]+):(\d+)/([^/]+)"
-            match = re.match(pattern, connection_string)
+            from urllib.parse import urlparse
+            parsed = urlparse(connection_string)
 
-            if match:
-                return {
-                    "username": match.group(1),
-                    "password": match.group(2),
-                    "host": match.group(3),
-                    "port": int(match.group(4)),
-                    "database": match.group(5)
-                }
+            if parsed.scheme != 'mysql':
+                return {}
+
+            result = {
+                "username": parsed.username or "",
+                "password": parsed.password or "",
+                "host": parsed.hostname or "",
+                "port": parsed.port or 3306,  # MySQL 默认端口
+                "database": parsed.path.lstrip('/') if parsed.path else ""
+            }
+
+            # 验证必需字段
+            if not result["host"] or not result["database"]:
+                return {}
+
+            return result
+        except Exception as e:
+            logger.warning(f"Failed to parse MySQL connection string: {e}")
             return {}
-        except Exception:
-            return {}
+
+    async def get_data_source_connection_info(
+        self,
+        connection_id: str,
+        tenant_id: str,
+        db: Session
+    ) -> DataSourceConnectionInfo:
+        """
+        获取数据源连接信息（用于AgentV2查询）
+
+        根据数据源类型返回不同的连接信息：
+        - Excel: 返回文件路径、工作表列表
+        - PostgreSQL/MySQL: 返回解密后的连接字符串
+
+        Args:
+            connection_id: 数据源连接ID
+            tenant_id: 租户ID
+            db: 数据库会话
+
+        Returns:
+            DataSourceConnectionInfo: 数据源连接信息对象
+
+        Raises:
+            ValueError: 数据源不存在或无权访问
+        """
+        logger.info(f"Getting connection info for {connection_id}, tenant '{tenant_id}'")
+
+        # 获取数据源
+        connection = await self.get_data_source_by_id(connection_id, tenant_id, db)
+        if not connection:
+            raise ValueError(f"Data source {connection_id} not found for tenant '{tenant_id}'")
+
+        db_type = connection.db_type.lower()
+        logger.info(f"Data source type: {db_type}")
+
+        # 处理 Excel 文件类型
+        if db_type in ["xlsx", "xls", "excel"]:
+            return await self._get_excel_connection_info(connection)
+
+        # 处理数据库类型
+        elif db_type in ["postgresql", "mysql", "sqlite"]:
+            return self._get_database_connection_info(connection)
+
+        else:
+            # 默认按数据库处理
+            logger.warning(f"Unknown data source type '{db_type}', treating as database")
+            return self._get_database_connection_info(connection)
+
+    async def _get_excel_connection_info(
+        self,
+        connection: DataSourceConnection
+    ) -> DataSourceConnectionInfo:
+        """
+        获取Excel文件的连接信息
+
+        Args:
+            connection: 数据源连接对象
+
+        Returns:
+            DataSourceConnectionInfo: Excel连接信息
+        """
+        try:
+            import pandas as pd
+
+            # 获取文件路径
+            # connection_string 存储的是 MinIO 路径或本地路径
+            file_path = connection.connection_string
+
+            # 如果是 MinIO 路径，需要下载到本地
+            if file_path.startswith("minio://") or file_path.startswith("file://"):
+                # 从 MinIO 下载文件
+                from .minio_client import minio_service
+
+                # 去掉协议前缀
+                if file_path.startswith("minio://"):
+                    storage_path = file_path[8:]  # 去掉 "minio://"
+                else:
+                    storage_path = file_path[7:]  # 去掉 "file://"
+
+                # 下载文件到临时目录
+                import tempfile
+                temp_dir = tempfile.gettempdir()
+                local_filename = os.path.basename(storage_path)
+                local_path = os.path.join(temp_dir, local_filename)
+
+                # 从 MinIO 下载
+                bucket_name = "data-sources"
+                file_data = minio_service.download_file(
+                    bucket_name=bucket_name,
+                    object_name=storage_path
+                )
+
+                if file_data:
+                    with open(local_path, 'wb') as f:
+                        f.write(file_data)
+                    file_path = local_path
+                else:
+                    raise FileNotFoundError(f"File not found in MinIO: {storage_path}")
+
+            # 验证文件存在
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"Excel file not found: {file_path}")
+
+            # 读取 Excel 工作表列表
+            excel_file = pd.ExcelFile(file_path, engine='openpyxl')
+            sheet_names = excel_file.sheet_names
+
+            logger.info(f"Excel file loaded: {file_path}, sheets: {sheet_names}")
+
+            return DataSourceConnectionInfo(
+                connection_type="excel",
+                file_path=file_path,
+                sheets=sheet_names,
+                table_name=sheet_names[0] if sheet_names else None,  # 默认第一个工作表
+                database_name=connection.database_name  # 原始文件名
+            )
+
+        except FileNotFoundError as e:
+            logger.error(f"Excel file not found: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to load Excel file: {e}")
+            raise RuntimeError(f"Failed to load Excel file: {str(e)}")
+
+    def _get_database_connection_info(
+        self,
+        connection: DataSourceConnection
+    ) -> DataSourceConnectionInfo:
+        """
+        获取数据库的连接信息
+
+        Args:
+            connection: 数据源连接对象
+
+        Returns:
+            DataSourceConnectionInfo: 数据库连接信息
+        """
+        # connection.connection_string 属性会自动解密
+        connection_string = connection.connection_string
+
+        return DataSourceConnectionInfo(
+            connection_type=connection.db_type,
+            connection_string=connection_string,
+            host=connection.host,
+            port=connection.port,
+            database_name=connection.database_name
+        )
 
 
 # 全局数据源服务实例

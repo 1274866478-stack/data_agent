@@ -16,8 +16,14 @@ XAI Logger Middleware - 可解释性日志中间件
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable, Awaitable
 from dataclasses import dataclass, field
+
+# DeepAgents 中间件接口导入
+from langgraph.prebuilt.tool_node import ToolCallRequest
+from langchain_core.messages.tool import ToolMessage
+from langgraph.types import Command
+from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse, ModelCallResult
 
 
 # ============================================================================
@@ -147,7 +153,7 @@ class XAILog:
 # XAILoggerMiddleware
 # ============================================================================
 
-class XAILoggerMiddleware:
+class XAILoggerMiddleware(AgentMiddleware):
     """
     可解释性日志中间件
 
@@ -322,6 +328,30 @@ class XAILoggerMiddleware:
             "total_time_ms": self._current_log.total_processing_time_ms,
             "steps_summary": [step.description for step in self._current_log.reasoning_steps],
             "tools_used": [call.tool_name for call in self._current_log.tool_calls],
+            # 🔧 新增：返回完整的推理步骤详情
+            "reasoning_steps_detail": [
+                {
+                    "step_number": step.step_number,
+                    "description": step.description,
+                    "tool_used": step.tool_used,
+                    "input_data": step.input_data,
+                    "output_data": step.output_data,
+                    "duration_ms": step.duration_ms,
+                }
+                for step in self._current_log.reasoning_steps
+            ],
+            # 🔧 新增：返回完整的工具调用详情
+            "tool_calls_detail": [
+                {
+                    "tool_name": call.tool_name,
+                    "input_data": call.input_data,
+                    "output_data": call.output_data,
+                    "success": call.success,
+                    "error_message": call.error_message,
+                    "duration_ms": call.duration_ms,
+                }
+                for call in self._current_log.tool_calls
+            ],
         }
 
     def _write_to_file(self):
@@ -350,6 +380,180 @@ class XAILoggerMiddleware:
     def get_log_history(self) -> List[XAILog]:
         """获取日志历史"""
         return self._log_history.copy()
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command],
+    ) -> ToolMessage | Command:
+        """
+        包装工具调用以记录 XAI 日志
+
+        这是 deepagents 中间件接口的要求。
+
+        Args:
+            request: The tool call request being processed
+            handler: The handler function to call with the request
+
+        Returns:
+            The raw ToolMessage, or a Command
+        """
+        # 提取工具调用信息
+        tool_call = request.tool_call
+        tool_name = tool_call.get("name", "unknown")
+        tool_input = tool_call.get("args", {})
+
+        # 记录工具调用开始
+        if self.enable_detailed_logging:
+            self.log_tool_call(
+                tool_name=tool_name,
+                input_data=tool_input,
+                success=True,
+                error_message=None
+            )
+
+        # 执行工具调用
+        try:
+            result = handler(request)
+
+            # 记录成功结果
+            if self.enable_detailed_logging and hasattr(result, 'content'):
+                if self._current_log:
+                    # 更新最后一次工具调用的输出
+                    if self._current_log.tool_calls:
+                        self._current_log.tool_calls[-1].output_data = {"result": result.content}
+                        self._current_log.tool_calls[-1].success = True
+
+            return result
+
+        except Exception as e:
+            # 记录失败结果
+            if self.enable_detailed_logging:
+                if self._current_log and self._current_log.tool_calls:
+                    self._current_log.tool_calls[-1].success = False
+                    self._current_log.tool_calls[-1].error_message = str(e)
+
+            # 重新抛出异常
+            raise
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
+    ) -> ToolMessage | Command:
+        """
+        包装工具调用以记录 XAI 日志（异步版本）
+
+        这是 deepagents 中间件接口的异步要求。
+
+        Args:
+            request: The tool call request being processed
+            handler: The async handler function to call with the request
+
+        Returns:
+            The raw ToolMessage, or a Command
+        """
+        # 提取工具调用信息
+        tool_call = request.tool_call
+        tool_name = tool_call.get("name", "unknown")
+        tool_input = tool_call.get("args", {})
+
+        # 记录工具调用开始
+        if self.enable_detailed_logging:
+            self.log_tool_call(
+                tool_name=tool_name,
+                input_data=tool_input,
+                success=True,
+                error_message=None
+            )
+
+        # 执行异步工具调用
+        try:
+            result = await handler(request)
+
+            # 记录成功结果
+            if self.enable_detailed_logging and hasattr(result, 'content'):
+                if self._current_log:
+                    # 更新最后一次工具调用的输出
+                    if self._current_log.tool_calls:
+                        self._current_log.tool_calls[-1].output_data = {"result": result.content}
+                        self._current_log.tool_calls[-1].success = True
+
+            return result
+
+        except Exception as e:
+            # 记录失败结果
+            if self.enable_detailed_logging:
+                if self._current_log and self._current_log.tool_calls:
+                    self._current_log.tool_calls[-1].success = False
+                    self._current_log.tool_calls[-1].error_message = str(e)
+
+            # 重新抛出异常
+            raise
+
+    def wrap_model_call(self, request, handler) -> Any:
+        """
+        包装模型调用以记录推理步骤（同步版本）
+
+        这是 deepagents 中间件接口的扩展方法。
+
+        Args:
+            request: The model call request
+            handler: The handler function to call
+
+        Returns:
+            The model output
+        """
+        # 记录推理步骤
+        if self.enable_detailed_logging:
+            self.log_reasoning_step(
+                description="LLM 模型调用",
+                tool_used=None,
+                input_data={"request": str(request)[:200]}  # 截断以避免日志过大
+            )
+
+        # 执行模型调用
+        result = handler(request)
+
+        # 更新 LLM 调用计数
+        if self._current_log:
+            self._current_log.llm_calls += 1
+
+        return result
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
+    ) -> ModelCallResult:
+        """
+        包装模型调用以记录推理步骤（异步版本）
+
+        这是 deepagents 中间件接口的异步扩展方法，用于 astream/ainvoke 等异步上下文。
+
+        Args:
+            request: The model call request
+            handler: The async handler function to call
+
+        Returns:
+            The model output
+        """
+        # 记录推理步骤
+        if self.enable_detailed_logging:
+            self.log_reasoning_step(
+                description="LLM 模型调用 (异步)",
+                tool_used=None,
+                input_data={"request": str(request)[:200]}
+            )
+
+        # 执行异步模型调用
+        result = await handler(request)
+
+        # 更新 LLM 调用计数
+        if self._current_log:
+            self._current_log.llm_calls += 1
+
+        return result
 
 
 # ============================================================================

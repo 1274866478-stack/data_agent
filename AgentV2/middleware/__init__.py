@@ -10,9 +10,15 @@ Includes:
     - TenantIsolationMiddleware: 租户隔离中间件
     - XAILoggerMiddleware: 可解释性日志中间件
     - ErrorTrackerMiddleware: 错误追踪中间件
+    - ChartGuidanceMiddleware: 图表生成指南中间件
 """
 
 from .sql_security import SQLSecurityMiddleware
+from .chart_guidance import (
+    ChartGuidanceMiddleware,
+    create_chart_guidance_middleware,
+    CHART_GUIDANCE_TEMPLATE
+)
 from .tenant_isolation import (
     TenantIsolationMiddleware,
     TenantManager,
@@ -53,5 +59,8 @@ __all__ = [
     "ErrorCategory",
     "ErrorEntry",
     "SuccessEntry",
-    "create_error_tracker"
+    "create_error_tracker",
+    "ChartGuidanceMiddleware",
+    "create_chart_guidance_middleware",
+    "CHART_GUIDANCE_TEMPLATE"
 ]

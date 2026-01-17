@@ -1,32 +1,30 @@
 'use client'
 
-import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
+import { ProcessingSteps } from '@/components/chat/ProcessingSteps'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Textarea } from '@/components/ui/textarea'
-import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Badge } from '@/components/ui/badge'
 import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger
+    DropdownMenu,
+    DropdownMenuCheckboxItem,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { Send, Bot, User, Sparkles, Paperclip, X, FileText, CheckCircle, AlertCircle, Loader2, Plus, History, Search, MessageSquare, Trash2, ChevronLeft, CheckSquare, Database, ChevronDown, AlertTriangle, Square } from 'lucide-react'
+import { Input } from '@/components/ui/input'
 import { Markdown } from '@/components/ui/markdown'
-import { useChatStore } from '@/store/chatStore'
-import { useDataSourceStore, DataSourceConnection } from '@/store/dataSourceStore'
-import { uploadFile, UploadProgress, fileUploadService } from '@/services/fileUploadService'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import { ChatQueryResultView } from '@/components/chat/ChatQueryResultView'
-import { EChartsRenderer } from '@/components/chat/EChartsRenderer'
-import { ProcessingSteps } from '@/components/chat/ProcessingSteps'
-import { extractEChartsOption, removeChartMarkers } from '@/utils/chartParser'
+import { fileUploadService, uploadFile, UploadProgress } from '@/services/fileUploadService'
+import { useChatStore } from '@/store/chatStore'
+import { useDataSourceStore } from '@/store/dataSourceStore'
+import { removeChartMarkers } from '@/utils/chartParser'
+import { AlertCircle, AlertTriangle, Bot, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, Database, FileText, History, Loader2, MessageSquare, Paperclip, Plus, Search, Send, Sparkles, Square, Trash2, User, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 interface UploadedFile {
   file: File
@@ -475,11 +473,11 @@ export default function AIAssistantPage() {
       <div className="flex-1 flex flex-col p-6 min-h-0">
         <div className="flex-1 max-w-6xl mx-auto w-full flex flex-col min-h-0 overflow-hidden">
           {/* Header */}
-          <Card className="mb-6 border-2 border-blue-200 shadow-lg flex-shrink-0">
+          <Card className="mb-6 border border-violet-200/60 dark:border-violet-500/30 bg-gradient-to-br from-violet-50/50 to-purple-50/50 dark:from-violet-500/10 dark:to-purple-500/10 shadow-lg hover:shadow-xl transition-all duration-200 flex-shrink-0">
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center gap-3 text-2xl">
-                  <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg">
+                  <div className="p-2 bg-gradient-modern-primary rounded-lg">
                     <Sparkles className="w-6 h-6 text-white" />
                   </div>
                   AI 智能助手
@@ -504,7 +502,7 @@ export default function AIAssistantPage() {
                   <Button
                     onClick={handleStartNewConversation}
                     size="sm"
-                    className="gap-2 bg-gradient-to-br from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
+                    className="gap-2 bg-gradient-modern-primary hover:opacity-90 transition-opacity"
                   >
                     <Plus className="w-4 h-4" />
                     新建对话
@@ -767,7 +765,7 @@ export default function AIAssistantPage() {
                                 </div>
                               )}
                               
-                              <Markdown content={removeChartMarkers(message.content)} className="prose-base" />
+                              <Markdown content={removeChartMarkers(message.content, !!(message.metadata?.processing_steps && message.metadata.processing_steps.length > 0))} className="prose-base" />
 
                               {/* 显示AI推理步骤（包含SQL、表格、图表） */}
                               {message.metadata?.processing_steps && message.metadata.processing_steps.length > 0 && (

@@ -52,22 +52,22 @@
  */
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { LoadingSpinner } from '@/components/ui/loading-spinner'
-import { ErrorMessage } from '@/components/ui/error-message'
+import { BulkOperations } from '@/components/data-sources/BulkOperations'
+import { DataSourceList } from '@/components/data-sources/DataSourceList'
 import { DataSourceOverview } from '@/components/data-sources/DataSourceOverview'
 import { DataSourceTabs } from '@/components/data-sources/DataSourceTabs'
 import { SearchAndFilter } from '@/components/data-sources/SearchAndFilter'
-import { BulkOperations } from '@/components/data-sources/BulkOperations'
-import { DataSourceList } from '@/components/data-sources/DataSourceList'
 import { DocumentList } from '@/components/documents/DocumentList'
 import DocumentUpload from '@/components/documents/DocumentUpload'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { ErrorMessage } from '@/components/ui/error-message'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import { useTenantId } from '@/store/authStore'
 import { useDashboardStore } from '@/store/dashboardStore'
-import { Database, FileText, Plus, Eye, EyeOff } from 'lucide-react'
+import { Eye, EyeOff, Plus } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 export default function DataSourcesPage() {
   const tenantId = useTenantId()
@@ -199,7 +199,7 @@ export default function DataSourcesPage() {
             刷新
           </Button>
 
-          <Button onClick={() => setIsCreateMode(true)}>
+          <Button onClick={() => setIsCreateMode(true)} className="bg-gradient-modern-primary hover:opacity-90 transition-opacity">
             <Plus className="h-4 w-4 mr-2" />
             添加数据源
           </Button>

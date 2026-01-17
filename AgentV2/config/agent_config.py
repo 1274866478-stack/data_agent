@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 @dataclass
 class LLMConfig:
     """LLM 模型配置"""
-    model: str = "deepseek-chat"
+    model: str = "glm-4-flash"  # 🔧 改用智谱 GLM API（无内容审查问题）
     temperature: float = 0.1
     max_tokens: int = 2000
     api_key: Optional[str] = None
@@ -35,10 +35,18 @@ class LLMConfig:
 
     def __post_init__(self):
         """初始化后处理"""
-        if self.api_key is None:
-            self.api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-        if self.base_url is None:
-            self.base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        # 优先使用智谱 API（无内容审查问题）
+        if "glm" in self.model.lower() or "zhipuai" in self.model.lower():
+            if self.api_key is None:
+                self.api_key = os.environ.get("ZHIPUAI_API_KEY", "")
+            if self.base_url is None:
+                self.base_url = os.environ.get("ZHIPUAI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+        else:
+            # DeepSeek 或其他 OpenAI 兼容 API
+            if self.api_key is None:
+                self.api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+            if self.base_url is None:
+                self.base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
 
 @dataclass
@@ -208,6 +216,11 @@ def validate_config(config: AgentConfig) -> List[str]:
     if not config.llm.model:
         errors.append("LLM model is not specified")
 
+    # 验证智谱 API Key
+    if not config.llm.api_key and ("glm" in config.llm.model.lower() or "zhipuai" in config.llm.model.lower()):
+        errors.append("ZHIPUAI_API_KEY is required for GLM models")
+
+    # 验证 DeepSeek API Key
     if not config.llm.api_key and "deepseek" in config.llm.model.lower():
         errors.append("DEEPSEEK_API_KEY is required for DeepSeek models")
 
@@ -251,15 +264,27 @@ def config_to_env(config: AgentConfig) -> Dict[str, str]:
     Returns:
         环境变量字典
     """
-    return {
+    env_dict = {
         "LLM_MODEL": config.llm.model,
         "LLM_TEMPERATURE": str(config.llm.temperature),
         "DATABASE_URL": config.database.url,
         "DEFAULT_TENANT_ID": config.default_tenant_id,
         "DEBUG_MODE": "true" if config.debug_mode else "false",
-        "DEEPSEEK_API_KEY": config.llm.api_key or "",
-        "DEEPSEEK_BASE_URL": config.llm.base_url or "",
     }
+
+    # 根据模型类型添加对应的 API 配置
+    if "glm" in config.llm.model.lower() or "zhipuai" in config.llm.model.lower():
+        env_dict.update({
+            "ZHIPUAI_API_KEY": config.llm.api_key or "",
+            "ZHIPUAI_BASE_URL": config.llm.base_url or "",
+        })
+    else:
+        env_dict.update({
+            "DEEPSEEK_API_KEY": config.llm.api_key or "",
+            "DEEPSEEK_BASE_URL": config.llm.base_url or "",
+        })
+
+    return env_dict
 
 
 # ============================================================================

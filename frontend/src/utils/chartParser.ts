@@ -81,19 +81,39 @@ export function extractEChartsOption(content: string): Record<string, any> | nul
 }
 
 /**
- * 从消息文本中移除图表配置标记
+ * 从消息文本中移除图表配置标记和 Markdown 表格，避免与推理步骤中的内容重复显示
+ * - 如果有 AI 推理步骤，移除所有内容（所有内容都在 ProcessingSteps 中展示）
+ * - 图表已通过 ProcessingSteps 的步骤7展示
+ * - 表格已通过 ProcessingSteps 的步骤6展示
+ * - 数据分析已通过 ProcessingSteps 的步骤8展示
  *
  * @param content - 消息文本内容
+ * @param hasProcessingSteps - 是否有 AI 推理步骤，默认 false
  * @returns 移除图表配置后的文本
  */
-export function removeChartMarkers(content: string): string {
+export function removeChartMarkers(content: string, hasProcessingSteps: boolean = false): string {
   if (!content) {
     return content
   }
 
-  // 使用贪婪匹配，支持跨行匹配，忽略 JSON 前后的多余空格
+  // 如果有 AI 推理步骤，移除所有内容（避免重复）
+  if (hasProcessingSteps) {
+    return ''
+  }
+
+  let cleaned = content
+
+  // 移除 [CHART_START]...[CHART_END] 标记
   const chartPattern = /\[CHART_START\]\s*\{[\s\S]*?\}\s*\[CHART_END\]/g
-  return content.replace(chartPattern, '').trim()
+  cleaned = cleaned.replace(chartPattern, '')
+
+  // 🔧 保留 Markdown 表格，让 ReactMarkdown 正常渲染
+  // 注释掉之前移除表格的逻辑
+
+  // 清理多余的空行
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
+
+  return cleaned.trim()
 }
 
 /**

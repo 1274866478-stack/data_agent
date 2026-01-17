@@ -37,21 +37,22 @@
  */
 'use client'
 
-import { useEffect } from 'react'
-import Link from 'next/link'
+import { DataSourceOverview } from '@/components/data-sources/DataSourceOverview'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { DataSourceOverview } from '@/components/data-sources/DataSourceOverview'
+import { GradientCard, GradientCardContent, GradientCardHeader, GradientCardTitle } from '@/components/ui/gradient-card'
 import { useDashboardStore } from '@/store/dashboardStore'
 import {
-  Database,
-  FileText,
-  Bot,
-  BarChart3,
-  RefreshCw,
-  ArrowRight,
-  Plus
+    ArrowRight,
+    BarChart3,
+    Bot,
+    Database,
+    FileText,
+    Plus,
+    RefreshCw
 } from 'lucide-react'
+import Link from 'next/link'
+import { useEffect } from 'react'
 
 export default function DashboardPage() {
   const { fetchOverview, isLoading } = useDashboardStore()
@@ -87,79 +88,87 @@ export default function DashboardPage() {
       {/* 快捷操作卡片 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Link href="/data-sources">
-          <Card className="hover:shadow-md transition-shadow cursor-pointer group">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Database className="h-5 w-5 text-blue-600" />
+          <GradientCard gradient="accent" className="cursor-pointer group h-full">
+            <GradientCardHeader className="pb-3">
+              <GradientCardTitle className="flex items-center gap-2 text-base">
+                <div className="p-2 bg-blue-100 dark:bg-blue-500/20 rounded-lg">
+                  <Database className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                </div>
                 数据源管理
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
+              </GradientCardTitle>
+            </GradientCardHeader>
+            <GradientCardContent>
               <p className="text-sm text-muted-foreground mb-3">
                 连接和管理您的数据库
               </p>
-              <div className="flex items-center text-sm text-primary group-hover:underline">
-                前往管理 <ArrowRight className="h-4 w-4 ml-1" />
+              <div className="flex items-center text-sm text-blue-600 dark:text-blue-400 font-medium group-hover:underline">
+                前往管理 <ArrowRight className="h-4 w-4 ml-1 transition-transform group-hover:translate-x-1" />
               </div>
-            </CardContent>
-          </Card>
+            </GradientCardContent>
+          </GradientCard>
         </Link>
 
         <Link href="/documents">
-          <Card className="hover:shadow-md transition-shadow cursor-pointer group">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <FileText className="h-5 w-5 text-green-600" />
+          <GradientCard gradient="success" className="cursor-pointer group h-full">
+            <GradientCardHeader className="pb-3">
+              <GradientCardTitle className="flex items-center gap-2 text-base">
+                <div className="p-2 bg-green-100 dark:bg-green-500/20 rounded-lg">
+                  <FileText className="h-5 w-5 text-green-600 dark:text-green-400" />
+                </div>
                 文档管理
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
+              </GradientCardTitle>
+            </GradientCardHeader>
+            <GradientCardContent>
               <p className="text-sm text-muted-foreground mb-3">
                 上传和管理您的文档
               </p>
-              <div className="flex items-center text-sm text-primary group-hover:underline">
-                查看文档 <ArrowRight className="h-4 w-4 ml-1" />
+              <div className="flex items-center text-sm text-green-600 dark:text-green-400 font-medium group-hover:underline">
+                查看文档 <ArrowRight className="h-4 w-4 ml-1 transition-transform group-hover:translate-x-1" />
               </div>
-            </CardContent>
-          </Card>
+            </GradientCardContent>
+          </GradientCard>
         </Link>
 
         <Link href="/ai-assistant">
-          <Card className="hover:shadow-md transition-shadow cursor-pointer group">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Bot className="h-5 w-5 text-purple-600" />
+          <GradientCard gradient="primary" className="cursor-pointer group h-full">
+            <GradientCardHeader className="pb-3">
+              <GradientCardTitle className="flex items-center gap-2 text-base">
+                <div className="p-2 bg-violet-100 dark:bg-violet-500/20 rounded-lg">
+                  <Bot className="h-5 w-5 text-violet-600 dark:text-violet-400" />
+                </div>
                 AI 助手
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
+              </GradientCardTitle>
+            </GradientCardHeader>
+            <GradientCardContent>
               <p className="text-sm text-muted-foreground mb-3">
                 智能数据分析对话
               </p>
-              <div className="flex items-center text-sm text-primary group-hover:underline">
-                开始对话 <ArrowRight className="h-4 w-4 ml-1" />
+              <div className="flex items-center text-sm text-violet-600 dark:text-violet-400 font-medium group-hover:underline">
+                开始对话 <ArrowRight className="h-4 w-4 ml-1 transition-transform group-hover:translate-x-1" />
               </div>
-            </CardContent>
-          </Card>
+            </GradientCardContent>
+          </GradientCard>
         </Link>
 
         <Link href="/analytics">
-          <Card className="hover:shadow-md transition-shadow cursor-pointer group">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <BarChart3 className="h-5 w-5 text-orange-600" />
+          <GradientCard gradient="warning" className="cursor-pointer group h-full">
+            <GradientCardHeader className="pb-3">
+              <GradientCardTitle className="flex items-center gap-2 text-base">
+                <div className="p-2 bg-orange-100 dark:bg-orange-500/20 rounded-lg">
+                  <BarChart3 className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+                </div>
                 数据分析
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
+              </GradientCardTitle>
+            </GradientCardHeader>
+            <GradientCardContent>
               <p className="text-sm text-muted-foreground mb-3">
                 查看分析报告图表
               </p>
-              <div className="flex items-center text-sm text-primary group-hover:underline">
-                查看分析 <ArrowRight className="h-4 w-4 ml-1" />
+              <div className="flex items-center text-sm text-orange-600 dark:text-orange-400 font-medium group-hover:underline">
+                查看分析 <ArrowRight className="h-4 w-4 ml-1 transition-transform group-hover:translate-x-1" />
               </div>
-            </CardContent>
-          </Card>
+            </GradientCardContent>
+          </GradientCard>
         </Link>
       </div>
 

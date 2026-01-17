@@ -82,32 +82,32 @@
 
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import { ErrorMessage } from '@/components/ui/error-message'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import { useTenantId } from '@/store/authStore'
 import { useDashboardStore } from '@/store/dashboardStore'
 import { useDataSourceStore } from '@/store/dataSourceStore'
 import { useDocumentStore } from '@/store/documentStore'
 import {
-  Database,
-  FileText,
-  HardDrive,
-  RefreshCw,
-  CheckCircle,
-  AlertCircle,
-  Clock,
-  FolderOpen
+    AlertCircle,
+    CheckCircle,
+    Clock,
+    Database,
+    FileText,
+    FolderOpen,
+    HardDrive,
+    RefreshCw
 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import {
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip,
-  ResponsiveContainer,
-  Legend
+    Cell,
+    Legend,
+    Pie,
+    PieChart,
+    ResponsiveContainer,
+    Tooltip
 } from 'recharts'
 
 // 颜色配置
@@ -300,7 +300,7 @@ export default function AnalyticsPage() {
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* 数据源数量 */}
-            <Card>
+            <Card className="hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 border-blue-200/60 dark:border-blue-500/30">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">数据源总数</CardTitle>
                 <Database className="h-4 w-4 text-muted-foreground" />
@@ -323,7 +323,7 @@ export default function AnalyticsPage() {
             </Card>
 
             {/* 文档数量 */}
-            <Card>
+            <Card className="hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 border-green-200/60 dark:border-green-500/30">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">文档总数</CardTitle>
                 <FileText className="h-4 w-4 text-muted-foreground" />
@@ -346,7 +346,7 @@ export default function AnalyticsPage() {
             </Card>
 
             {/* 存储使用情况 */}
-            <Card>
+            <Card className="hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 border-purple-200/60 dark:border-purple-500/30">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">存储使用</CardTitle>
                 <HardDrive className="h-4 w-4 text-muted-foreground" />
@@ -368,7 +368,7 @@ export default function AnalyticsPage() {
             </Card>
 
             {/* 数据资产概览 */}
-            <Card>
+            <Card className="hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 border-orange-200/60 dark:border-orange-500/30">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">数据资产</CardTitle>
                 <FolderOpen className="h-4 w-4 text-muted-foreground" />
@@ -387,7 +387,7 @@ export default function AnalyticsPage() {
           {/* 图表区域 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* 数据源类型分布 */}
-            <Card>
+            <Card className="hover:shadow-lg transition-all duration-200">
               <CardHeader>
                 <CardTitle>数据源类型分布</CardTitle>
                 <CardDescription>各类型数据库连接的数量分布</CardDescription>
@@ -441,7 +441,7 @@ export default function AnalyticsPage() {
             </Card>
 
             {/* 文档状态分布 */}
-            <Card>
+            <Card className="hover:shadow-lg transition-all duration-200">
               <CardHeader>
                 <CardTitle>文档状态分布</CardTitle>
                 <CardDescription>知识库文档的处理状态</CardDescription>
@@ -497,7 +497,7 @@ export default function AnalyticsPage() {
 
           {/* 最近活动 */}
           {overview?.recent_activity && overview.recent_activity.length > 0 && (
-            <Card>
+            <Card className="hover:shadow-lg transition-all duration-200">
               <CardHeader>
                 <CardTitle>最近活动</CardTitle>
                 <CardDescription>数据资产的最新操作记录</CardDescription>

@@ -12,11 +12,12 @@
  * ## [OUTPUT]
  * UI结构:
  * - **ProtectedRoute包裹**: 确保用户已认证
- * - **Layout组件**: 提供导航栏、侧边栏等通用UI
+ * - **Layout组件**: 提供导航栏、侧边栏等通用UI（支持 Modern/Legacy 切换）
  * - **children渲染**: 在布局中渲染子页面内容
  *
  * **上游依赖**:
- * - [../../components/layout/Layout.tsx](../../components/layout/Layout.tsx) - 主布局组件
+ * - [../../components/layout/Layout.tsx](../../components/layout/Layout.tsx) - 原有布局组件
+ * - [../../components/layout/ModernLayout.tsx](../../components/layout/ModernLayout.tsx) - 现代化布局组件
  * - [../../components/auth/ProtectedRoute.tsx](../../components/auth/ProtectedRoute.tsx) - 认证保护组件
  *
  * **下游依赖**:
@@ -32,6 +33,7 @@
  * ## [STATE]
  * - **认证状态**: 通过ProtectedRoute检查用户登录状态
  * - **布局状态**: Layout组件维护侧边栏、导航栏等状态
+ * - **布局选择**: 通过 NEXT_PUBLIC_USE_MODERN_LAYOUT 环境变量控制
  *
  * ## [SIDE-EFFECTS]
  * - 认证检查（ProtectedRoute组件）
@@ -40,17 +42,24 @@
 
 'use client'
 
-import { Layout } from '@/components/layout/Layout'
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
+import { Layout } from '@/components/layout/Layout'
+import { ModernLayout } from '@/components/layout/ModernLayout'
+
+// 通过环境变量控制布局切换，默认使用现代布局
+const useModernLayout = process.env.NEXT_PUBLIC_USE_MODERN_LAYOUT !== 'false'
 
 export default function AppLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
+  // 根据环境变量选择布局
+  const LayoutComponent = useModernLayout ? ModernLayout : Layout
+
   return (
     <ProtectedRoute>
-      <Layout>{children}</Layout>
+      <LayoutComponent>{children}</LayoutComponent>
     </ProtectedRoute>
   )
 }

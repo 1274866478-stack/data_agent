@@ -52,7 +52,7 @@ export type StreamEventType =
   | 'done';            // 结束信号
 
 // 步骤内容类型
-export type StepContentType = 'text' | 'sql' | 'table' | 'chart' | 'error'
+export type StepContentType = 'text' | 'sql' | 'table' | 'chart' | 'error' | 'answer'
 
 // 表格数据结构
 export interface StepTableData {
@@ -141,5 +141,162 @@ export interface StreamCallbacks {
   onStepUpdate?: (step: number, description: string, contentPreview?: string, streaming?: boolean) => void;  // 🔧 步骤更新回调（新增streaming参数）
   onError: (error: string) => void;
   onDone: () => void;
+}
+
+// ============================================================================
+// V2 流式响应类型定义 (用于 AgentV2 查询流式端点)
+// ============================================================================
+
+/**
+ * V2 流式事件类型
+ * 对应后端 /api/v2/query/stream 端点的 SSE 事件
+ */
+export type V2StreamEventType = 'start' | 'step' | 'progress' | 'data' | 'error' | 'done';
+
+/**
+ * V2 步骤事件数据
+ * 🔧 扩展：支持 V1 ProcessingStep 兼容字段
+ */
+export interface V2StepData {
+  step: number;
+  message: string;
+  detail?: string;
+  // 🔧 新增：V1 ProcessingStep 兼容字段
+  status?: 'pending' | 'running' | 'completed' | 'error';
+  content_type?: 'text' | 'sql' | 'table' | 'chart' | 'error';
+  content_data?: {
+    sql?: string;
+    table?: StepTableData;
+    chart?: StepChartData;
+    text?: string;
+    error?: string;
+  };
+  duration?: number;
+  streaming?: boolean;
+  content_preview?: string;
+}
+
+/**
+ * V2 进度事件数据
+ */
+export interface V2ProgressData {
+  value: number;  // 0-100
+}
+
+/**
+ * V2 数据块事件（答案分块）
+ */
+export interface V2DataChunk {
+  chunk: string;
+  progress: number;
+}
+
+/**
+ * V2 完成事件数据
+ */
+export interface V2DoneData {
+  success: boolean;
+  answer: string;
+  processing_steps: string[];
+  tenant_id: string;
+  processing_time_ms?: number;
+}
+
+/**
+ * V2 错误事件数据
+ */
+export interface V2ErrorData {
+  error: string;
+  detail?: string;
+  error_type?: string;
+}
+
+/**
+ * V2 开始事件数据
+ */
+export interface V2StartData {
+  query: string;
+  tenant_id: string;
+  session_id: string;
+  timestamp: number;
+}
+
+/**
+ * V2 流式回调函数接口
+ * 用于处理 /api/v2/query/stream 端点的 SSE 事件
+ */
+export interface V2StreamCallbacks {
+  /** 开始事件 */
+  onStart?: (data: V2StartData) => void;
+  /** 步骤更新 */
+  onStep?: (data: V2StepData) => void;
+  /** 进度更新 (0-100) */
+  onProgress?: (data: V2ProgressData) => void;
+  /** 数据块（答案分块） */
+  onData?: (data: V2DataChunk) => void;
+  /** 完成事件 */
+  onDone?: (data: V2DoneData) => void;
+  /** 错误事件 */
+  onError?: (data: V2ErrorData) => void;
+}
+
+/**
+ * V2 流式会话状态
+ */
+export type V2SessionStatus = 'running' | 'paused' | 'completed' | 'error' | 'cancelled';
+
+/**
+ * V2 流式会话状态数据
+ */
+export interface V2SessionState {
+  session_id: string;
+  tenant_id: string;
+  user_id: string;
+  query: string;
+  status: V2SessionStatus;
+  accumulated_answer: string;
+  current_progress: number;
+  processing_steps: Array<{
+    step: number;
+    title: string;
+    description: string;
+    status: string;
+  }>;
+  created_at: number;
+  updated_at: number;
+}
+
+/**
+ * V2 暂停会话响应数据
+ */
+export interface V2PauseResponse {
+  success: boolean;
+  session_id: string;
+  status: 'paused';
+  accumulated_answer: string;
+  current_progress: number;
+}
+
+/**
+ * V2 恢复会话响应数据
+ */
+export interface V2ResumeResponse {
+  success: boolean;
+  session_id: string;
+  status: 'running';
+  message: string;
+  accumulated_answer: string;
+  current_progress: number;
+  recommendation: string;
+}
+
+/**
+ * V2 取消会话响应数据
+ */
+export interface V2CancelResponse {
+  success: boolean;
+  session_id: string;
+  status: 'cancelled';
+  accumulated_answer: string;
 }
 

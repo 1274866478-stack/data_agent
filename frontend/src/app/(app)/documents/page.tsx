@@ -50,13 +50,13 @@
 
 'use client'
 
-import React, { useEffect } from 'react'
-import { useDocumentStore } from '@/store/documentStore'
 import DocumentList from '@/components/documents/DocumentList'
-import DocumentUpload from '@/components/documents/DocumentUpload'
 import DocumentPreview from '@/components/documents/DocumentPreview'
-import { Button } from '@/components/ui/button'
+import DocumentUpload from '@/components/documents/DocumentUpload'
 import { Alert } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { useDocumentStore } from '@/store/documentStore'
+import { useEffect } from 'react'
 
 export default function DocumentsPage() {
   const {
@@ -101,7 +101,7 @@ export default function DocumentsPage() {
 
     return (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
+        <div className="bg-white p-4 rounded-xl border border-gray-200 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">总文档</p>
@@ -111,7 +111,7 @@ export default function DocumentsPage() {
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
+        <div className="bg-white p-4 rounded-xl border border-gray-200 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">已完成</p>
@@ -121,7 +121,7 @@ export default function DocumentsPage() {
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
+        <div className="bg-white p-4 rounded-xl border border-gray-200 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">处理中</p>
@@ -131,7 +131,7 @@ export default function DocumentsPage() {
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
+        <div className="bg-white p-4 rounded-xl border border-gray-200 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">存储使用</p>
@@ -161,7 +161,7 @@ export default function DocumentsPage() {
                 </span>
               </div>
             )}
-            <Button onClick={openUploadModal}>
+            <Button onClick={openUploadModal} className="bg-gradient-modern-primary hover:opacity-90 transition-opacity">
               📤 上传文档
             </Button>
           </div>

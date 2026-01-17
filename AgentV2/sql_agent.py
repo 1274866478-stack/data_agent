@@ -1970,26 +1970,30 @@ async def run_agent(question: str, thread_id: str = "1", verbose: bool = True, d
 
             if "messages" in node_output:
                 messages = node_output["messages"]
-                all_messages.extend(messages)  # 收集消息
+                # 🔧 处理 LangGraph Overwrite 对象和 None 值
+                if messages is not None:
+                    if hasattr(messages, 'value'):
+                        messages = messages.value
+                    all_messages.extend(messages)  # 收集消息
 
-                for msg in messages:
-                    if verbose:
-                        print(f"  📨 消息类型: {type(msg).__name__}")
+                    for msg in messages:
+                        if verbose:
+                            print(f"  📨 消息类型: {type(msg).__name__}")
 
-                    # 根据消息类型处理
-                    if isinstance(msg, AIMessage):
-                        if msg.content:
-                            final_content = msg.content  # 保存最后的AI回复
-                            if verbose:
-                                preview = msg.content[:200] + ('...' if len(msg.content) > 200 else '')
-                                print(f"     🤖 AI: {preview}")
-                        if msg.tool_calls and verbose:
-                            for tc in msg.tool_calls:
-                                print(f"     🔧 调用工具: {tc['name']}")
+                        # 根据消息类型处理
+                        if isinstance(msg, AIMessage):
+                            if msg.content:
+                                final_content = msg.content  # 保存最后的AI回复
+                                if verbose:
+                                    preview = msg.content[:200] + ('...' if len(msg.content) > 200 else '')
+                                    print(f"     🤖 AI: {preview}")
+                            if msg.tool_calls and verbose:
+                                for tc in msg.tool_calls:
+                                    print(f"     🔧 调用工具: {tc['name']}")
 
-                    elif isinstance(msg, ToolMessage) and verbose:
-                        preview = str(msg.content)[:200] + ('...' if len(str(msg.content)) > 200 else '')
-                        print(f"     📦 工具返回: {preview}")
+                        elif isinstance(msg, ToolMessage) and verbose:
+                            preview = str(msg.content)[:200] + ('...' if len(str(msg.content)) > 200 else '')
+                            print(f"     📦 工具返回: {preview}")
 
     # 构建可视化响应（异步，支持 mcp-echarts 图表生成）
     viz_response = await build_visualization_response(all_messages, final_content)

@@ -73,12 +73,11 @@
  * - 定时同步任务 (每30秒同步待发送消息)
  */
 
+import { api, apiClient, ChatCompletionRequest, ChatQueryRequest } from '@/lib/api-client'
+import { cacheMessage, cacheSession, getCachedSession, getCachedSessions, messageCacheService, syncMessages } from '@/services/messageCacheService'
+import { ProcessingStep, StreamCallbacks, V2SessionState, V2StreamCallbacks } from '@/types/chat'
 import { create } from 'zustand'
 import { devtools, subscribeWithSelector } from 'zustand/middleware'
-import { api, ChatQueryRequest, ChatCompletionRequest, StreamEvent } from '@/lib/api-client'
-import { apiClient } from '@/lib/api-client'
-import { StreamCallbacks, ProcessingStep } from '@/types/chat'
-import { messageCacheService, cacheSession, cacheMessage, getCachedSessions, getCachedSession, getCachedMessages, syncMessages } from '@/services/messageCacheService'
 
 // 聊天消息类型定义
 export interface ChatMessage {
@@ -111,6 +110,13 @@ export interface ChatSession {
 // 流式状态类型
 type StreamingStatus = 'idle' | 'streaming' | 'analyzing_sql' | 'generating_chart' | 'error' | 'done'
 
+// V2 流式会话管理状态
+interface V2SessionManager {
+  currentSessionId: string | null
+  sessionState: V2SessionState | null
+  isPaused: boolean
+}
+
 // 聊天状态接口
 interface ChatState {
   // 状态
@@ -126,6 +132,9 @@ interface ChatState {
   streamingStatus: StreamingStatus
   currentAbortController: AbortController | null
   streamingMessageId: string | null  // 当前正在流式更新的消息ID
+
+  // V2 流式会话管理
+  v2Session: V2SessionManager
 
   // 图表合并状态
   selectedCharts: string[]  // 选中的图表消息ID列表
@@ -155,10 +164,16 @@ interface ChatState {
   updateMessage: (messageId: string, updates: Partial<ChatMessage>) => void
   deleteMessage: (messageId: string) => void
   clearHistory: (sessionId: string) => void
-  
+
   // 流式响应控制
   stopStreaming: () => void
   setStreamingStatus: (status: StreamingStatus) => void
+
+  // V2 流式会话管理
+  pauseV2Session: (sessionId: string) => Promise<void>
+  resumeV2Session: (sessionId: string) => Promise<void>
+  cancelV2Session: (sessionId: string) => Promise<void>
+  getV2SessionState: (sessionId: string) => Promise<V2SessionState | null>
 
   // 图表合并操作
   toggleChartSelection: (messageId: string) => void
@@ -210,6 +225,12 @@ export const useChatStore = create<ChatState>()(
         totalSessions: 0,
         averageResponseTime: 0,
         pendingMessages: 0,
+      },
+      // V2 流式会话管理初始状态
+      v2Session: {
+        currentSessionId: null,
+        sessionState: null,
+        isPaused: false,
       },
 
       // 创建新会话
@@ -554,17 +575,6 @@ export const useChatStore = create<ChatState>()(
             const abortController = new AbortController()
             set({ currentAbortController: abortController, streamingStatus: 'streaming' })
 
-            // 构建 ChatCompletionRequest
-            const chatRequest: ChatCompletionRequest = {
-              messages: historyMessages.concat([{
-                role: 'user',
-                content: content
-              }]),
-              stream: true,
-              enable_thinking: false,
-              data_source_ids: normalizedDataSourceIds,
-            }
-
             // 创建初始的 assistant 消息
             const assistantMessageId = generateId()
             const initialMessage: Omit<ChatMessage, 'id'> = {
@@ -606,13 +616,291 @@ export const useChatStore = create<ChatState>()(
               }
             })
 
-            // 流式内容累积
-            let accumulatedContent = ''
-            let accumulatedThinking = ''
-            let toolInput = ''
-            let toolOutput: any = null
-            let echartsOption: any = null
-            let processingSteps: ProcessingStep[] = []
+            // 检查是否使用 V2 流式 (默认使用 V2)
+            const useV2Stream = queryRequest.use_v2 !== false
+
+            if (useV2Stream) {
+              // ============================================================
+              // V2 流式模式 (使用 AgentV2 + SSE)
+              // ============================================================
+              console.log('[ChatStore] 使用 V2 流式模式')
+
+              let accumulatedAnswer = ''
+              let processingSteps: ProcessingStep[] = []
+              let currentProgress = 0
+
+              // 🔧 流式更新节流控制
+              let lastUpdateTime = 0
+              const UPDATE_THROTTLE_MS = 50  // 每 50ms 最多更新一次 UI
+              let pendingUpdate = false
+              let rafId: number | null = null
+
+              // V2 流式回调
+              const v2Callbacks: V2StreamCallbacks = {
+                onStart: (data) => {
+                  console.log('[ChatStore V2] 开始:', data)
+                  // 保存 V2 会话信息到状态
+                  set({
+                    v2Session: {
+                      currentSessionId: data.session_id,
+                      sessionState: null,
+                      isPaused: false,
+                    }
+                  })
+                  processingSteps = []
+                  currentProgress = 0
+                },
+                onStep: (data) => {
+                  console.log('[ChatStore V2] 步骤:', data)
+
+                  // 🔧 扩展：转换为 ProcessingStep 格式（支持 V1 兼容字段）
+                  const step: ProcessingStep = {
+                    step: data.step,
+                    title: data.message,
+                    description: data.detail || data.message,
+                    status: data.status || 'running',  // 🔧 使用后端返回的状态，默认为 running
+                    content_type: data.content_type,    // 🔧 新增
+                    content_data: data.content_data,    // 🔧 新增
+                    duration: data.duration,            // 🔧 新增
+                    streaming: data.streaming,          // 🔧 新增
+                    content_preview: data.content_preview,  // 🔧 新增
+                  }
+
+                  // 查找并更新/添加步骤
+                  const existingIndex = processingSteps.findIndex(s => s.step === data.step)
+                  if (existingIndex >= 0) {
+                    // 🔧 如果步骤已存在，合并更新（保留已有的 timestamp 等字段）
+                    processingSteps[existingIndex] = {
+                      ...processingSteps[existingIndex],
+                      ...step,
+                      // 如果后端明确提供了状态，使用后端的状态；否则保持现有状态
+                      status: data.status || processingSteps[existingIndex].status,
+                    }
+                  } else {
+                    processingSteps.push(step)
+                  }
+
+                  // 按步骤号排序
+                  processingSteps.sort((a, b) => a.step - b.step)
+
+                  // 更新消息 metadata
+                  state.updateMessage(assistantMessageId, {
+                    metadata: {
+                      processing_steps: [...processingSteps],
+                      progress: currentProgress,
+                    },
+                  })
+                },
+                onProgress: (data) => {
+                  console.log('[ChatStore V2] 进度:', data.value)
+                  currentProgress = data.value
+
+                  // 更新进度
+                  state.updateMessage(assistantMessageId, {
+                    metadata: {
+                      processing_steps: [...processingSteps],
+                      progress: currentProgress,
+                    },
+                  })
+                },
+                onData: (data) => {
+                  // 🔧 优化：减少日志输出频率
+                  accumulatedAnswer += data.chunk
+                  currentProgress = data.progress || currentProgress
+
+                  // 🔧 节流更新：使用 requestAnimationFrame 批量更新
+                  const now = Date.now()
+                  if (!pendingUpdate && (now - lastUpdateTime >= UPDATE_THROTTLE_MS)) {
+                    pendingUpdate = true
+                    rafId = requestAnimationFrame(() => {
+                      state.updateMessage(assistantMessageId, {
+                        content: accumulatedAnswer,
+                        metadata: {
+                          processing_steps: [...processingSteps],
+                        },
+                      })
+                      lastUpdateTime = Date.now()
+                      pendingUpdate = false
+                    })
+                  }
+                },
+                onDone: (data) => {
+                  console.log('[ChatStore V2] 完成:', data)
+                  console.log('[ChatStore V2] chart_config:', data.chart_config)
+
+                  // 🔧 取消挂起的节流更新，执行最终同步更新
+                  if (rafId !== null) {
+                    cancelAnimationFrame(rafId)
+                    rafId = null
+                  }
+                  pendingUpdate = false
+
+                  // 完成所有步骤
+                  processingSteps.forEach(step => {
+                    if (step.status === 'running') {
+                      step.status = 'completed'
+                    }
+                  })
+
+                  // 🔧 解析图表配置
+                  let chartConfig = null
+                  if (data.chart_config) {
+                    try {
+                      chartConfig = typeof data.chart_config === 'string'
+                        ? JSON.parse(data.chart_config)
+                        : data.chart_config
+                      console.log('[ChatStore V2] 成功解析图表配置:', chartConfig)
+                    } catch (e) {
+                      console.warn('[ChatStore V2] 图表配置解析失败:', e)
+                    }
+                  }
+
+                  // 🔧 如果有图表配置，添加一个图表步骤到 processing_steps
+                  if (chartConfig) {
+                    const chartStep = {
+                      step: processingSteps.length + 1,
+                      title: '生成数据可视化',  // 🔧 修复：使用 title 而不是 message
+                      description: chartConfig.title?.text || '图表生成完成',  // 🔧 添加 description 字段
+                      status: 'completed' as const,
+                      echarts_option: chartConfig, // 🔧 关键修复：添加 echarts_option 字段
+                      duration: 100,  // 🔧 修复：使用 duration 而不是 duration_ms
+                      content_type: 'chart' as const,  // 🔧 添加 content_type 字段
+                      content_data: {
+                        chart: {
+                          echarts_option: chartConfig,
+                          chart_type: chartConfig.series?.[0]?.type || 'line',
+                          title: chartConfig.title?.text || '数据图表',
+                        }
+                      }
+                    }
+                    processingSteps.push(chartStep)
+                    console.log('[ChatStore V2] 添加图表步骤到 processing_steps:', chartStep)
+                  }
+
+                  // 🔧 添加"AI 回答"步骤，确保 answer 在 ProcessingSteps 中显示
+                  // 因为 removeChartMarkers 会在有 processing_steps 时过滤掉 message.content
+                  if (data.answer && data.answer.trim()) {
+                    // 🔧 修复：移除 [CHART_START]...[CHART_END] 标记和 markdown 表格
+                    // 因为数据已通过图表可视化展示，表格是冗余的
+                    let cleanedAnswer = data.answer
+                      // 移除图表标记
+                      .replace(/\[CHART_START\][\s\S]*?\[CHART_END\]/g, '')
+                      // 移除 markdown 表格（以 | 开头或结尾的行，包括表头分隔符）
+                      .replace(/^\|.*\|$/gm, '')
+                      .replace(/^\|[-:\s|]+\|$/gm, '')
+                      // 移除表格前后多余的空行
+                      .replace(/\n{3,}/g, '\n\n')
+                      .trim()
+                    
+                    // 如果清理后内容为空，使用默认消息
+                    if (!cleanedAnswer) {
+                      cleanedAnswer = '已生成数据可视化图表，请查看上方图表。'
+                    }
+                    
+                    const answerStep = {
+                      step: processingSteps.length + 1,
+                      title: 'AI 回答',
+                      description: cleanedAnswer.length > 100 
+                        ? cleanedAnswer.substring(0, 100) + '...'
+                        : cleanedAnswer,
+                      status: 'completed' as const,
+                      content_type: 'answer' as const,
+                      content_data: {
+                        text: cleanedAnswer
+                      }
+                    }
+                    processingSteps.push(answerStep)
+                    console.log('[ChatStore V2] 添加 AI 回答步骤:', answerStep)
+                  }
+
+                  // 更新最终消息
+                  state.updateMessage(assistantMessageId, {
+                    status: 'sent',
+                    content: data.answer,
+                    metadata: {
+                      processing_steps: [...processingSteps],
+                      progress: 100,
+                      processing_time_ms: data.processing_time_ms,
+                      // 🔧 同时保存到 metadata.echarts_option 以便其他组件使用
+                      ...(chartConfig && { echarts_option: chartConfig }),
+                    },
+                    // 🔧 添加图表配置（向后兼容）
+                    ...(chartConfig && {
+                      chart: {
+                        chart_type: chartConfig.chart_type || 'line',
+                        title: chartConfig.title || '数据图表',
+                        chart_config: JSON.stringify(chartConfig),
+                      }
+                    })
+                  })
+                },
+                onError: (data) => {
+                  console.error('[ChatStore V2] 错误:', data)
+                  set({ streamingStatus: 'error' })
+                  state.updateMessage(assistantMessageId, {
+                    status: 'error',
+                    content: data.error || '查询失败',
+                  })
+                  state.setError(data.detail || data.error || 'V2 流式响应错误')
+                },
+              }
+
+              try {
+                // 调用 V2 流式 API
+                const returnedController = await apiClient.streamV2Query(
+                  queryRequest,
+                  v2Callbacks,
+                  abortController.signal
+                )
+
+                if (returnedController !== abortController) {
+                  set({ currentAbortController: returnedController })
+                }
+              } catch (error) {
+                if (error instanceof Error && error.name === 'AbortError') {
+                  console.log('[ChatStore V2] 流式响应已取消')
+                  set({ streamingStatus: 'idle' })
+                  state.updateMessage(assistantMessageId, {
+                    status: 'error',
+                    content: accumulatedAnswer || '响应已中断',
+                  })
+                  return
+                }
+                throw error
+              } finally {
+                set({
+                  currentAbortController: null,
+                  streamingMessageId: null,
+                  streamingStatus: 'idle',
+                  isLoading: false,
+                  isTyping: false,
+                })
+              }
+
+            } else {
+              // ============================================================
+              // V1 流式模式 (原有逻辑)
+              // ============================================================
+              console.log('[ChatStore] 使用 V1 流式模式')
+
+              // 构建 ChatCompletionRequest
+              const chatRequest: ChatCompletionRequest = {
+                messages: historyMessages.concat([{
+                  role: 'user',
+                  content: content
+                }]),
+                stream: true,
+                enable_thinking: false,
+                data_source_ids: normalizedDataSourceIds,
+              }
+
+              // 流式内容累积
+              let accumulatedContent = ''
+              let accumulatedThinking = ''
+              let toolInput = ''
+              let toolOutput: any = null
+              let echartsOption: any = null
+              let processingSteps: ProcessingStep[] = []
 
             // 🔧 新增：标记是否已经收到了正式的处理步骤
             // 在收到正式步骤之前，所有 content 都视为"规划/思考"阶段
@@ -942,8 +1230,9 @@ export const useChatStore = create<ChatState>()(
                 isTyping: false,
               })
             }
-          } else {
-            // 非流式模式（原有逻辑）
+          }  // 关闭 V1 流式 else 分支
+        }  // 关闭外层 if (useStream) 分支
+        else {  // 非流式模式（原有逻辑）
             console.log('[ChatStore] 准备调用 API, request:', queryRequest)
             const response = await api.chat.sendQuery(queryRequest)
             console.log('[ChatStore] API 响应:', response)
@@ -1232,6 +1521,105 @@ export const useChatStore = create<ChatState>()(
       // 设置流式状态
       setStreamingStatus: (status: StreamingStatus) => {
         set({ streamingStatus: status })
+      },
+
+      // ========================================
+      // V2 流式会话管理
+      // ========================================
+
+      // 暂停 V2 流式会话
+      pauseV2Session: async (sessionId: string) => {
+        console.log('[ChatStore] 暂停 V2 会话:', sessionId)
+        try {
+          const result = await apiClient.pauseV2Session(sessionId)
+          console.log('[ChatStore] 暂停结果:', result)
+          // 更新本地状态
+          set({
+            v2Session: {
+              ...get().v2Session,
+              isPaused: true,
+            },
+            streamingStatus: 'paused',
+          })
+        } catch (error) {
+          console.error('[ChatStore] 暂停会话失败:', error)
+          setError(`暂停会话失败: ${error instanceof Error ? error.message : '未知错误'}`)
+        }
+      },
+
+      // 恢复 V2 流式会话
+      resumeV2Session: async (sessionId: string) => {
+        console.log('[ChatStore] 恢复 V2 会话:', sessionId)
+        try {
+          const result = await apiClient.resumeV2Session(sessionId)
+          console.log('[ChatStore] 恢复结果:', result)
+          // 更新本地状态
+          set({
+            v2Session: {
+              ...get().v2Session,
+              isPaused: false,
+              sessionState: {
+                session_id: sessionId,
+                tenant_id: '',
+                user_id: '',
+                query: '',
+                status: 'running',
+                accumulated_answer: result.accumulated_answer,
+                current_progress: result.current_progress,
+                processing_steps: [],
+                created_at: 0,
+                updated_at: 0,
+              },
+            },
+            streamingStatus: 'streaming',
+          })
+        } catch (error) {
+          console.error('[ChatStore] 恢复会话失败:', error)
+          setError(`恢复会话失败: ${error instanceof Error ? error.message : '未知错误'}`)
+        }
+      },
+
+      // 取消 V2 流式会话
+      cancelV2Session: async (sessionId: string) => {
+        console.log('[ChatStore] 取消 V2 会话:', sessionId)
+        try {
+          const result = await apiClient.cancelV2Session(sessionId)
+          console.log('[ChatStore] 取消结果:', result)
+          // 清理会话状态
+          set({
+            v2Session: {
+              currentSessionId: null,
+              sessionState: null,
+              isPaused: false,
+            },
+            streamingStatus: 'idle',
+            currentAbortController: null,
+            streamingMessageId: null,
+          })
+        } catch (error) {
+          console.error('[ChatStore] 取消会话失败:', error)
+          setError(`取消会话失败: ${error instanceof Error ? error.message : '未知错误'}`)
+        }
+      },
+
+      // 获取 V2 会话状态
+      getV2SessionState: async (sessionId: string): Promise<V2SessionState | null> => {
+        console.log('[ChatStore] 获取 V2 会话状态:', sessionId)
+        try {
+          const sessionState = await apiClient.getV2SessionState(sessionId)
+          // 更新本地状态
+          set({
+            v2Session: {
+              currentSessionId: sessionId,
+              sessionState,
+              isPaused: sessionState.status === 'paused',
+            },
+          })
+          return sessionState
+        } catch (error) {
+          console.error('[ChatStore] 获取会话状态失败:', error)
+          return null
+        }
       },
 
       // ========================================

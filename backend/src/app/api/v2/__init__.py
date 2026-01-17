@@ -17,12 +17,13 @@ API v2 版本路由包
 """
 
 from fastapi import APIRouter
-from .endpoints import query_v2
+from .endpoints import query_v2, query_stream_v2
 
 # 创建API v2路由器
 api_router_v2 = APIRouter()
 
 # 注册各个端点路由
 api_router_v2.include_router(query_v2.router, tags=["Query V2"])
+api_router_v2.include_router(query_stream_v2.router, tags=["Query V2 Stream"])
 
 __all__ = ["api_router_v2"]

@@ -1553,9 +1553,13 @@ async def run_agent(
 
                     if "messages" in node_output:
                         messages = node_output["messages"]
-                        all_messages.extend(messages)
+                        # 🔧 处理 LangGraph Overwrite 对象和 None 值
+                        if messages is not None:
+                            if hasattr(messages, 'value'):
+                                messages = messages.value
+                            all_messages.extend(messages)
 
-                        for msg in messages:
+                            for msg in messages:
                             # DEBUG: 打印所有消息类型
                             import sys
                             try:

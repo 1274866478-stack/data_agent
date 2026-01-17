@@ -93,10 +93,8 @@
 
 import json
 import time
-import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Union
-from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
 from functools import wraps
 import hashlib
 import logging
@@ -386,6 +384,41 @@ class TenantCacheKeyGenerator:
     def generate_performance_key(tenant_id: str, time_range: str) -> str:
         """生成性能统计缓存键"""
         return f"tenant:{tenant_id}:performance:{time_range}"
+
+    @staticmethod
+    def generate_v2_query_key(tenant_id: str, user_id: str, query: str, session_id: Optional[str] = None) -> str:
+        """
+        生成 V2 流式查询缓存键
+
+        Args:
+            tenant_id: 租户ID
+            user_id: 用户ID
+            query: 自然语言查询
+            session_id: 会话ID（可选）
+
+        Returns:
+            缓存键
+        """
+        # 组合查询内容并哈希
+        content = f"{tenant_id}:{user_id}:{query}"
+        if session_id:
+            content += f":{session_id}"
+        content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+        return f"v2:query:{content_hash}"
+
+    @staticmethod
+    def generate_v2_session_key(tenant_id: str, session_id: str) -> str:
+        """
+        生成 V2 会话上下文缓存键
+
+        Args:
+            tenant_id: 租户ID
+            session_id: 会话ID
+
+        Returns:
+            缓存键
+        """
+        return f"v2:session:{tenant_id}:{session_id}"
 
 
 class CacheFactory:

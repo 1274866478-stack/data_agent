@@ -37,57 +37,20 @@
  */
 'use client'
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
+import { StatCard } from '@/components/ui/stat-card'
+import { DashboardOverview, useDashboardStore } from '@/store/dashboardStore'
 import {
-  Database,
-  FileText,
-  HardDrive,
-  CheckCircle,
-  TrendingUp,
-  Clock,
-  AlertCircle
+    AlertCircle,
+    CheckCircle,
+    Clock,
+    Database,
+    FileText,
+    HardDrive
 } from 'lucide-react'
-import { useDashboardStore, DashboardOverview } from '@/store/dashboardStore'
 
-interface StatCardProps {
-  title: string
-  value: string | number
-  icon: React.ReactNode
-  color: string
-  trend?: {
-    value: number
-    isPositive: boolean
-  }
-}
-
-const StatCard: React.FC<StatCardProps> = ({ title, value, icon, color, trend }) => {
-  const colorClasses = {
-    blue: 'text-blue-600 bg-blue-50 border-blue-200',
-    green: 'text-green-600 bg-green-50 border-green-200',
-    orange: 'text-orange-600 bg-orange-50 border-orange-200',
-    purple: 'text-purple-600 bg-purple-50 border-purple-200',
-  }
-
-  return (
-    <Card className={`border-l-4 ${colorClasses[color as keyof typeof colorClasses]}`}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        {icon}
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
-        {trend && (
-          <div className="flex items-center text-xs text-muted-foreground">
-            <TrendingUp className={`mr-1 h-3 w-3 ${trend.isPositive ? 'text-green-600' : 'text-red-600'}`} />
-            {trend.isPositive ? '+' : ''}{trend.value}% 较上周
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
 
 interface ActivityItemProps {
   activity: DashboardOverview['recent_activity'][0]
@@ -205,26 +168,33 @@ export const DataSourceOverview: React.FC = () => {
         <StatCard
           title="数据库连接"
           value={`${overview.databases.active} / ${overview.databases.total}`}
-          icon={<Database className="h-4 w-4 text-blue-600" />}
-          color="blue"
+          icon={Database}
+          gradient="accent"
+          trend={overview.databases.active > 0 ? 'up' : 'neutral'}
+          trendValue={`${databaseHealthPercentage}% 健康`}
         />
         <StatCard
           title="已上传文档"
           value={`${overview.documents.ready} / ${overview.documents.total}`}
-          icon={<FileText className="h-4 w-4 text-green-600" />}
-          color="green"
+          icon={FileText}
+          gradient="success"
+          trend={overview.documents.ready > 0 ? 'up' : 'neutral'}
+          trendValue={`${documentProcessingPercentage}% 就绪`}
         />
         <StatCard
           title="存储使用"
           value={`${Math.round(overview.storage.usage_percentage)}%`}
-          icon={<HardDrive className="h-4 w-4 text-orange-600" />}
-          color="orange"
+          icon={HardDrive}
+          gradient="warning"
+          trend={overview.storage.usage_percentage > 80 ? 'down' : 'neutral'}
+          trendValue={`${Math.round(overview.storage.used_mb)} MB`}
         />
         <StatCard
           title="健康连接"
           value={overview.databases.active}
-          icon={<CheckCircle className="h-4 w-4 text-green-600" />}
-          color="green"
+          icon={CheckCircle}
+          gradient="primary"
+          variant="filled"
         />
       </div>
 
