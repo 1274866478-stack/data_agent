@@ -61,6 +61,9 @@ services:
       - CORS_ORIGINS=["http://localhost:3000", "http://127.0.0.1:3000"]
       - LOG_LEVEL=INFO
       - ENABLE_RAG=true
+      # 🔧 修复：添加 PYTHONPATH 使 AgentV2 和 Agent 模块可以正确导入
+      # 注意：需要添加根目录 / 使 import AgentV2 能正确找到 /AgentV2
+      - PYTHONPATH=/app:/
     volumes:
       - ./backend:/app
       # 挂载 Agent 目录到容器根目录，供 agent_service.py 导入 sql_agent 等模块

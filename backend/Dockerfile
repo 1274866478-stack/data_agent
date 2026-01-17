@@ -8,7 +8,9 @@ FROM python:3.11-slim AS base
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app
+# 🔧 修复：扩展 PYTHONPATH 使 AgentV2 和 Agent 模块可以正确导入
+# 注意：需要添加根目录 / 使 import AgentV2 能正确找到 /AgentV2
+ENV PYTHONPATH=/app:/
 
 # Set work directory
 WORKDIR /app
@@ -16,13 +18,13 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        postgresql-client \
-        curl \
-        build-essential \
-        git \
-        wget \
-        ca-certificates \
-        gnupg \
+    postgresql-client \
+    curl \
+    build-essential \
+    git \
+    wget \
+    ca-certificates \
+    gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js LTS (for MCP PostgreSQL server)

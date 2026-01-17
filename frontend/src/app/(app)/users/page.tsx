@@ -97,11 +97,11 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Users, UserPlus, Search, Mail, Shield, AlertCircle } from 'lucide-react'
+import { AlertCircle, Mail, Search, Shield, UserPlus, Users } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 interface User {
   id: string
@@ -202,8 +202,8 @@ export default function UsersPage() {
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">用户管理</h1>
-          <p className="text-muted-foreground mt-2">管理租户下的所有用户</p>
+          <h1 className="text-3xl font-bold text-white">用户管理</h1>
+          <p className="text-gray-300 mt-2">管理租户下的所有用户</p>
         </div>
         <Button>
           <UserPlus className="h-4 w-4 mr-2" />

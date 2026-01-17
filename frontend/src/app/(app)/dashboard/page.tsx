@@ -66,8 +66,8 @@ export default function DashboardPage() {
       {/* 页面标题 */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">仪表板</h1>
-          <p className="text-muted-foreground">
+          <h1 className="text-3xl font-bold text-white">仪表板</h1>
+          <p className="text-gray-300">
             查看您的数据源状态和系统概览
           </p>
         </div>

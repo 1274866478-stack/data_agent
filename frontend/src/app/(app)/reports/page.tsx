@@ -86,10 +86,10 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { FileText, Download, Calendar, TrendingUp, AlertCircle } from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { AlertCircle, Calendar, Download, FileText, TrendingUp } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 interface PerformanceReport {
   id: string
@@ -197,8 +197,8 @@ export default function ReportsPage() {
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">报告中心</h1>
-          <p className="text-muted-foreground mt-2">查看和下载系统性能报告与分析报告</p>
+          <h1 className="text-3xl font-bold text-white">报告中心</h1>
+          <p className="text-gray-300 mt-2">查看和下载系统性能报告与分析报告</p>
         </div>
         <Button>
           <Calendar className="h-4 w-4 mr-2" />

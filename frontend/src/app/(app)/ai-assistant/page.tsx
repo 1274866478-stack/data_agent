@@ -488,7 +488,7 @@ export default function AIAssistantPage() {
                     variant="outline"
                     size="sm"
                     onClick={() => setShowHistory(!showHistory)}
-                    className="gap-2"
+                    className="gap-2 text-gray-700"
                   >
                     <History className="w-4 h-4" />
                     历史对话
@@ -531,7 +531,7 @@ export default function AIAssistantPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-8 min-w-[240px] justify-between"
+                        className="h-8 min-w-[240px] justify-between text-gray-700"
                       >
                         <div className="flex items-center gap-2 overflow-hidden">
                           <span className="truncate">{selectedDataSourceLabel}</span>
@@ -765,7 +765,17 @@ export default function AIAssistantPage() {
                                 </div>
                               )}
                               
-                              <Markdown content={removeChartMarkers(message.content, !!(message.metadata?.processing_steps && message.metadata.processing_steps.length > 0))} className="prose-base" />
+                              {/* AI 正在思考提示（仅在加载中且该消息是最后一条AI消息时显示，置于推理过程上方） */}
+                              {isLoading && message === messages.filter(m => m.role === 'assistant').pop() && (
+                                <div className="mb-3 inline-flex items-center gap-2 px-3 py-2 rounded-full bg-blue-50 border border-blue-200">
+                                  <div className="flex gap-1">
+                                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"></div>
+                                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce delay-75"></div>
+                                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce delay-150"></div>
+                                  </div>
+                                  <span className="text-sm text-gray-600">AI 正在思考...</span>
+                                </div>
+                              )}
 
                               {/* 显示AI推理步骤（包含SQL、表格、图表） */}
                               {message.metadata?.processing_steps && message.metadata.processing_steps.length > 0 && (
@@ -774,6 +784,8 @@ export default function AIAssistantPage() {
                                   defaultExpanded={true}
                                 />
                               )}
+                              
+                              <Markdown content={removeChartMarkers(message.content, !!(message.metadata?.processing_steps && message.metadata.processing_steps.length > 0))} className="prose-base" />
                             </div>
                           )}
                         </div>
@@ -785,25 +797,7 @@ export default function AIAssistantPage() {
                       </div>
                     </div>
                   ))}
-                  {isLoading && (
-                    <div className="flex gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center">
-                        <Bot className="w-5 h-5 text-gray-700" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="inline-block p-4 rounded-2xl bg-white border border-gray-200 shadow-sm">
-                          <div className="flex items-center gap-2">
-                            <div className="flex gap-1">
-                              <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"></div>
-                              <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce delay-75"></div>
-                              <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce delay-150"></div>
-                            </div>
-                            <span className="text-sm text-gray-600">AI 正在思考...</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+
                 </>
               )}
             </div>
