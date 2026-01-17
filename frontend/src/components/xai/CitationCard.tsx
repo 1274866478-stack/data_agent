@@ -75,7 +75,7 @@ export const CitationCard: React.FC<CitationCardProps> = ({
       case 'api':
         return 'bg-purple-100 text-purple-800 border-purple-200';
       default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
+        return 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-slate-700 dark:text-gray-200 dark:border-slate-600';
     }
   };
 

@@ -426,7 +426,7 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
 
                   {/* 推理过程（默认展开） */}
                   {message.metadata.reasoning && (
-                    <details open className="bg-gray-50 border border-gray-200 rounded p-2">
+                    <details open className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded p-2">
                       <summary className="font-medium text-gray-700 cursor-pointer mb-1">推理过程</summary>
                       <p className="text-gray-600 mt-1 whitespace-pre-wrap">{message.metadata.reasoning}</p>
                     </details>

@@ -103,8 +103,8 @@ function parseMarkdownTables(content: string): { tables: ParsedTable[], textPart
  */
 function TableRenderer({ table }: { table: ParsedTable }) {
   return (
-    <div className="my-4 rounded-md border border-gray-200 overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-200">
+    <div className="my-4 rounded-md border border-gray-200 dark:border-slate-700 overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
         <span className="text-xs font-medium text-gray-700">数据表格</span>
         <span className="text-xs text-gray-500">
           {table.rows.length} 行 × {table.headers.length} 列
@@ -112,12 +112,12 @@ function TableRenderer({ table }: { table: ParsedTable }) {
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
-          <thead className="bg-gray-50 sticky top-0">
+          <thead className="bg-gray-50 dark:bg-slate-800 sticky top-0">
             <tr>
               {table.headers.map((header, idx) => (
                 <th
                   key={idx}
-                  className="px-3 py-2 border-b border-gray-200 text-left font-medium text-gray-700 whitespace-nowrap bg-gray-50"
+                  className="px-3 py-2 border-b border-gray-200 dark:border-slate-700 text-left font-medium text-gray-700 whitespace-nowrap bg-gray-50 dark:bg-slate-800"
                 >
                   {header}
                 </th>
@@ -126,7 +126,7 @@ function TableRenderer({ table }: { table: ParsedTable }) {
           </thead>
           <tbody>
             {table.rows.map((row, rowIdx) => (
-              <tr key={rowIdx} className="odd:bg-white even:bg-gray-50/60 hover:bg-blue-50/30">
+              <tr key={rowIdx} className="odd:bg-white even:bg-gray-50 dark:bg-slate-800/60 hover:bg-blue-50/30">
                 {row.map((cell, cellIdx) => (
                   <td
                     key={cellIdx}

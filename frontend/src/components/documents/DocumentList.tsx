@@ -192,7 +192,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
       )}
 
       {/* 工具栏 */}
-      <div className="bg-white p-4 rounded-lg border border-gray-200">
+      <div className="bg-white dark:bg-slate-800 p-4 rounded-lg border border-gray-200 dark:border-slate-700">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
           {/* 搜索框 */}
           <div className="flex-1 max-w-md">
@@ -270,7 +270,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
 
       {/* 统计信息 */}
       {getStatsDisplay() && (
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-lg border border-gray-200 dark:border-slate-700">
           {getStatsDisplay()}
         </div>
       )}
@@ -282,9 +282,9 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
           </div>
         ) : documents.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
+          <div className="text-center py-12 bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700">
             <div className="text-6xl mb-4">📂</div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">暂无文档</h3>
+            <h3 className="text-lg font-medium text-gray-900 dark:text-slate-100 mb-2">暂无文档</h3>
             <p className="text-gray-500">
               {searchQuery || statusFilter || fileTypeFilter
                 ? '没有找到符合条件的文档'

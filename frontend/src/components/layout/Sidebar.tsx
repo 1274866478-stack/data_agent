@@ -131,7 +131,7 @@ export function Sidebar({ collapsed, onCollapse }: SidebarProps) {
           icon: BarChart3
         },
         {
-          title: 'AI 助手',
+          title: '智能数据助手',
           href: '/ai-assistant',
           icon: Bot,
           badge: '新'
@@ -177,7 +177,7 @@ export function Sidebar({ collapsed, onCollapse }: SidebarProps) {
           {!collapsed && (
             <div>
               <h2 className="text-lg font-bold text-foreground">菜单</h2>
-              <p className="text-xs text-muted-foreground">导航功能</p>
+              <p className="text-xs text-gray-600 dark:text-gray-400">导航功能</p>
             </div>
           )}
           <Button
@@ -199,7 +199,7 @@ export function Sidebar({ collapsed, onCollapse }: SidebarProps) {
               size="sm"
               onClick={() => toggleSection(section.title)}
               className={cn(
-                "w-full justify-start font-medium text-muted-foreground mb-2",
+                "w-full justify-start font-medium text-gray-600 dark:text-gray-400 mb-2",
                 collapsed && "hidden"
               )}
             >

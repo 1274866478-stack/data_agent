@@ -98,12 +98,12 @@ export function Header({ onSidebarToggle, sidebarCollapsed }: HeaderProps) {
 
         <div className="flex-1 flex items-center justify-between">
           <div className="hidden md:block">
-            <h1 className="text-xl font-semibold">Data Agent V4</h1>
+            <h1 className="text-xl font-semibold">智能数据Agent V4</h1>
           </div>
 
           <div className="flex items-center gap-4">
             <div className="hidden md:flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
-              <Search className="h-4 w-4 text-muted-foreground" />
+              <Search className="h-4 w-4 text-gray-500 dark:text-gray-400" />
               <input
                 type="text"
                 placeholder="搜索..."
@@ -126,7 +126,7 @@ export function Header({ onSidebarToggle, sidebarCollapsed }: HeaderProps) {
             <div className="flex items-center gap-2 pl-2 border-l border-border">
               <div className="hidden md:block text-right">
                 <p className="text-sm font-medium">{user?.full_name || user?.email || '用户'}</p>
-                <p className="text-xs text-muted-foreground">{user?.email}</p>
+                <p className="text-xs text-gray-600 dark:text-gray-400">{user?.email}</p>
               </div>
               <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
                 <User className="h-4 w-4 text-primary-foreground" />

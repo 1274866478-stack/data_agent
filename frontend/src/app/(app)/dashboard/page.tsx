@@ -24,7 +24,7 @@
  * **下游依赖**:
  * - [/data-sources/page.tsx](./data-sources/page.tsx) - 数据源管理页面
  * - [/documents/page.tsx](./documents/page.tsx) - 文档管理页面
- * - [/ai-assistant/page.tsx](./ai-assistant/page.tsx) - AI助手页面
+ * - [/ai-assistant/page.tsx](./ai-assistant/page.tsx) - 智能数据助手页面
  * - [/reports/page.tsx](./reports/page.tsx) - 报告页面
  *
  * ## [STATE]
@@ -66,8 +66,8 @@ export default function DashboardPage() {
       {/* 页面标题 */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-white">仪表板</h1>
-          <p className="text-gray-300">
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">仪表板</h1>
+          <p className="text-gray-200">
             查看您的数据源状态和系统概览
           </p>
         </div>
@@ -98,7 +98,7 @@ export default function DashboardPage() {
               </GradientCardTitle>
             </GradientCardHeader>
             <GradientCardContent>
-              <p className="text-sm text-muted-foreground mb-3">
+              <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
                 连接和管理您的数据库
               </p>
               <div className="flex items-center text-sm text-blue-600 dark:text-blue-400 font-medium group-hover:underline">
@@ -119,7 +119,7 @@ export default function DashboardPage() {
               </GradientCardTitle>
             </GradientCardHeader>
             <GradientCardContent>
-              <p className="text-sm text-muted-foreground mb-3">
+              <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
                 上传和管理您的文档
               </p>
               <div className="flex items-center text-sm text-green-600 dark:text-green-400 font-medium group-hover:underline">
@@ -136,11 +136,11 @@ export default function DashboardPage() {
                 <div className="p-2 bg-violet-100 dark:bg-violet-500/20 rounded-lg">
                   <Bot className="h-5 w-5 text-violet-600 dark:text-violet-400" />
                 </div>
-                AI 助手
+                智能数据助手
               </GradientCardTitle>
             </GradientCardHeader>
             <GradientCardContent>
-              <p className="text-sm text-muted-foreground mb-3">
+              <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
                 智能数据分析对话
               </p>
               <div className="flex items-center text-sm text-violet-600 dark:text-violet-400 font-medium group-hover:underline">
@@ -161,7 +161,7 @@ export default function DashboardPage() {
               </GradientCardTitle>
             </GradientCardHeader>
             <GradientCardContent>
-              <p className="text-sm text-muted-foreground mb-3">
+              <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
                 查看分析报告图表
               </p>
               <div className="flex items-center text-sm text-orange-600 dark:text-orange-400 font-medium group-hover:underline">
@@ -197,7 +197,7 @@ export default function DashboardPage() {
             <Button variant="outline" asChild>
               <Link href="/ai-assistant">
                 <Bot className="h-4 w-4 mr-2" />
-                开始 AI 对话
+                开始智能对话
               </Link>
             </Button>
           </div>

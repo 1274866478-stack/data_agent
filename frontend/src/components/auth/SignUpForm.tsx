@@ -134,7 +134,7 @@ export function SignUpForm() {
         <div className="text-center">
           <h2 className="text-2xl font-semibold">创建账户</h2>
           <p className="text-muted-foreground mt-2">
-            注册您的 Data Agent 账户，开始智能数据探索之旅
+            注册您的 智能数据Agent 账户，开始智能数据探索之旅
           </p>
         </div>
 

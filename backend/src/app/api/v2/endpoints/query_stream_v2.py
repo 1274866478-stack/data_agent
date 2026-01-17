@@ -245,8 +245,8 @@ async def create_stream_query_v2(
     async def event_generator() -> AsyncGenerator[str, None]:
         """SSE 事件生成器"""
 
-        async def send_event(event_type: str, data: Dict[str, Any]):
-            """发送 SSE 事件"""
+        def send_event(event_type: str, data: Dict[str, Any]):
+            """发送 SSE 事件（同步生成器）"""
             event_data = json.dumps(data, ensure_ascii=False)
             yield f"event: {event_type}\n"
             yield f"data: {event_data}\n\n"
@@ -270,7 +270,7 @@ async def create_stream_query_v2(
             set_session_state(session_state)
 
             # 发送开始事件（包含 session_id）
-            async for event in send_event("start", {
+            for event in send_event("start", {
                 "query": request.query,
                 "tenant_id": tenant_id,
                 "session_id": session_id,
@@ -282,28 +282,28 @@ async def create_stream_query_v2(
             step_start = time.time()
             step_timings["receive_query"] = (time.time() - step_start) * 1000
 
-            async for event in send_event("step", {
+            for event in send_event("step", {
                 "step": 1,
                 "message": "接收查询",
                 "detail": f"查询: {request.query[:50]}..."
             }):
                 yield event
 
-            async for event in send_event("progress", {"value": 10}):
+            for event in send_event("progress", {"value": 10}):
                 yield event
 
             # 步骤 2: 租户隔离验证
             step_start = time.time()
             step_timings["tenant_validation"] = (time.time() - step_start) * 1000
 
-            async for event in send_event("step", {
+            for event in send_event("step", {
                 "step": 2,
                 "message": "租户隔离验证",
                 "detail": f"租户: {tenant_id}"
             }):
                 yield event
 
-            async for event in send_event("progress", {"value": 20}):
+            for event in send_event("progress", {"value": 20}):
                 yield event
 
             # 缓存检查步骤
@@ -325,14 +325,14 @@ async def create_stream_query_v2(
                 # 缓存命中 - 流式返回缓存结果
                 step_timings["agent_execution"] = 0
 
-                async for event in send_event("step", {
+                for event in send_event("step", {
                     "step": 3,
                     "message": "缓存命中",
                     "detail": "从缓存中获取查询结果..."
                 }):
                     yield event
 
-                async for event in send_event("progress", {"value": 50}):
+                for event in send_event("progress", {"value": 50}):
                     yield event
 
                 # 从缓存数据中提取答案
@@ -340,14 +340,14 @@ async def create_stream_query_v2(
                 processing_steps = cached_data.get("processing_steps", [])
 
                 # 发送流式答案
-                async for event in send_event("step", {
+                for event in send_event("step", {
                     "step": 4,
                     "message": "生成回答",
                     "detail": "正在返回缓存结果..."
                 }):
                     yield event
 
-                async for event in send_event("progress", {"value": 80}):
+                for event in send_event("progress", {"value": 80}):
                     yield event
 
                 # 分块发送答案
@@ -357,7 +357,7 @@ async def create_stream_query_v2(
                     chunk = cached_answer[i:i+chunk_size]
                     progress = 80 + int((i / len(cached_answer)) * 15)
 
-                    async for event in send_event("data", {
+                    for event in send_event("data", {
                         "chunk": chunk,
                         "progress": progress
                     }):
@@ -382,7 +382,7 @@ async def create_stream_query_v2(
                     }
                 )
 
-                async for event in send_event("done", {
+                for event in send_event("done", {
                     "success": True,
                     "answer": cached_answer,
                     "processing_steps": processing_steps,
@@ -393,7 +393,7 @@ async def create_stream_query_v2(
                 }):
                     yield event
 
-                async for event in send_event("progress", {"value": 100}):
+                for event in send_event("progress", {"value": 100}):
                     yield event
 
             else:
@@ -424,14 +424,14 @@ async def create_stream_query_v2(
                             ]
                         }
 
-                        async for event in send_event("step", {
+                        for event in send_event("step", {
                             "step": 3,
                             "message": "AgentV2 处理",
                             "detail": "开始执行智能查询..."
                         }):
                             yield event
 
-                        async for event in send_event("progress", {"value": 30}):
+                        for event in send_event("progress", {"value": 30}):
                             yield event
 
                         # 🔧🔧🔧 使用 astream_events 实现真正的 token 级别流式输出
@@ -671,7 +671,7 @@ async def create_stream_query_v2(
                             await cache_manager.cache.set(cache_key, cache_data, ttl=600)
                             logger.debug(f"查询结果已缓存: {cache_key}")
 
-                        async for event in send_event("done", {
+                        for event in send_event("done", {
                             "success": True,
                             "answer": answer,
                             "chart_config": chart_config,  # 🔧 添加图表配置
@@ -683,7 +683,7 @@ async def create_stream_query_v2(
                         }):
                             yield event
 
-                        async for event in send_event("progress", {"value": 100}):
+                        for event in send_event("progress", {"value": 100}):
                             yield event
                     finally:
                         db_session.close()
@@ -700,7 +700,7 @@ async def create_stream_query_v2(
                         metadata={"error": "AgentV2 not available"}
                     )
 
-                    async for event in send_event("error", {
+                    for event in send_event("error", {
                         "error": "AgentV2 not available",
                         "detail": "流式查询功能需要 AgentV2 模块"
                     }):
@@ -718,7 +718,7 @@ async def create_stream_query_v2(
             )
 
             logger.error(f"Stream query error: {e}")
-            async for event in send_event("error", {
+            for event in send_event("error", {
                 "error": str(e),
                 "error_type": "internal_error"
             }):

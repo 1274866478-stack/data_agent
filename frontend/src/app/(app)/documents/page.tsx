@@ -101,17 +101,17 @@ export default function DocumentsPage() {
 
     return (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-xl border border-gray-200 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-200 dark:border-slate-700 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">总文档</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.total_documents}</p>
+              <p className="text-2xl font-bold text-gray-900 dark:text-slate-100">{stats.total_documents}</p>
             </div>
             <div className="text-3xl">📁</div>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-gray-200 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-200 dark:border-slate-700 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">已完成</p>
@@ -121,7 +121,7 @@ export default function DocumentsPage() {
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-gray-200 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-200 dark:border-slate-700 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">处理中</p>
@@ -131,11 +131,11 @@ export default function DocumentsPage() {
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-gray-200 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-200 dark:border-slate-700 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">存储使用</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.total_size_mb.toFixed(1)} MB</p>
+              <p className="text-2xl font-bold text-gray-900 dark:text-slate-100">{stats.total_size_mb.toFixed(1)} MB</p>
             </div>
             <div className="text-3xl">💾</div>
           </div>
@@ -145,17 +145,17 @@ export default function DocumentsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-800">
       <div className="container mx-auto px-4 py-8">
         {/* 页面标题 */}
         <div className="flex justify-between items-center mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">文档管理</h1>
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-slate-100">文档管理</h1>
             <p className="text-gray-600 mt-1">上传、管理和预览您的文档</p>
           </div>
           <div className="flex space-x-3">
             {selectedDocuments.length > 0 && (
-              <div className="flex items-center space-x-2 bg-blue-50 px-3 py-2 rounded-lg">
+              <div className="flex items-center space-x-2 bg-blue-50 dark:bg-blue-900/20 px-3 py-2 rounded-lg">
                 <span className="text-sm text-blue-700">
                   已选择 {selectedDocuments.length} 个文档
                 </span>
@@ -184,25 +184,25 @@ export default function DocumentsPage() {
         {documents.length === 0 && !isLoading && (
           <div className="bg-white p-8 rounded-lg border border-gray-200 text-center mb-8">
             <div className="text-6xl mb-4">📂</div>
-            <h2 className="text-xl font-semibold text-gray-900 mb-2">开始使用文档管理</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-slate-100 mb-2">开始使用文档管理</h2>
             <p className="text-gray-600 mb-6 max-w-2xl mx-auto">
               上传您的 PDF 和 Word 文档，系统将自动处理并为您提供预览、搜索和管理功能。
               所有文档都安全存储在您的专属空间中。
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-3xl mx-auto text-left">
-              <div className="p-4 bg-gray-50 rounded-lg">
+              <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
                 <div className="text-2xl mb-2">📄</div>
-                <h3 className="font-medium text-gray-900 mb-1">支持多种格式</h3>
+                <h3 className="font-medium text-gray-900 dark:text-slate-100 mb-1">支持多种格式</h3>
                 <p className="text-sm text-gray-600">PDF 和 Word 文档，最大 50MB</p>
               </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
+              <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
                 <div className="text-2xl mb-2">🔍</div>
-                <h3 className="font-medium text-gray-900 mb-1">智能处理</h3>
+                <h3 className="font-medium text-gray-900 dark:text-slate-100 mb-1">智能处理</h3>
                 <p className="text-sm text-gray-600">自动提取内容和元数据</p>
               </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
+              <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
                 <div className="text-2xl mb-2">👁️</div>
-                <h3 className="font-medium text-gray-900 mb-1">在线预览</h3>
+                <h3 className="font-medium text-gray-900 dark:text-slate-100 mb-1">在线预览</h3>
                 <p className="text-sm text-gray-600">无需下载即可查看文档</p>
               </div>
             </div>

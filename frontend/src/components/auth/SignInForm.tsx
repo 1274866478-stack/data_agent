@@ -159,7 +159,7 @@ export function SignInForm() {
         <div className="text-center">
           <h2 className="text-2xl font-semibold">欢迎回来</h2>
           <p className="text-muted-foreground mt-2">
-            使用您的账户登录到 Data Agent 平台
+            使用您的账户登录到 智能数据Agent 平台
           </p>
         </div>
 

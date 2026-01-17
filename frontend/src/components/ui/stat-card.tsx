@@ -86,13 +86,13 @@ const StatCard = React.forwardRef<HTMLDivElement, StatCardProps>(
           <div className="flex-1">
             <p className={cn(
               'text-sm font-medium mb-1',
-              variant === 'filled' ? 'text-white/80' : 'text-muted-foreground'
+              variant === 'filled' ? 'text-white/80' : '!text-slate-600 dark:!text-slate-400'
             )}>
               {title}
             </p>
             <p className={cn(
               'text-3xl font-bold',
-              variant === 'filled' ? 'text-white' : 'text-foreground'
+              variant === 'filled' ? 'text-white' : '!text-black dark:!text-white'
             )}>
               {value}
             </p>

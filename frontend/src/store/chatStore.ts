@@ -128,6 +128,9 @@ interface ChatState {
   isOnline: boolean
   isSyncing: boolean
 
+  // 输出格式配置
+  outputFormat: 'markdown' | 'plain'
+
   // 流式响应状态
   streamingStatus: StreamingStatus
   currentAbortController: AbortController | null
@@ -186,6 +189,7 @@ interface ChatState {
   setError: (error: string | null) => void
   setOnline: (online: boolean) => void
   setSyncing: (syncing: boolean) => void
+  setOutputFormat: (format: 'markdown' | 'plain') => void
 
   // 缓存和同步操作
   loadFromCache: () => void
@@ -215,6 +219,7 @@ export const useChatStore = create<ChatState>()(
       error: null,
       isOnline: typeof window !== 'undefined' ? navigator.onLine : true,
       isSyncing: false,
+      outputFormat: 'markdown',
       streamingStatus: 'idle',
       currentAbortController: null,
       streamingMessageId: null,
@@ -1505,6 +1510,15 @@ export const useChatStore = create<ChatState>()(
         set({ error })
       },
 
+      // 设置输出格式
+      setOutputFormat: (format: 'markdown' | 'plain') => {
+        set({ outputFormat: format })
+        // 保存到本地存储
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('data-agent-output-format', format)
+        }
+      },
+
       // 停止流式响应
       stopStreaming: () => {
         const state = get()
@@ -1714,6 +1728,9 @@ ${chartConfigs.map((c, i) => `## 图表${i + 1}：${c.title}\n${JSON.stringify(c
             }))
           })) || []
 
+          // 恢复输出格式配置
+          const outputFormat = localStorage.getItem('data-agent-output-format') as 'markdown' | 'plain' || 'markdown'
+
           // 不自动恢复 currentSession，每次打开都是新对话（类似ChatGPT行为）
           // 历史会话仍然保存在 sessions 列表中，用户可以从历史对话中选择恢复
           set({
@@ -1723,7 +1740,8 @@ ${chartConfigs.map((c, i) => `## 图表${i + 1}：${c.title}\n${JSON.stringify(c
               totalMessages: 0,
               totalSessions: 0,
               averageResponseTime: 0,
-            }
+            },
+            outputFormat,
           })
         } catch (error) {
           console.error('Failed to load chat store from storage:', error)

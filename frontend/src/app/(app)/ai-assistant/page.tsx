@@ -16,8 +16,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Markdown } from '@/components/ui/markdown'
+import { PlainText } from '@/components/ui/plain-text'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
+import { ThemeToggle } from '@/components/theme'
 import { cn } from '@/lib/utils'
 import { fileUploadService, uploadFile, UploadProgress } from '@/services/fileUploadService'
 import { useChatStore } from '@/store/chatStore'
@@ -57,7 +59,9 @@ export default function AIAssistantPage() {
     searchSessions,
     startNewConversation,
     stopStreaming,
-    streamingStatus
+    streamingStatus,
+    outputFormat,
+    setOutputFormat
   } = useChatStore()
 
   // 数据源相关
@@ -316,7 +320,7 @@ export default function AIAssistantPage() {
   const completedUploads = uploadedFiles.filter(f => f.status === 'completed').length
 
   return (
-    <div className="h-[calc(100vh-8rem)] flex bg-gradient-to-br from-blue-50 to-indigo-50 -m-6">
+    <div className="h-[calc(100vh-8rem)] flex bg-gradient-to-br from-blue-100 to-indigo-100 -m-6">
       {/* 历史对话侧边栏 */}
       <div className={cn(
         "h-full bg-white border-r shadow-lg transition-all duration-300 flex flex-col",
@@ -420,7 +424,7 @@ export default function AIAssistantPage() {
                         selectedSessions.has(session.id)
                           ? "bg-blue-100 border border-blue-300"
                           : session.id === currentSession?.id
-                            ? "bg-blue-50 border border-blue-200"
+                            ? "bg-blue-100 border border-blue-200"
                             : "hover:bg-gray-100"
                       )}
                     >
@@ -478,11 +482,36 @@ export default function AIAssistantPage() {
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center gap-3 text-2xl">
                   <div className="p-2 bg-gradient-modern-primary rounded-lg">
-                    <Sparkles className="w-6 h-6 text-white" />
+                    <Sparkles className="w-6 h-6 text-white dark:text-slate-100" />
                   </div>
-                  AI 智能助手
+                  智能数据助手
                 </CardTitle>
                 <div className="flex items-center gap-2">
+                  {/* 主题切换按钮 */}
+                  <ThemeToggle />
+                  {/* 格式切换按钮 */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const newFormat = outputFormat === 'markdown' ? 'plain' : 'markdown'
+                      setOutputFormat(newFormat)
+                    }}
+                    className="gap-2 text-gray-700"
+                    title={outputFormat === 'markdown' ? '切换到纯文本格式' : '切换到Markdown格式'}
+                  >
+                    {outputFormat === 'markdown' ? (
+                      <>
+                        <MessageSquare className="w-4 h-4" />
+                        富文本
+                      </>
+                    ) : (
+                      <>
+                        <FileText className="w-4 h-4" />
+                        纯文本
+                      </>
+                    )}
+                  </Button>
                   {/* 历史对话按钮 */}
                   <Button
                     variant="outline"
@@ -658,7 +687,7 @@ export default function AIAssistantPage() {
                   <div className="p-4 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-full mb-4">
                     <Bot className="w-16 h-16 text-blue-600" />
                   </div>
-                  <h3 className="text-xl font-semibold mb-2">欢迎使用 AI 智能助手</h3>
+                  <h3 className="text-xl font-semibold mb-2">欢迎使用 智能数据助手</h3>
                   <p className="text-gray-600 mb-6 max-w-md">
                     我可以帮助您分析数据、回答问题、生成报告。请输入您的问题开始对话。
                   </p>
@@ -708,7 +737,7 @@ export default function AIAssistantPage() {
                         <div className={`inline-block p-4 rounded-2xl ${
                           message.role === 'user'
                             ? 'bg-gradient-to-br from-blue-500 to-indigo-600 text-white'
-                            : 'bg-white border border-gray-200 shadow-sm'
+                            : 'bg-white border border-gray-300 shadow-sm'
                         }`}>
                           {message.role === 'user' ? (
                             <p className="text-base whitespace-pre-wrap">{message.content}</p>
@@ -782,10 +811,15 @@ export default function AIAssistantPage() {
                                 <ProcessingSteps
                                   steps={message.metadata.processing_steps}
                                   defaultExpanded={true}
+                                  outputFormat={outputFormat}
                                 />
                               )}
-                              
-                              <Markdown content={removeChartMarkers(message.content, !!(message.metadata?.processing_steps && message.metadata.processing_steps.length > 0))} className="prose-base" />
+
+                              {outputFormat === 'plain' ? (
+                                <PlainText content={removeChartMarkers(message.content, !!(message.metadata?.processing_steps && message.metadata.processing_steps.length > 0))} className="text-base leading-relaxed" />
+                              ) : (
+                                <Markdown content={removeChartMarkers(message.content, !!(message.metadata?.processing_steps && message.metadata.processing_steps.length > 0))} className="prose-base" />
+                              )}
                             </div>
                           )}
                         </div>
@@ -816,7 +850,7 @@ export default function AIAssistantPage() {
 
               {/* 文件上传进度 */}
               {uploadProgress && (
-                <div className="mb-3 p-2 bg-muted/50 rounded-lg">
+                <div className="mb-3 p-2 bg-muted rounded-lg">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-medium">{uploadProgress.message}</span>
                     {uploadProgress.status === 'error' && (

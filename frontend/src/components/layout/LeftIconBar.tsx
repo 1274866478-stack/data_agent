@@ -28,7 +28,7 @@ const navItems = [
   { href: '/dashboard', icon: Home, label: '仪表板' },
   { href: '/data-sources', icon: Database, label: '数据源' },
   { href: '/documents', icon: FileText, label: '文档' },
-  { href: '/ai-assistant', icon: Bot, label: 'AI 助手' },
+  { href: '/ai-assistant', icon: Bot, label: '智能数据助手' },
   { href: '/analytics', icon: BarChart3, label: '分析' },
 ]
 
@@ -43,7 +43,7 @@ export function LeftIconBar() {
     <div className="w-16 h-full bg-gradient-to-b from-slate-900 to-slate-800 flex flex-col items-center py-4 border-r border-slate-700/50">
       {/* Logo 区域 */}
       <div className="w-10 h-10 rounded-xl bg-gradient-modern-primary flex items-center justify-center mb-6">
-        <span className="text-white font-bold text-lg">D</span>
+        <span className="text-white dark:text-slate-100 font-bold text-lg">D</span>
       </div>
 
       {/* 主导航 */}
@@ -60,7 +60,7 @@ export function LeftIconBar() {
                 'group relative w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200',
                 isActive
                   ? 'bg-white/10 text-white'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  : 'text-slate-300 hover:text-white hover:bg-white/5'
               )}
             >
               <Icon className="h-5 w-5" />
@@ -93,7 +93,7 @@ export function LeftIconBar() {
                 'group relative w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200',
                 isActive
                   ? 'bg-white/10 text-white'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  : 'text-slate-300 hover:text-white hover:bg-white/5'
               )}
             >
               <Icon className="h-5 w-5" />
@@ -108,7 +108,7 @@ export function LeftIconBar() {
 
         {/* 用户头像 */}
         <div className="w-10 h-10 rounded-full bg-gradient-modern-accent flex items-center justify-center mt-2 cursor-pointer hover:ring-2 hover:ring-white/20 transition-all">
-          <User className="h-5 w-5 text-white" />
+          <User className="h-5 w-5 text-white dark:text-slate-100" />
         </div>
       </div>
     </div>

@@ -48,7 +48,7 @@ export default function HomePage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">欢迎使用 Data Agent V4</h1>
+          <h1 className="text-3xl font-bold">欢迎使用 智能数据Agent V4</h1>
           <p className="text-muted-foreground">
             多租户 SaaS 数据智能平台 - 让数据工作更智能
           </p>
@@ -125,7 +125,7 @@ export default function HomePage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/50">
+              <div className="flex items-center gap-4 p-3 rounded-lg bg-muted">
                 <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                 <div className="flex-1">
                   <p className="text-sm font-medium">数据源连接成功</p>
@@ -133,7 +133,7 @@ export default function HomePage() {
                 </div>
                 <span className="text-xs text-muted-foreground">2分钟前</span>
               </div>
-              <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/50">
+              <div className="flex items-center gap-4 p-3 rounded-lg bg-muted">
                 <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
                 <div className="flex-1">
                   <p className="text-sm font-medium">AI 分析完成</p>
@@ -141,7 +141,7 @@ export default function HomePage() {
                 </div>
                 <span className="text-xs text-muted-foreground">15分钟前</span>
               </div>
-              <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/50">
+              <div className="flex items-center gap-4 p-3 rounded-lg bg-muted">
                 <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
                 <div className="flex-1">
                   <p className="text-sm font-medium">报告生成中</p>
@@ -174,7 +174,7 @@ export default function HomePage() {
               <div className="p-4 rounded-lg border border-border">
                 <h4 className="font-medium mb-2">2. 创建分析</h4>
                 <p className="text-sm text-muted-foreground mb-3">
-                  使用 AI 助手分析您的数据
+                  使用智能数据助手分析您的数据
                 </p>
                 <Button size="sm" variant="outline" className="w-full">
                   开始分析

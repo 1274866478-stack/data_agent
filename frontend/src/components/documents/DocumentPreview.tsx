@@ -147,13 +147,13 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col">
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col">
         {/* 头部工具栏 */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200">
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-slate-700">
           <div className="flex items-center space-x-3">
             <span className="text-2xl">{getDocumentIcon()}</span>
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 truncate max-w-md">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-slate-100 truncate max-w-md">
                 {document.file_name}
               </h3>
               <p className="text-sm text-gray-500">
@@ -270,7 +270,7 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                 <div className="text-center space-y-6 py-12">
                   <div className="text-6xl">📝</div>
                   <div>
-                    <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                    <h3 className="text-xl font-semibold text-gray-900 dark:text-slate-100 mb-2">
                       Word 文档预览
                     </h3>
                     <p className="text-gray-600 mb-4">
@@ -279,7 +279,7 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                   </div>
                   <div className="space-y-4">
                     <div className="bg-gray-100 p-4 rounded-lg max-w-md mx-auto">
-                      <h4 className="font-medium text-gray-900 mb-2">文档信息</h4>
+                      <h4 className="font-medium text-gray-900 dark:text-slate-100 mb-2">文档信息</h4>
                       <div className="text-sm text-gray-600 space-y-1">
                         <p>文件名: {document.file_name}</p>
                         <p>文件大小: {(document.file_size / 1024 / 1024).toFixed(2)} MB</p>
@@ -298,7 +298,7 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
         </div>
 
         {/* 底部状态栏 */}
-        <div className="flex items-center justify-between p-4 border-t border-gray-200 bg-gray-50">
+        <div className="flex items-center justify-between p-4 border-t border-gray-200 dark:border-slate-700 bg-gray-50">
           <div className="text-sm text-gray-600">
             {zoom}% • {rotation}°
           </div>

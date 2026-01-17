@@ -241,10 +241,10 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
   }
 
   return (
-    <div className="w-full max-w-2xl mx-auto p-6 bg-white rounded-lg shadow-lg">
+    <div className="w-full max-w-2xl mx-auto p-6 bg-white dark:bg-slate-800 rounded-lg shadow-lg">
       {/* 标题 */}
       <div className="flex justify-between items-center mb-6">
-        <h3 className="text-xl font-semibold text-gray-900">上传文档</h3>
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-slate-100">上传文档</h3>
         {onClose && (
           <button
             onClick={onClose}
@@ -279,7 +279,7 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
         <div className="space-y-4">
           <div className="text-6xl">📁</div>
           <div>
-            <p className="text-lg font-medium text-gray-900">
+            <p className="text-lg font-medium text-gray-900 dark:text-slate-100">
               拖拽文件到这里，或者点击选择文件
             </p>
             <p className="text-sm text-gray-500 mt-1">
@@ -309,19 +309,19 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
       {/* 已选择的文件列表 */}
       {selectedFiles.length > 0 && (
         <div className="mt-6">
-          <h4 className="text-lg font-medium text-gray-900 mb-4">
+          <h4 className="text-lg font-medium text-gray-900 dark:text-slate-100 mb-4">
             已选择文件 ({selectedFiles.length})
           </h4>
           <div className="space-y-2">
             {selectedFiles.map((file, index) => (
               <div
                 key={`${file.name}-${index}`}
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-800 rounded-lg"
               >
                 <div className="flex items-center space-x-3 flex-1">
                   <span className="text-2xl">{getFileIcon(file)}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">
+                    <p className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">
                       {file.name}
                     </p>
                     <p className="text-xs text-gray-500">

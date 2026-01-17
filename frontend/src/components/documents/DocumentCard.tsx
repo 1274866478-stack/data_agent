@@ -204,8 +204,8 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   return (
     <div
       className={`
-        relative bg-white border rounded-lg p-4 hover:shadow-md transition-all duration-200
-        ${isSelected ? 'border-blue-500 shadow-md' : 'border-gray-200'}
+        relative bg-white dark:bg-slate-800 border rounded-lg p-4 hover:shadow-md transition-all duration-200
+        ${isSelected ? 'border-blue-500 shadow-md' : 'border-gray-200 dark:border-slate-700'}
         ${showActions ? 'ring-2 ring-blue-200' : ''}
       `}
       onMouseEnter={() => setShowActions(true)}
@@ -231,7 +231,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
 
         <div className="flex-1 min-w-0">
           {/* 文件名 */}
-          <h3 className="text-lg font-medium text-gray-900 truncate" title={document.file_name}>
+          <h3 className="text-lg font-medium text-gray-900 dark:text-slate-100 truncate" title={document.file_name}>
             {document.file_name}
           </h3>
 
@@ -365,7 +365,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
 
       {/* 加载状态覆盖 */}
       {isLoading && (
-        <div className="absolute inset-0 bg-white bg-opacity-50 flex items-center justify-center rounded-lg">
+        <div className="absolute inset-0 bg-white dark:bg-slate-800 bg-opacity-50 flex items-center justify-center rounded-lg">
           <div className="text-blue-600">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
           </div>

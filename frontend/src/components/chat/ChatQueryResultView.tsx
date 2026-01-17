@@ -78,7 +78,7 @@ export function ChatQueryResultView({ table, chart }: ChatQueryResultViewProps) 
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            <div className="rounded-md overflow-hidden bg-white border border-blue-100">
+            <div className="rounded-md overflow-hidden bg-white dark:bg-slate-800 border border-blue-100">
               {/* 优先渲染动态图表 */}
               {chart.chart_config ? (
                 <DynamicChart
@@ -102,16 +102,16 @@ export function ChatQueryResultView({ table, chart }: ChatQueryResultViewProps) 
       )}
 
       {table && limitedColumns.length > 0 && (
-        <Card className={cn('border-gray-100', !chart && 'bg-gray-50/60')}>
+        <Card className={cn('border-gray-100', !chart && 'bg-gray-50 dark:bg-slate-800/60')}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold text-gray-900">
               查询结果表（前 {limitedRows.length} 行）
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            <ScrollArea className="w-full max-h-72 rounded-md border bg-white">
+            <ScrollArea className="w-full max-h-72 rounded-md border bg-white dark:bg-slate-800">
               <table className="w-full text-xs border-collapse">
-                <thead className="bg-gray-50">
+                <thead className="bg-gray-50 dark:bg-slate-800">
                   <tr>
                     {limitedColumns.map(col => (
                       <th
@@ -125,7 +125,7 @@ export function ChatQueryResultView({ table, chart }: ChatQueryResultViewProps) 
                 </thead>
                 <tbody>
                   {limitedRows.map((row, rowIndex) => (
-                    <tr key={rowIndex} className="odd:bg-white even:bg-gray-50/60">
+                    <tr key={rowIndex} className="odd:bg-white dark:bg-slate-800 even:bg-gray-50 dark:bg-slate-800/60">
                       {limitedColumns.map(col => (
                         <td
                           key={col}

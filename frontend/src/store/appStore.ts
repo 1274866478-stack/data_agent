@@ -49,30 +49,56 @@
  */
 
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+
+type Theme = 'light' | 'dark' | 'system'
+
+// 工具函数：获取有效主题（独立于 store，避免引用不稳定问题）
+export function getEffectiveTheme(theme: Theme): 'light' | 'dark' {
+  if (theme === 'system') {
+    if (typeof window === 'undefined') return 'light'
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+  return theme
+}
 
 interface AppState {
   loading: boolean
   error: string | null
-  theme: 'light' | 'dark'
+  theme: Theme
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
-  setTheme: (theme: 'light' | 'dark') => void
+  setTheme: (theme: Theme) => void
+  toggleTheme: () => void
   clearError: () => void
 }
 
-export const useAppStore = create<AppState>((set) => ({
-  loading: false,
-  error: null,
-  theme: 'light',
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
+      loading: false,
+      error: null,
+      theme: 'system',
 
-  setLoading: (loading: boolean) => set({ loading }),
+      setLoading: (loading: boolean) => set({ loading }),
 
-  setError: (error: string | null) => set({ error }),
+      setError: (error: string | null) => set({ error }),
 
-  setTheme: (theme: 'light' | 'dark') => {
-    set({ theme })
-    localStorage.setItem('theme', theme)
-  },
+      setTheme: (theme: Theme) => {
+        set({ theme })
+      },
 
-  clearError: () => set({ error: null }),
-}))
+      toggleTheme: () => {
+        const theme = get().theme
+        const effectiveTheme = getEffectiveTheme(theme)
+        set({ theme: effectiveTheme === 'dark' ? 'light' : 'dark' })
+      },
+
+      clearError: () => set({ error: null }),
+    }),
+    {
+      name: 'app-storage',
+      partialize: (state) => ({ theme: state.theme }),
+    }
+  )
+)
