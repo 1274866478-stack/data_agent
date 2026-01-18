@@ -122,8 +122,8 @@ export default function SettingsPage() {
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">系统设置</h1>
-          <p className="text-gray-300 mt-2">管理租户配置和系统偏好</p>
+          <h1 className="text-3xl font-bold text-foreground">系统设置</h1>
+          <p className="text-muted-foreground mt-2">管理租户配置和系统偏好</p>
         </div>
         <Button onClick={handleSave} disabled={loading} className="bg-gradient-modern-primary hover:opacity-90 transition-opacity">
           <Save className="h-4 w-4 mr-2" />

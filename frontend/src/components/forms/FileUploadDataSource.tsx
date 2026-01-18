@@ -17,42 +17,42 @@ const FILE_TYPES: SupportedFileType[] = [
     description: 'CSV文件',
     max_size_mb: 100,
     icon: <FileText className="w-8 h-8" />,
-    color: 'bg-blue-100 text-blue-600'
+    color: 'bg-blue-500/20 text-blue-600'
   },
   {
     extension: '.xlsx',
     description: 'Excel文件',
     max_size_mb: 100,
     icon: <Table className="w-8 h-8" />,
-    color: 'bg-green-100 text-green-600'
+    color: 'bg-green-500/20 text-green-600'
   },
   {
     extension: '.xls',
     description: 'Excel文件',
     max_size_mb: 100,
     icon: <Table className="w-8 h-8" />,
-    color: 'bg-green-100 text-green-600'
+    color: 'bg-green-500/20 text-green-600'
   },
   {
     extension: '.db',
     description: 'SQLite数据库',
     max_size_mb: 500,
     icon: <Database className="w-8 h-8" />,
-    color: 'bg-purple-100 text-purple-600'
+    color: 'bg-purple-500/20 text-purple-600'
   },
   {
     extension: '.sqlite',
     description: 'SQLite数据库',
     max_size_mb: 500,
     icon: <Database className="w-8 h-8" />,
-    color: 'bg-purple-100 text-purple-600'
+    color: 'bg-purple-500/20 text-purple-600'
   },
   {
     extension: '.sqlite3',
     description: 'SQLite数据库',
     max_size_mb: 500,
     icon: <Database className="w-8 h-8" />,
-    color: 'bg-purple-100 text-purple-600'
+    color: 'bg-purple-500/20 text-purple-600'
   }
 ];
 
@@ -190,8 +190,8 @@ export default function FileUploadDataSource({ onSuccess, onCancel }: FileUpload
       <div
         className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
           dragActive
-            ? 'border-blue-500 bg-blue-50'
-            : 'border-gray-300 hover:border-gray-400'
+            ? 'border-primary bg-primary/10'
+            : 'border-input hover:border-border'
         }`}
         onDragEnter={handleDrag}
         onDragLeave={handleDrag}
@@ -200,11 +200,11 @@ export default function FileUploadDataSource({ onSuccess, onCancel }: FileUpload
       >
         {!selectedFile ? (
           <>
-            <Upload className="w-12 h-12 mx-auto text-gray-400 mb-4" />
-            <p className="text-lg font-medium text-gray-700 mb-2">
+            <Upload className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+            <p className="text-lg font-medium text-foreground mb-2">
               拖拽文件到此处，或点击选择文件
             </p>
-            <p className="text-sm text-gray-500 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               支持 CSV、Excel、SQLite 等格式
             </p>
             <input
@@ -216,25 +216,25 @@ export default function FileUploadDataSource({ onSuccess, onCancel }: FileUpload
             />
             <label
               htmlFor="file-upload"
-              className="inline-block px-6 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 transition-colors"
+              className="inline-block px-6 py-2 bg-primary text-primary-foreground rounded-lg cursor-pointer hover:bg-primary/90 transition-colors"
             >
               选择文件
             </label>
           </>
         ) : (
-          <div className="flex items-center justify-between bg-gray-50 p-4 rounded-lg">
+          <div className="flex items-center justify-between bg-muted p-4 rounded-lg">
             <div className="flex items-center space-x-3">
               <FileText className="w-8 h-8 text-blue-600" />
               <div className="text-left">
-                <p className="font-medium text-gray-900">{selectedFile.name}</p>
-                <p className="text-sm text-gray-500">{formatFileSize(selectedFile.size)}</p>
+                <p className="font-medium text-foreground">{selectedFile.name}</p>
+                <p className="text-sm text-muted-foreground">{formatFileSize(selectedFile.size)}</p>
               </div>
             </div>
             <button
               onClick={() => setSelectedFile(null)}
-              className="p-1 hover:bg-gray-200 rounded-full transition-colors"
+              className="p-1 hover:bg-muted-foreground/20 rounded-full transition-colors"
             >
-              <X className="w-5 h-5 text-gray-600" />
+              <X className="w-5 h-5 text-muted-foreground" />
             </button>
           </div>
         )}
@@ -242,38 +242,38 @@ export default function FileUploadDataSource({ onSuccess, onCancel }: FileUpload
 
       {/* 支持的文件类型 */}
       <div className="mt-8">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">支持的文件类型</h3>
+        <h3 className="text-lg font-semibold text-foreground mb-4">支持的文件类型</h3>
         <div className="grid grid-cols-2 gap-4">
           {/* CSV */}
           <div className="flex items-center space-x-3">
-            <div className="bg-blue-100 text-blue-600 p-2 rounded">
+            <div className="bg-blue-500/20 text-blue-600 p-2 rounded">
               <FileText className="w-6 h-6" />
             </div>
             <div>
-              <p className="font-medium text-gray-900">.csv</p>
-              <p className="text-sm text-gray-500">100MB</p>
+              <p className="font-medium text-foreground">.csv</p>
+              <p className="text-sm text-muted-foreground">100MB</p>
             </div>
           </div>
 
           {/* Excel */}
           <div className="flex items-center space-x-3">
-            <div className="bg-green-100 text-green-600 p-2 rounded">
+            <div className="bg-green-500/20 text-green-600 p-2 rounded">
               <Table className="w-6 h-6" />
             </div>
             <div>
-              <p className="font-medium text-gray-900">.xlsx</p>
-              <p className="text-sm text-gray-500">100MB</p>
+              <p className="font-medium text-foreground">.xlsx</p>
+              <p className="text-sm text-muted-foreground">100MB</p>
             </div>
           </div>
 
           {/* XLS */}
           <div className="flex items-center space-x-3">
-            <div className="bg-green-100 text-green-600 p-2 rounded">
+            <div className="bg-green-500/20 text-green-600 p-2 rounded">
               <Table className="w-6 h-6" />
             </div>
             <div>
-              <p className="font-medium text-gray-900">.xls</p>
-              <p className="text-sm text-gray-500">100MB</p>
+              <p className="font-medium text-foreground">.xls</p>
+              <p className="text-sm text-muted-foreground">100MB</p>
             </div>
           </div>
 
@@ -283,8 +283,8 @@ export default function FileUploadDataSource({ onSuccess, onCancel }: FileUpload
               <Database className="w-6 h-6" />
             </div>
             <div>
-              <p className="font-medium text-gray-900">.db, .sqlite, .sqlite3</p>
-              <p className="text-sm text-gray-500">500MB</p>
+              <p className="font-medium text-foreground">.db, .sqlite, .sqlite3</p>
+              <p className="text-sm text-muted-foreground">500MB</p>
             </div>
           </div>
         </div>
@@ -293,21 +293,21 @@ export default function FileUploadDataSource({ onSuccess, onCancel }: FileUpload
       {/* 数据源信息表单 */}
       <div className="mt-8 space-y-4">
         <div>
-          <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
-            数据源名称 <span className="text-red-500">*</span>
+          <label htmlFor="name" className="block text-sm font-medium text-foreground mb-1">
+            数据源名称 <span className="text-destructive">*</span>
           </label>
           <input
             type="text"
             id="name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-2 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent bg-background"
             placeholder="请输入数据源名称"
           />
         </div>
 
         <div>
-          <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">
+          <label htmlFor="description" className="block text-sm font-medium text-foreground mb-1">
             描述（可选）
           </label>
           <textarea
@@ -315,7 +315,7 @@ export default function FileUploadDataSource({ onSuccess, onCancel }: FileUpload
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-2 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent bg-background"
             placeholder="请输入数据源描述"
           />
         </div>
@@ -333,14 +333,14 @@ export default function FileUploadDataSource({ onSuccess, onCancel }: FileUpload
         <button
           onClick={onCancel}
           disabled={uploading}
-          className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-6 py-2 border border-input text-foreground rounded-lg hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           取消
         </button>
         <button
           onClick={handleUpload}
           disabled={!selectedFile || !name.trim() || uploading}
-          className="px-6 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {uploading ? '上传中...' : '创建数据源'}
         </button>

@@ -2,52 +2,71 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+/* Data Agent V4 - Fira 字体引入 */
+@import url('https://fonts.googleapis.com/css2?family=Fira+Sans:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap');
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 0%;
+    /* Data Agent V4 主题色彩 - 蓝橙配色 */
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 0%;
+    --card-foreground: 222 47% 11%;
+
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 0%;
-    --primary: 0 0% 0%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 217 91% 60%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 40%;
+
+    --secondary: 215 16% 47%;
     --secondary-foreground: 0 0% 100%;
-    --muted: 0 0% 97%;
-    --muted-foreground: 0 0% 35%;
-    --accent: 0 77% 71%;
-    --accent-foreground: 0 0% 0%;
-    --destructive: 0 84.2% 60.2%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 25 95% 53%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 90%;
-    --input: 0 0% 100%;
-    --ring: 0 0% 0%;
+
+    --border: 214 32% 91%;
+    --input: 210 40% 98%;
+    --ring: 217 91% 60%;
+
     --radius: 0.5rem;
   }
 
   .dark {
-    --background: 0 0% 0%;
-    --foreground: 0 0% 100%;
-    --card: 0 0% 0%;
-    --card-foreground: 0 0% 100%;
-    --popover: 0 0% 0%;
-    --popover-foreground: 0 0% 100%;
-    --primary: 0 0% 100%;
-    --primary-foreground: 0 0% 0%;
-    --secondary: 0 0% 40%;
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 11%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 11%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 215 16% 47%;
     --secondary-foreground: 0 0% 100%;
-    --muted: 0 0% 10%;
-    --muted-foreground: 0 0% 65%;
-    --accent: 0 77% 71%;
-    --accent-foreground: 0 0% 0%;
-    --destructive: 0 62.8% 30.6%;
+
+    --muted: 222 47% 11%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 25 95% 53%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 62% 30%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 20%;
-    --input: 0 0% 10%;
-    --ring: 0 0% 100%;
+
+    --border: 215 28% 25%;
+    --input: 222 47% 11%;
+    --ring: 217 91% 60%;
   }
 }
 
@@ -55,11 +74,59 @@
   * {
     @apply border-border;
   }
+
   body {
     @apply bg-background text-foreground;
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: var(--font-fira-sans), system-ui, sans-serif;
     line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+
+  /* UX Pro Max - 可访问性基础样式 */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* 确保最小字体大小 16px */
+  html {
+    @apply text-base;
+  }
+
+  /* 改善滚动条样式 */
+  ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-muted;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/30 rounded-full hover:bg-muted-foreground/50;
+  }
+
+  /* 屏幕阅读器专用样式 */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* 跳过导航链接（键盘导航） */
+  .skip-to-content {
+    @apply sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4;
+    @apply focus:z-50 focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground;
+    @apply focus:rounded-md focus:font-medium;
+  }
+
+  /* 标题样式 */
   h1, h2, h3, h4, h5, h6 {
     @apply font-semibold;
     line-height: 1.4;
@@ -73,29 +140,50 @@
 }
 
 @layer components {
-  /* The Curator 特定样式 */
+  /* Data Agent V4 按钮样式 */
   .btn-primary {
-    @apply bg-primary text-primary-foreground hover:bg-primary/90;
-    @apply inline-flex items-center justify-center rounded-md text-sm font-medium;
-    @apply transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
-    @apply disabled:pointer-events-none disabled:opacity-50;
-    @apply h-10 px-4 py-2;
+    @apply bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80;
+    @apply inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium;
+    @apply transition-all duration-200;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+    @apply disabled:pointer-events-none disabled:opacity-50 cursor-pointer select-none;
+    @apply h-10 px-4 py-2 min-h-[44px]; /* 最小触摸目标 */
   }
 
   .btn-secondary {
     @apply bg-secondary text-secondary-foreground hover:bg-secondary/80;
-    @apply inline-flex items-center justify-center rounded-md text-sm font-medium;
-    @apply transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
-    @apply disabled:pointer-events-none disabled:opacity-50;
-    @apply h-10 px-4 py-2;
+    @apply inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium;
+    @apply transition-all duration-200;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+    @apply disabled:pointer-events-none disabled:opacity-50 cursor-pointer;
+    @apply h-10 px-4 py-2 min-h-[44px];
   }
 
   .btn-accent {
-    @apply bg-accent text-accent-foreground hover:bg-accent/90;
-    @apply inline-flex items-center justify-center rounded-md text-sm font-medium;
-    @apply transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
-    @apply disabled:pointer-events-none disabled:opacity-50;
-    @apply h-10 px-4 py-2;
+    @apply bg-accent text-accent-foreground hover:bg-accent/90 active:bg-accent/80;
+    @apply inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium;
+    @apply transition-all duration-200;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+    @apply disabled:pointer-events-none disabled:opacity-50 cursor-pointer;
+    @apply h-10 px-4 py-2 min-h-[44px];
+  }
+
+  .btn-outline {
+    @apply border border-input bg-background hover:bg-accent hover:text-accent-foreground;
+    @apply inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium;
+    @apply transition-all duration-200;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+    @apply disabled:pointer-events-none disabled:opacity-50 cursor-pointer;
+    @apply h-10 px-4 py-2 min-h-[44px];
+  }
+
+  .btn-ghost {
+    @apply hover:bg-accent hover:text-accent-foreground;
+    @apply inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium;
+    @apply transition-all duration-200;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+    @apply disabled:pointer-events-none disabled:opacity-50 cursor-pointer;
+    @apply h-10 px-4 py-2 min-h-[44px];
   }
 
   .card-shadow {
@@ -107,6 +195,7 @@
     @apply text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium;
     @apply placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
     @apply focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply transition-all duration-200;
   }
 }
 
@@ -115,75 +204,122 @@
     text-wrap: balance;
   }
 
-  /* 渐变背景 */
+  /* Data Agent V4 渐变系统 */
   .bg-gradient-primary {
-    background: linear-gradient(135deg, #000000 0%, #333333 100%);
+    background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
   }
 
   .bg-gradient-accent {
-    background: linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%);
+    background: linear-gradient(135deg, #F97316 0%, #EA580C 100%);
   }
 
-  /* 文本渐变 */
   .text-gradient-primary {
-    background: linear-gradient(135deg, #000000 0%, #333333 100%);
+    background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
-  /* UX-modern 渐变系统 */
-  .bg-gradient-modern-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  }
-  .bg-gradient-modern-secondary {
-    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-  }
-  .bg-gradient-modern-accent {
-    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-  }
-  .bg-gradient-modern-success {
-    background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
-  }
-  .bg-gradient-modern-warning {
-    background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+  .text-gradient-accent {
+    background: linear-gradient(135deg, #F97316 0%, #EA580C 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
   }
 
-  /* UX-modern 微交互工具类 */
+  /* UX Pro Max - 微交互工具类 */
   .hover-lift {
-    @apply transition-all duration-200;
+    @apply transition-all duration-200 cursor-pointer;
   }
   .hover-lift:hover {
     @apply -translate-y-0.5 shadow-lg;
   }
-  .hover-scale {
-    @apply transition-transform duration-200;
+
+  /* 使用 opacity 而非 scale 避免布局抖动 */
+  .hover-interactive {
+    @apply transition-all duration-200 cursor-pointer;
   }
-  .hover-scale:hover {
-    @apply scale-105;
+  .hover-interactive:hover {
+    @apply opacity-80;
   }
+
   .animate-on-mount {
     @apply animate-scale-in;
   }
 
-  /* UX-modern 卡片样式 */
-  .card-modern {
-    @apply rounded-xl border bg-card text-card-foreground shadow-sm transition-all duration-200;
+  /* UX Pro Max - 卡片样式 */
+  .card-interactive {
+    @apply rounded-xl border bg-card text-card-foreground shadow-sm;
+    @apply transition-all duration-200 cursor-pointer;
   }
-  .card-modern:hover {
-    @apply shadow-md -translate-y-0.5;
+  .card-interactive:hover {
+    @apply shadow-md border-primary/50;
+  }
+
+  /* 骨架屏 shimmer 效果 */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted)) 0%,
+      hsl(var(--muted-foreground) / 0.1) 50%,
+      hsl(var(--muted)) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  /* 响应式容器 */
+  .container-responsive {
+    @apply mx-auto px-4 sm:px-6 lg:px-8;
+    max-width: 1280px;
+  }
+
+  /* 响应式网格 */
+  .grid-responsive {
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4;
+    gap: 1.5rem;
+  }
+
+  /* 安全区域适配 (移动端) */
+  .safe-area-inset {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  .safe-area-inset-top {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .safe-area-inset-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   /* 自定义动画 */
   .animate-in {
-    animation: fadeIn 0.6s ease-out;
+    animation: fadeIn 0.5s ease-out;
   }
 
   .animate-slide-up {
-    animation: slideUp 0.4s ease-out;
+    animation: slideUp 0.3s ease-out;
   }
 
   .animate-slide-down {
-    animation: slideDown 0.4s ease-out;
+    animation: slideDown 0.3s ease-out;
+  }
+
+  /* 尊重用户动画偏好 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }

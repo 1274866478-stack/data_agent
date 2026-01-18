@@ -20,4 +20,4 @@ export * from './xai'
 
 // 根组件
 export { default as Logo } from './Logo'
-export { default as ErrorBoundary } from './ErrorBoundary'
+// ErrorBoundary 在 xai 目录中，使用: import { ErrorBoundary } from '@/components/xai'

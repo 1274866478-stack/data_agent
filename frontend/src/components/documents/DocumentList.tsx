@@ -156,23 +156,23 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     return (
       <div className="flex space-x-6 text-sm">
         <div>
-          <span className="text-gray-500">总计:</span>
+          <span className="text-muted-foreground">总计:</span>
           <span className="ml-1 font-medium">{stats.total_documents}</span>
         </div>
         <div>
-          <span className="text-gray-500">已完成:</span>
+          <span className="text-muted-foreground">已完成:</span>
           <span className="ml-1 font-medium text-green-600">
             {stats.by_status[DocumentStatus.READY] || 0}
           </span>
         </div>
         <div>
-          <span className="text-gray-500">处理中:</span>
-          <span className="ml-1 font-medium text-blue-600">
+          <span className="text-muted-foreground">处理中:</span>
+          <span className="ml-1 font-medium text-primary">
             {stats.by_status[DocumentStatus.INDEXING] || 0}
           </span>
         </div>
         <div>
-          <span className="text-gray-500">存储:</span>
+          <span className="text-muted-foreground">存储:</span>
           <span className="ml-1 font-medium">{parseFloat(String(stats.total_size_mb)).toFixed(1)} MB</span>
         </div>
       </div>
@@ -192,7 +192,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
       )}
 
       {/* 工具栏 */}
-      <div className="bg-white dark:bg-slate-800 p-4 rounded-lg border border-gray-200 dark:border-slate-700">
+      <div className="bg-card p-4 rounded-lg border border-border">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
           {/* 搜索框 */}
           <div className="flex-1 max-w-md">
@@ -201,7 +201,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
               placeholder="搜索文档名称..."
               value={localSearchQuery}
               onChange={(e) => handleSearch(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-3 py-2 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent bg-background"
             />
           </div>
 
@@ -211,7 +211,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             <select
               value={statusFilter || ''}
               onChange={(e) => handleStatusFilter(e.target.value ? e.target.value as DocumentStatus : null)}
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="px-3 py-2 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent bg-background"
             >
               <option value="">所有状态</option>
               <option value={DocumentStatus.PENDING}>等待处理</option>
@@ -224,7 +224,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             <select
               value={fileTypeFilter || ''}
               onChange={(e) => handleFileTypeFilter(e.target.value || null)}
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="px-3 py-2 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent bg-background"
             >
               <option value="">所有类型</option>
               <option value="pdf">PDF</option>
@@ -244,8 +244,8 @@ export const DocumentList: React.FC<DocumentListProps> = ({
 
         {/* 批量操作 */}
         {showSelection && selectedDocuments.length > 0 && (
-          <div className="mt-4 flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <span className="text-sm text-blue-700">
+          <div className="mt-4 flex items-center justify-between p-3 bg-primary/10 border border-primary/30 rounded-lg">
+            <span className="text-sm text-primary">
               已选择 {selectedDocuments.length} 个文档
             </span>
             <div className="flex space-x-2">
@@ -270,7 +270,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
 
       {/* 统计信息 */}
       {getStatsDisplay() && (
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-lg border border-gray-200 dark:border-slate-700">
+        <div className="bg-card p-4 rounded-lg border border-border">
           {getStatsDisplay()}
         </div>
       )}
@@ -279,12 +279,12 @@ export const DocumentList: React.FC<DocumentListProps> = ({
       <div className="space-y-4">
         {isLoading ? (
           <div className="flex justify-center items-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
           </div>
         ) : documents.length === 0 ? (
-          <div className="text-center py-12 bg-white dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700">
+          <div className="text-center py-12 bg-card rounded-lg border border-border">
             <div className="text-6xl mb-4">📂</div>
-            <h3 className="text-lg font-medium text-gray-900 dark:text-slate-100 mb-2">暂无文档</h3>
+            <h3 className="text-lg font-medium text-foreground mb-2">暂无文档</h3>
             <p className="text-gray-500">
               {searchQuery || statusFilter || fileTypeFilter
                 ? '没有找到符合条件的文档'
@@ -359,7 +359,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             )}
 
             {/* 页面信息 */}
-            <div className="text-center text-sm text-gray-500">
+            <div className="text-center text-sm text-muted-foreground">
               显示第 {(currentPage - 1) * pageSize + 1} -{' '}
               {Math.min(currentPage * pageSize, total)} 条，共 {total} 条
             </div>

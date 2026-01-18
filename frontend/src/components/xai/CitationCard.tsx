@@ -64,18 +64,18 @@ export const CitationCard: React.FC<CitationCardProps> = ({
     switch (type) {
       case 'sql_query':
       case 'sql_results':
-        return 'bg-blue-100 text-blue-800 border-blue-200';
+        return 'bg-blue-500/20 text-blue-700 border-blue-500/30';
       case 'rag_retrieval':
       case 'rag_result':
-        return 'bg-green-100 text-green-800 border-green-200';
+        return 'bg-green-500/20 text-green-700 border-green-500/30';
       case 'document':
       case 'documents':
-        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+        return 'bg-yellow-500/20 text-yellow-700 border-yellow-500/30';
       case 'api_response':
       case 'api':
-        return 'bg-purple-100 text-purple-800 border-purple-200';
+        return 'bg-purple-500/20 text-purple-700 border-purple-500/30';
       default:
-        return 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-slate-700 dark:text-gray-200 dark:border-slate-600';
+        return 'bg-muted text-muted-foreground border-border';
     }
   };
 
@@ -88,7 +88,7 @@ export const CitationCard: React.FC<CitationCardProps> = ({
   const getVerificationBadge = (status: string) => {
     switch (status) {
       case 'verified':
-        return <Badge className="bg-green-100 text-green-800">已验证</Badge>;
+        return <Badge className="bg-green-500/20 text-green-700 border-green-500/30">已验证</Badge>;
       case 'pending':
         return <Badge variant="secondary">待验证</Badge>;
       case 'failed':
@@ -160,9 +160,9 @@ export const CitationCard: React.FC<CitationCardProps> = ({
             <div>
               <span className="text-sm text-muted-foreground">相关性评分:</span>
               <div className="flex items-center gap-2 mt-1">
-                <div className="flex-1 bg-gray-200 rounded-full h-2">
+                <div className="flex-1 bg-muted rounded-full h-2">
                   <div
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    className="bg-primary h-2 rounded-full transition-all duration-300"
                     style={{ width: `${source.relevance_score * 100}%` }}
                   />
                 </div>
@@ -174,7 +174,7 @@ export const CitationCard: React.FC<CitationCardProps> = ({
             <div>
               <span className="text-sm text-muted-foreground">置信度贡献:</span>
               <div className="flex items-center gap-2 mt-1">
-                <div className="flex-1 bg-gray-200 rounded-full h-2">
+                <div className="flex-1 bg-muted rounded-full h-2">
                   <div
                     className="bg-green-600 h-2 rounded-full transition-all duration-300"
                     style={{ width: `${source.confidence_contribution * 100}%` }}
@@ -190,7 +190,7 @@ export const CitationCard: React.FC<CitationCardProps> = ({
           {/* 内容片段 */}
           <div>
             <span className="text-sm text-muted-foreground">内容片段:</span>
-            <p className="mt-1 text-sm bg-muted p-3 rounded border-l-4 border-blue-500 leading-relaxed">
+            <p className="mt-1 text-sm bg-muted p-3 rounded border-l-4 border-primary leading-relaxed">
               {source.content_snippet}
             </p>
           </div>

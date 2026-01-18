@@ -203,10 +203,10 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
     <div className={cn('space-y-4 p-4', className)}>
       {/* 图表合并操作栏（选中≥2个时显示） */}
       {selectedCharts.length >= 2 && (
-        <div className="sticky top-0 z-10 bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between shadow-sm">
+        <div className="sticky top-0 z-10 bg-primary/10 border border-primary/30 rounded-lg p-3 flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-2">
-            <Check className="w-4 h-4 text-blue-600" />
-            <span className="text-sm text-blue-800">
+            <Check className="w-4 h-4 text-primary" />
+            <span className="text-sm text-primary">
               已选中 <strong>{selectedCharts.length}</strong> 个图表
             </span>
           </div>
@@ -259,8 +259,8 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
             <div className={cn(
               'w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium',
               message.role === 'user'
-                ? 'bg-blue-500 text-white'
-                : 'bg-gray-100 text-gray-600'
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted text-muted-foreground'
             )}>
               {message.role === 'user' ? (
                 <User className="w-4 h-4" />
@@ -291,7 +291,7 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                   return (
                     <Card className={cn(
                       'inline-block w-full',
-                      message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-100'
+                      message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground'
                     )}>
                       <CardContent className="p-3">
                         <div className="message-container">
@@ -351,7 +351,7 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
 
               {/* 时间戳和停止按钮 */}
               <div className={cn(
-                'text-xs text-gray-500 mt-1 flex items-center gap-2',
+                'text-xs text-muted-foreground mt-1 flex items-center gap-2',
                 message.role === 'user' ? 'justify-end' : 'justify-start'
               )}>
                 <span>
@@ -387,11 +387,11 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                   />
                   <label
                     htmlFor={`chart-select-${message.id}`}
-                    className="text-xs text-gray-600 cursor-pointer select-none flex items-center gap-1"
+                    className="text-xs text-muted-foreground cursor-pointer select-none flex items-center gap-1"
                   >
                     {selectedCharts.includes(message.id) ? (
                       <>
-                        <Check className="w-3 h-3 text-blue-600" />
+                        <Check className="w-3 h-3 text-primary" />
                         已选中合并
                       </>
                     ) : (
@@ -406,11 +406,11 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                 <div className="mt-2 text-xs space-y-2">
                   {/* 工具调用状态（默认展开） */}
                   {(message.metadata as any).tool_calls && (message.metadata as any).tool_calls.length > 0 && (
-                    <details open className="bg-blue-50 border border-blue-200 rounded p-2">
-                      <summary className="font-medium text-blue-800 cursor-pointer mb-1">工具调用状态</summary>
+                    <details open className="bg-primary/10 border border-primary/30 rounded p-2">
+                      <summary className="font-medium text-primary cursor-pointer mb-1">工具调用状态</summary>
                       <div className="mt-1 space-y-1">
                         {(message.metadata as any).tool_calls.map((tc: any, idx: number) => (
-                          <div key={idx} className="flex items-center gap-2 text-blue-700">
+                          <div key={idx} className="flex items-center gap-2 text-primary">
                             <span>• {tc.name || 'unknown'}</span>
                             {tc.status === 'error' && (
                               <span className="text-red-600">⚠️ 失败</span>
@@ -426,9 +426,9 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
 
                   {/* 推理过程（默认展开） */}
                   {message.metadata.reasoning && (
-                    <details open className="bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded p-2">
-                      <summary className="font-medium text-gray-700 cursor-pointer mb-1">推理过程</summary>
-                      <p className="text-gray-600 mt-1 whitespace-pre-wrap">{message.metadata.reasoning}</p>
+                    <details open className="bg-muted border border-border rounded p-2">
+                      <summary className="font-medium text-foreground cursor-pointer mb-1">推理过程</summary>
+                      <p className="text-muted-foreground mt-1 whitespace-pre-wrap">{message.metadata.reasoning}</p>
                     </details>
                   )}
 

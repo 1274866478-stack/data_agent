@@ -89,7 +89,7 @@ import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import { useTenantId } from '@/store/authStore'
 import { useDashboardStore } from '@/store/dashboardStore'
 import { useDataSourceStore } from '@/store/dataSourceStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { useDocumentStore, DocumentStatus } from '@/store/documentStore'
 import {
     AlertCircle,
     CheckCircle,
@@ -166,10 +166,10 @@ export default function AnalyticsPage() {
   // 计算文档统计
   const docStats = useMemo(() => {
     const total = documents.length
-    const ready = documents.filter(d => d.status === 'READY').length
-    const processing = documents.filter(d => d.status === 'INDEXING').length
-    const pending = documents.filter(d => d.status === 'PENDING').length
-    const error = documents.filter(d => d.status === 'ERROR').length
+    const ready = documents.filter(d => d.status === DocumentStatus.READY).length
+    const processing = documents.filter(d => d.status === DocumentStatus.INDEXING).length
+    const pending = documents.filter(d => d.status === DocumentStatus.PENDING).length
+    const error = documents.filter(d => d.status === DocumentStatus.ERROR).length
 
     // 按文件类型分组
     const byType: Record<string, number> = {}
@@ -261,8 +261,8 @@ export default function AnalyticsPage() {
       {/* 页面标题和操作 */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">数据分析</h1>
-          <p className="text-gray-300">
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">数据分析</h1>
+          <p className="text-muted-foreground">
             查看您的数据资产概览和使用情况
           </p>
         </div>
@@ -418,7 +418,7 @@ export default function AnalyticsPage() {
                             border: '1px solid hsl(var(--border))',
                             borderRadius: '6px'
                           }}
-                          formatter={(value: number) => [`${value} 个`, '数量']}
+                          formatter={(value: number | undefined) => [`${value ?? 0} 个`, '数量']}
                         />
                         <Legend
                           verticalAlign="bottom"
@@ -472,7 +472,7 @@ export default function AnalyticsPage() {
                             border: '1px solid hsl(var(--border))',
                             borderRadius: '6px'
                           }}
-                          formatter={(value: number) => [`${value} 个`, '数量']}
+                          formatter={(value: number | undefined) => [`${value ?? 0} 个`, '数量']}
                         />
                         <Legend
                           verticalAlign="bottom"

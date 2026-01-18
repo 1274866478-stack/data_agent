@@ -44,9 +44,9 @@
  */
 'use client'
 
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Markdown } from '@/components/ui/markdown'
 import { PlainText } from '@/components/ui/plain-text'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { ProcessingStep, StepChartData, StepTableData } from '@/types/chat'
 import ReactECharts from 'echarts-for-react'
@@ -84,10 +84,10 @@ function getStepIcon(step: number, title: string, status: ProcessingStep['status
 
   // 根据状态返回状态图标
   if (status === 'running') {
-    return <Loader2 className={cn(iconClass, 'animate-spin text-blue-500')} />
+    return <Loader2 className={cn(iconClass, 'animate-spin text-primary')} />
   }
   if (status === 'error') {
-    return <XCircle className={cn(iconClass, 'text-red-500')} />
+    return <XCircle className={cn(iconClass, 'text-destructive')} />
   }
   if (status === 'completed') {
     // 🔧 新增：步骤 0 特殊处理（理解问题/思考规划阶段）
@@ -159,20 +159,20 @@ function getStepIcon(step: number, title: string, status: ProcessingStep['status
   }
 
   // pending 状态
-  return <Clock className={cn(iconClass, 'text-gray-400')} />
+  return <Clock className={cn(iconClass, 'text-muted-foreground')} />
 }
 
 // 获取步骤的状态颜色
 function getStatusColor(status: ProcessingStep['status']) {
   switch (status) {
     case 'completed':
-      return 'border-green-200 bg-green-50'
+      return 'border-green-500/30 bg-green-500/10'
     case 'running':
-      return 'border-blue-200 bg-blue-50'
+      return 'border-primary/30 bg-primary/10'
     case 'error':
-      return 'border-red-200 bg-red-50'
+      return 'border-destructive/30 bg-destructive/10'
     default:
-      return 'border-gray-200 bg-gray-50 dark:bg-slate-800'
+      return 'border-border bg-muted'
   }
 }
 
@@ -221,8 +221,8 @@ const SQLCodeRenderer = React.memo(function SQLCodeRenderer({ sql, defaultExpand
         )}
       </button>
       {isExpanded && (
-        <pre className="p-3 overflow-x-auto max-h-64 overflow-y-auto bg-white dark:bg-slate-800">
-          <code className="text-xs text-slate-800 font-mono">{sql}</code>
+        <pre className="p-3 overflow-x-auto max-h-64 overflow-y-auto bg-card">
+          <code className="text-xs text-foreground font-mono">{sql}</code>
         </pre>
       )}
     </div>
@@ -239,8 +239,8 @@ function renderSQLCode(sql: string) {
           SQL
         </span>
       </div>
-      <pre className="p-3 overflow-x-auto bg-white dark:bg-slate-800">
-        <code className="text-xs text-slate-800 font-mono">{sql}</code>
+      <pre className="p-3 overflow-x-auto bg-card">
+        <code className="text-xs text-foreground font-mono">{sql}</code>
       </pre>
     </div>
   )
@@ -278,22 +278,22 @@ const TableDataRenderer = React.memo(function TableDataRenderer({ table }: Table
   const hasMoreColumns = table.columns.length > MAX_COLUMNS
 
   return (
-    <div className="mt-2 rounded-md border border-blue-200 overflow-hidden bg-white dark:bg-slate-800">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border-b border-blue-200">
-        <span className="text-xs font-medium text-blue-700">可视化数据</span>
-        <span className="text-xs text-blue-500">
+    <div className="mt-2 rounded-md border border-primary/20 overflow-hidden bg-card">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-primary/5 border-b border-primary/20">
+        <span className="text-xs font-medium text-primary">可视化数据</span>
+        <span className="text-xs text-primary/70">
           表格 · {table.row_count} 行 × {table.columns.length} 列
           {hasMoreColumns && ` (显示前${MAX_COLUMNS}列)`}
         </span>
       </div>
       <ScrollArea>
         <table className="w-full text-xs border-collapse">
-          <thead className="bg-gray-50 dark:bg-slate-800 sticky top-0 z-10">
+          <thead className="bg-muted sticky top-0 z-10">
             <tr>
               {limitedColumns.map(col => (
                 <th
                   key={col}
-                  className="px-3 py-2 border-b text-left font-medium text-gray-700 whitespace-nowrap bg-gray-50 dark:bg-slate-800"
+                  className="px-3 py-2 border-b text-left font-medium text-foreground whitespace-nowrap bg-muted"
                 >
                   {col}
                 </th>
@@ -301,29 +301,37 @@ const TableDataRenderer = React.memo(function TableDataRenderer({ table }: Table
             </tr>
           </thead>
           <tbody>
-            {displayRows.map((row, rowIndex) => (
-              <tr key={rowIndex} className="odd:bg-white dark:bg-slate-800 even:bg-gray-50 dark:bg-slate-800/60 hover:bg-blue-50/30">
-                {limitedColumns.map(col => (
-                  <td
-                    key={col}
-                    className="px-3 py-1.5 border-b text-gray-800 align-top"
-                  >
-                    <span className="break-words whitespace-pre-wrap">
-                      {row[col] !== undefined && row[col] !== null
-                        ? String(row[col])
-                        : ''}
-                    </span>
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {displayRows.map((row, rowIndex) => {
+              // 🔧 修复：支持两种 rows 格式（数组格式和对象格式）
+              const isArrayRow = Array.isArray(row)
+              
+              return (
+                <tr key={rowIndex} className="odd:bg-card even:bg-muted hover:bg-primary/5">
+                  {limitedColumns.map((col, colIndex) => {
+                    const cellValue = isArrayRow ? row[colIndex] : row[col]
+                    return (
+                      <td
+                        key={col}
+                        className="px-3 py-1.5 border-b text-foreground align-top"
+                      >
+                        <span className="break-words whitespace-pre-wrap">
+                          {cellValue !== undefined && cellValue !== null
+                            ? String(cellValue)
+                            : ''}
+                        </span>
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </ScrollArea>
       {/* 展开/收起按钮 */}
       {(hasMoreRows || hasMoreColumns) && (
-        <div className="px-3 py-1.5 bg-blue-50 border-t border-blue-200 flex items-center justify-between">
-          <span className="text-xs text-blue-600">
+        <div className="px-3 py-1.5 bg-primary/5 border-t border-primary/20 flex items-center justify-between">
+          <span className="text-xs text-primary">
             {isExpanded
               ? `显示全部 ${table.row_count} 行`
               : `共 ${table.row_count} 行，当前显示前 ${Math.min(DEFAULT_MAX_ROWS, table.row_count)} 行`
@@ -333,7 +341,7 @@ const TableDataRenderer = React.memo(function TableDataRenderer({ table }: Table
           {hasMoreRows && (
             <button
               onClick={handleToggle}
-              className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+              className="text-xs text-primary hover:text-primary/80 font-medium"
             >
               {isExpanded ? '收起' : '展开全部'}
             </button>
@@ -474,9 +482,9 @@ function normalizeEChartsOption(option: any): any {
 function renderChart(chart: StepChartData, description?: string) {
   // 图表说明文字（显示在图表上方）
   const descriptionElement = description && description.trim() && (
-    <div className="mb-2 p-3 rounded-md bg-blue-50 border border-blue-200">
-      <div className="text-xs font-medium text-blue-700 mb-1">图表说明</div>
-      <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+    <div className="mb-2 p-3 rounded-md bg-primary/5 border border-primary/20">
+      <div className="text-xs font-medium text-primary mb-1">图表说明</div>
+      <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
         {description}
       </p>
     </div>
@@ -489,11 +497,11 @@ function renderChart(chart: StepChartData, description?: string) {
     return (
       <>
         {descriptionElement}
-        <div className="mt-2 rounded-md border border-blue-200 overflow-hidden bg-white dark:bg-slate-800">
-          <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border-b border-blue-200">
-            <span className="text-xs font-medium text-blue-700">数据可视化</span>
+        <div className="mt-2 rounded-md border border-primary/20 overflow-hidden bg-card">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-primary/5 border-b border-primary/20">
+            <span className="text-xs font-medium text-primary">数据可视化</span>
             {chart.chart_type && (
-              <span className="text-xs text-blue-500 uppercase">{chart.chart_type}</span>
+              <span className="text-xs text-primary/70 uppercase">{chart.chart_type}</span>
             )}
           </div>
           <div className="p-2">
@@ -514,9 +522,9 @@ function renderChart(chart: StepChartData, description?: string) {
     return (
       <>
         {descriptionElement}
-        <div className="mt-2 rounded-md border border-blue-200 overflow-hidden bg-white dark:bg-slate-800">
-          <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border-b border-blue-200">
-            <span className="text-xs font-medium text-blue-700">数据可视化</span>
+        <div className="mt-2 rounded-md border border-primary/20 overflow-hidden bg-card">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-primary/5 border-b border-primary/20">
+            <span className="text-xs font-medium text-primary">数据可视化</span>
           </div>
           <div className="p-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -543,9 +551,9 @@ function renderVisualization(
   if (!chart && !table) return null
 
   const descriptionElement = description && description.trim() && (
-    <div className="mb-2 p-3 rounded-md bg-blue-50 border border-blue-200">
-      <div className="text-xs font-medium text-blue-700 mb-1">图表说明</div>
-      <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{description}</p>
+    <div className="mb-2 p-3 rounded-md bg-primary/5 border border-primary/20">
+      <div className="text-xs font-medium text-primary mb-1">图表说明</div>
+      <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{description}</p>
     </div>
   )
 
@@ -569,55 +577,87 @@ function renderVisualization(
   ) : null
 
   const tableElement = table ? (
-    <div className="border-t border-blue-200">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50/50">
-        <span className="text-xs font-medium text-blue-600">数据明细</span>
-        <span className="text-xs text-blue-500">{table.row_count} 行 × {table.columns.length} 列</span>
+    <div className="border-b border-primary/30">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-primary/5">
+        <span className="text-xs font-medium text-primary flex items-center gap-1.5">
+          <TableProperties className="w-3.5 h-3.5" />
+          查询数据
+        </span>
+        <span className="text-xs text-primary/70">{table.row_count} 行 × {table.columns.length} 列</span>
       </div>
       <ScrollArea>
         <table className="w-full text-xs border-collapse">
-          <thead className="bg-gray-50 dark:bg-slate-800 sticky top-0 z-10">
+          <thead className="bg-muted sticky top-0 z-10">
             <tr>
               {table.columns.slice(0, 10).map(col => (
-                <th key={col} className="px-3 py-2 border-b text-left font-medium text-gray-700 whitespace-nowrap bg-gray-50 dark:bg-slate-800">{col}</th>
+                <th key={col} className="px-3 py-2 border-b border-border text-left font-medium text-foreground whitespace-nowrap bg-muted">{col}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {table.rows.slice(0, 20).map((row, rowIndex) => (
-              <tr key={rowIndex} className="odd:bg-white dark:bg-slate-800 even:bg-gray-50 dark:bg-slate-800/60 hover:bg-blue-50/30">
-                {table.columns.slice(0, 10).map(col => (
-                  <td key={col} className="px-3 py-1.5 border-b text-gray-800 align-top">
-                    <span className="break-words whitespace-pre-wrap">
-                      {row[col] !== undefined && row[col] !== null ? String(row[col]) : ''}
-                    </span>
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {table.rows.slice(0, 20).map((row, rowIndex) => {
+              // 🔧 修复：支持两种 rows 格式
+              // 格式1: 数组格式 [[val1, val2], ...] - 后端 execute_query 返回的格式
+              // 格式2: 对象格式 [{col1: val1, col2: val2}, ...] - 某些其他来源的格式
+              const isArrayRow = Array.isArray(row)
+              
+              return (
+                <tr key={rowIndex} className="odd:bg-card even:bg-muted hover:bg-primary/5">
+                  {table.columns.slice(0, 10).map((col, colIndex) => {
+                    // 如果 row 是数组，使用索引访问；如果是对象，使用列名访问
+                    const cellValue = isArrayRow ? row[colIndex] : row[col]
+                    return (
+                      <td key={col} className="px-3 py-1.5 border-b border-border text-foreground align-top">
+                        <span className="break-words whitespace-pre-wrap">
+                          {cellValue !== undefined && cellValue !== null ? String(cellValue) : ''}
+                        </span>
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </ScrollArea>
       {table.row_count > 20 && (
-        <div className="px-3 py-1.5 bg-blue-50/50 text-center">
-          <span className="text-xs text-blue-600">共 {table.row_count} 行，显示前 20 行</span>
+        <div className="px-3 py-1.5 bg-primary/5 text-center border-t border-primary/30">
+          <span className="text-xs text-primary">共 {table.row_count} 行，显示前 20 行</span>
         </div>
       )}
     </div>
   ) : null
 
+  // 图表区域添加标题
+  const chartElementWithTitle = chartElement ? (
+    <div>
+      <div className="flex items-center justify-between px-3 py-1.5 bg-emerald-50/50 border-b border-emerald-100">
+        <span className="text-xs font-medium text-emerald-700 flex items-center gap-1.5">
+          <BarChart3 className="w-3.5 h-3.5" />
+          图表分析
+        </span>
+        {chart?.chart_type && (
+          <span className="text-xs text-emerald-500 uppercase">{chart.chart_type}</span>
+        )}
+      </div>
+      {chartElement}
+    </div>
+  ) : null
+
+
   return (
     <>
       {descriptionElement}
-      <div className="mt-2 rounded-md border border-blue-200 overflow-hidden bg-white dark:bg-slate-800">
-        <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border-b border-blue-200">
-          <span className="text-xs font-medium text-blue-700">可视化数据</span>
-          <span className="text-xs text-blue-500">
-            {chartTypeLabel}{chartTypeLabel && table && ' · '}{table && '表格'}
+      <div className="mt-2 rounded-md border border-primary/30 overflow-hidden bg-card">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-primary/5 border-b border-primary/30">
+          <span className="text-xs font-medium text-primary">📊 可视化数据</span>
+          <span className="text-xs text-primary/70">
+            {table && '数据表格'}{table && chartElementWithTitle && ' + '}{chartElementWithTitle && '图表分析'}
           </span>
         </div>
-        {chartElement}
+        {/* 先显示表格数据，再显示图表 */}
         {tableElement}
+        {chartElementWithTitle}
       </div>
     </>
   )
@@ -659,9 +699,9 @@ function renderStepContent(step: ProcessingStep, outputFormat: 'markdown' | 'pla
     case 'text':
       if (step.content_data.text) {
         return (
-          <div className="mt-2 p-3 rounded-md bg-blue-50 border border-blue-200">
-            <div className="text-xs font-medium text-blue-700 mb-1">数据分析</div>
-            <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+          <div className="mt-2 p-3 rounded-md bg-primary/5 border border-primary/20">
+            <div className="text-xs font-medium text-primary mb-1">数据分析</div>
+            <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
               {step.content_data.text}
             </p>
           </div>
@@ -714,12 +754,12 @@ function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex
     if (!textToShow) return null
 
     return (
-      <div className="mt-2 p-3 rounded-md bg-blue-50 border border-blue-200">
-        <div className="text-xs font-medium text-blue-700 mb-1">数据分析总结</div>
+      <div className="mt-2 p-3 rounded-md bg-primary/5 border border-primary/20">
+        <div className="text-xs font-medium text-primary mb-1">数据分析总结</div>
         {outputFormat === 'plain' ? (
           <PlainText content={textToShow} className="text-sm leading-relaxed" />
         ) : (
-          <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+          <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
             {textToShow}
           </p>
         )}
@@ -762,9 +802,14 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
   // 找到最后一个包含表格数据的步骤
   const tableDataStep = useMemo(() => {
     const tableSteps = steps.filter(s => s.content_type === 'table' && s.content_data?.table)
+    console.log('[ProcessingSteps] 查找表格步骤:', {
+      allSteps: steps.map(s => ({ step: s.step, title: s.title, content_type: s.content_type, hasTable: !!s.content_data?.table })),
+      tableSteps: tableSteps.length,
+    })
     return tableSteps.length > 0 ? tableSteps[tableSteps.length - 1] : null
   }, [steps])
   const tableData = tableDataStep?.content_data?.table || null
+  console.log('[ProcessingSteps] 提取的表格数据:', tableData ? `${tableData.row_count} 行 x ${tableData.columns?.length} 列` : 'null')
 
   // 🔧 修改：按内容类型检测是否有图表（不再依赖固定步骤号）
   const hasChart = useMemo(() => {
@@ -784,9 +829,9 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
   const containerClassName = useMemo(
     () => cn(
       'mt-3 rounded-lg border overflow-hidden',
-      stats.hasError ? 'border-red-200 bg-red-50/50' :
-      stats.isRunning ? 'border-blue-200 bg-blue-50/50' :
-      'border-emerald-200 bg-emerald-50/50',
+      stats.hasError ? 'border-destructive/30 bg-destructive/5' :
+      stats.isRunning ? 'border-primary/30 bg-primary/5' :
+      'border-green-500/30 bg-green-500/5',
       className
     ),
     [stats.hasError, stats.isRunning, className]
@@ -796,10 +841,10 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
   const headerClassName = useMemo(
     () => cn(
       'w-full px-3 py-2 flex items-center justify-between text-sm font-medium',
-      'hover:bg-black/5 transition-colors',
-      stats.hasError ? 'text-red-800' :
-      stats.isRunning ? 'text-blue-800' :
-      'text-emerald-800'
+      'hover:bg-muted transition-colors',
+      stats.hasError ? 'text-destructive' :
+      stats.isRunning ? 'text-primary' :
+      'text-green-600'
     ),
     [stats.hasError, stats.isRunning]
   )
@@ -836,18 +881,18 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
 
       {/* 进度条 */}
       <div className="px-3 pb-2">
-        <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
+        <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
           <div
             className={cn(
               'h-full rounded-full transition-all duration-500 ease-out',
-              stats.isRunning ? 'bg-blue-500 animate-pulse' :
-              stats.hasError ? 'bg-red-500' :
-              'bg-emerald-500'
+              stats.isRunning ? 'bg-primary animate-pulse' :
+              stats.hasError ? 'bg-destructive' :
+              'bg-green-500'
             )}
             style={{ width: `${(stats.completedSteps / steps.length) * 100}%` }}
           />
         </div>
-        <div className="flex justify-between mt-1 text-xs text-gray-600">
+        <div className="flex justify-between mt-1 text-xs text-muted-foreground">
           <span>{stats.completedSteps} / {steps.length} 步骤</span>
           <span>{Math.round((stats.completedSteps / steps.length) * 100)}%</span>
         </div>
@@ -896,22 +941,22 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
                     <div className="flex items-center justify-between gap-2">
                       <span className={cn(
                         'text-xs font-medium',
-                        step.status === 'completed' ? 'text-green-700' :
-                        step.status === 'running' ? 'text-blue-700' :
-                        step.status === 'error' ? 'text-red-700' :
-                        'text-gray-600'
+                        step.status === 'completed' ? 'text-green-600' :
+                        step.status === 'running' ? 'text-primary' :
+                        step.status === 'error' ? 'text-destructive' :
+                        'text-muted-foreground'
                       )}>
                         {step.step}. {step.title}
                       </span>
                       {step.duration && step.status === 'completed' && (
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-muted-foreground">
                           {formatDuration(step.duration)}
                         </span>
                       )}
                     </div>
 
                     {step.description && (
-                      <p className="text-xs text-gray-600 mt-0.5">
+                      <p className="text-xs text-muted-foreground mt-0.5">
                         {step.description}
                       </p>
                     )}
@@ -919,25 +964,25 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
                     {/* 🔧 实时内容预览（当步骤正在运行时），支持打字机光标效果 */}
                     {/* 🔧 修改：步骤0即使在 completed 状态也显示 content_preview（用于显示临时内容） */}
                     {(step.status === 'running' || (step.step === 0 && step.content_preview)) && step.content_preview && (
-                      <div className="mt-2 p-2 rounded-md bg-blue-50 border border-blue-200">
+                      <div className="mt-2 p-2 rounded-md bg-primary/10 border border-primary/30">
                         <div className="flex items-center gap-1.5 mb-1">
                           {step.status === 'running' ? (
-                            <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
+                            <Loader2 className="w-3 h-3 animate-spin text-primary" />
                           ) : (
                             <CheckCircle2 className="w-3 h-3 text-green-500" />
                           )}
-                          <span className="text-xs font-medium text-blue-700">
+                          <span className="text-xs font-medium text-primary">
                             {step.step === 8 ? '正在生成分析...' : '正在生成...'}
                           </span>
                         </div>
                         <div className={cn(
-                          "text-xs text-gray-700 whitespace-pre-wrap break-words max-h-48 overflow-y-auto",
+                          "text-xs text-foreground whitespace-pre-wrap break-words max-h-48 overflow-y-auto",
                           step.step === 8 ? "font-normal leading-relaxed" : "font-mono"
                         )}>
                           {step.content_preview}
                           {/* 🔧 打字机光标效果（仅在流式输出时显示） */}
                           {step.streaming && (
-                            <span className="inline-block w-0.5 h-4 bg-blue-500 animate-pulse ml-0.5 align-middle" />
+                            <span className="inline-block w-0.5 h-4 bg-primary animate-pulse ml-0.5 align-middle" />
                           )}
                         </div>
                       </div>
@@ -957,7 +1002,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
                   {/* 详情（如SQL内容） - 仅当没有content_type时显示 */}
                   {step.details && !step.content_type && (
                     <details className="mt-1">
-                      <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+                      <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
                         查看详情
                       </summary>
                       <pre className="mt-1 p-2 bg-white dark:bg-slate-800/50 rounded text-xs overflow-x-auto max-h-96 overflow-y-auto">

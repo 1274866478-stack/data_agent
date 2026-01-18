@@ -194,7 +194,6 @@ function dispatchStreamEvent(event: StreamEvent, callbacks: StreamCallbacks) {
       break;
 
     case 'tool_result':
-    case 'tool_output':
       // 处理查库结果 (通常是一次性返回完整 JSON)
       if (event.data || event.tool_output) {
         callbacks.onToolResult(event.data || event.tool_output);
@@ -213,13 +212,18 @@ function dispatchStreamEvent(event: StreamEvent, callbacks: StreamCallbacks) {
       // 处理AI推理步骤事件
       if (event.step) {
         console.log('[StreamParser] Received processing step:', event.step);
-        callbacks.onProcessingStep(event.step);
+        // step 可能是 number 或 ProcessingStep，只传递 ProcessingStep 类型
+        if (typeof event.step !== 'number') {
+          callbacks.onProcessingStep(event.step);
+        }
       }
       break;
 
     case 'step_update':
       // 🔧 处理步骤更新事件（用于更新正在进行的步骤的描述、内容预览和流式状态）
-      const stepNum = typeof event.step === 'number' ? event.step : parseInt(event.step || '0');
+      const stepNum = typeof event.step === 'number'
+        ? event.step
+        : (typeof event.step === 'string' ? parseInt(event.step || '0') : 0);
       if (stepNum > 0 && callbacks.onStepUpdate) {
         const description = event.description || '';
         const contentPreview = event.content_preview || '';

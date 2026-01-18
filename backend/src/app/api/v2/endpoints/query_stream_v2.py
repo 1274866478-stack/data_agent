@@ -278,35 +278,25 @@ async def create_stream_query_v2(
             }):
                 yield event
 
-            # 步骤 1: 接收查询
+            # 步骤 1: 接收查询（保留，作为唯一的初始化步骤）
             step_start = time.time()
             step_timings["receive_query"] = (time.time() - step_start) * 1000
 
             for event in send_event("step", {
                 "step": 1,
-                "message": "接收查询",
-                "detail": f"查询: {request.query[:50]}..."
+                "message": "理解问题",
+                "detail": f"正在分析: {request.query[:50]}...",
+                "status": "running"
             }):
                 yield event
 
             for event in send_event("progress", {"value": 10}):
                 yield event
 
-            # 步骤 2: 租户隔离验证
-            step_start = time.time()
-            step_timings["tenant_validation"] = (time.time() - step_start) * 1000
+            # 🔧 删除了步骤 2（租户隔离验证）和步骤 3（AgentV2 处理）
+            # 这些是内部步骤，对用户无价值
 
-            for event in send_event("step", {
-                "step": 2,
-                "message": "租户隔离验证",
-                "detail": f"租户: {tenant_id}"
-            }):
-                yield event
-
-            for event in send_event("progress", {"value": 20}):
-                yield event
-
-            # 缓存检查步骤
+            # 缓存检查（内部处理，不发送步骤）
             step_start = time.time()
             cache_manager = get_cache_manager()
             cache_hit = False
@@ -325,27 +315,9 @@ async def create_stream_query_v2(
                 # 缓存命中 - 流式返回缓存结果
                 step_timings["agent_execution"] = 0
 
-                for event in send_event("step", {
-                    "step": 3,
-                    "message": "缓存命中",
-                    "detail": "从缓存中获取查询结果..."
-                }):
-                    yield event
-
-                for event in send_event("progress", {"value": 50}):
-                    yield event
-
                 # 从缓存数据中提取答案
                 cached_answer = cached_data.get("answer", "")
                 processing_steps = cached_data.get("processing_steps", [])
-
-                # 发送流式答案
-                for event in send_event("step", {
-                    "step": 4,
-                    "message": "生成回答",
-                    "detail": "正在返回缓存结果..."
-                }):
-                    yield event
 
                 for event in send_event("progress", {"value": 80}):
                     yield event
@@ -398,7 +370,6 @@ async def create_stream_query_v2(
 
             else:
                 # 缓存未命中 - 执行 AgentV2 查询
-                # 步骤 3: 调用 AgentV2
                 step_start = time.time()
                 try:
                     from AgentV2.core import get_default_factory
@@ -424,14 +395,8 @@ async def create_stream_query_v2(
                             ]
                         }
 
-                        for event in send_event("step", {
-                            "step": 3,
-                            "message": "AgentV2 处理",
-                            "detail": "开始执行智能查询..."
-                        }):
-                            yield event
-
-                        for event in send_event("progress", {"value": 30}):
+                        # 🔧 删除了 AgentV2 处理步骤的发送，直接进入实际工具调用
+                        for event in send_event("progress", {"value": 20}):
                             yield event
 
                         # 🔧🔧🔧 使用 astream_events 实现真正的 token 级别流式输出
@@ -440,7 +405,7 @@ async def create_stream_query_v2(
                         all_messages = []
                         accumulated_answer = ""
                         step_count = 0
-                        processing_step_number = 3  # 从步骤3开始计数
+                        processing_step_number = 1  # 🔧 从步骤1开始计数（删除了步骤2、3）
                         last_progress_update = time.time()
                         current_tool_call = None  # 跟踪当前工具调用
 
@@ -464,7 +429,7 @@ async def create_stream_query_v2(
                                     progress = 30 + min(int((step_count / 100) * 50), 50)
                                     
                                     # 实时发送每个 token
-                                    async for sse in send_event("data", {
+                                    for sse in send_event("data", {
                                         "chunk": chunk.content,
                                         "progress": progress
                                     }):
@@ -473,7 +438,7 @@ async def create_stream_query_v2(
                                     # 定期发送进度更新（每 0.5 秒）
                                     now = time.time()
                                     if now - last_progress_update > 0.5:
-                                        async for sse in send_event("progress", {"value": progress}):
+                                        for sse in send_event("progress", {"value": progress}):
                                             yield sse
                                         last_progress_update = now
 
@@ -508,13 +473,23 @@ async def create_stream_query_v2(
                                     step_data["detail"] = "正在生成可视化图表..."
                                 
                                 current_tool_call = step_data
-                                async for sse in send_event("step", step_data):
+                                for sse in send_event("step", step_data):
                                     yield sse
 
                             # 🔧 处理工具调用结束
                             elif event_kind == "on_tool_end":
                                 if current_tool_call:
-                                    tool_output = event_data.get("output", "")
+                                    raw_output = event_data.get("output", "")
+                                    
+                                    # 🔧 修复：LangGraph 的 on_tool_end 返回的是 ToolMessage 对象
+                                    # 需要从 content 属性获取实际的字符串输出
+                                    if hasattr(raw_output, 'content'):
+                                        tool_output = raw_output.content
+                                        logger.info(f"[V2 Stream] on_tool_end: ToolMessage detected, content_len={len(tool_output) if tool_output else 0}")
+                                    else:
+                                        tool_output = raw_output if isinstance(raw_output, str) else str(raw_output)
+                                        logger.info(f"[V2 Stream] on_tool_end: raw output, type={type(raw_output).__name__}")
+                                    
                                     current_tool_call["status"] = "completed"
                                     current_tool_call["duration"] = 100  # 估算时间
                                     
@@ -545,7 +520,7 @@ async def create_stream_query_v2(
                                         except (json_module.JSONDecodeError, TypeError):
                                             pass
                                     
-                                    async for sse in send_event("step", current_tool_call):
+                                    for sse in send_event("step", current_tool_call):
                                         yield sse
                                     
                                     # 🔧 从工具输出中提取表格数据
@@ -554,12 +529,14 @@ async def create_stream_query_v2(
                                         try:
                                             import json as json_module
                                             output_data = json_module.loads(tool_output)
+                                            logger.info(f"[V2 Stream] 工具输出解析成功，类型: {type(output_data).__name__}")
                                             
                                             # 检测是否为表格格式（包含 columns 和 data/rows）
                                             if isinstance(output_data, dict):
                                                 columns = output_data.get("columns", [])
                                                 rows = output_data.get("data", output_data.get("rows", []))
                                                 row_count = output_data.get("row_count", len(rows) if isinstance(rows, list) else 0)
+                                                logger.info(f"[V2 Stream] 检测表格数据: columns={len(columns)}, rows={len(rows) if rows else 0}, row_count={row_count}")
                                                 
                                                 if columns and rows:
                                                     # 发送表格数据步骤
@@ -578,7 +555,7 @@ async def create_stream_query_v2(
                                                             }
                                                         }
                                                     }
-                                                    async for sse in send_event("step", table_step):
+                                                    for sse in send_event("step", table_step):
                                                         yield sse
                                                     logger.info(f"[V2 Stream] 发送表格数据: {row_count} 行, {len(columns)} 列")
                                             
@@ -605,7 +582,7 @@ async def create_stream_query_v2(
                                                             }
                                                         }
                                                     }
-                                                    async for sse in send_event("step", table_step):
+                                                    for sse in send_event("step", table_step):
                                                         yield sse
                                                     logger.info(f"[V2 Stream] 发送表格数据 (列表): {row_count} 行")
                                         except (json_module.JSONDecodeError, TypeError):

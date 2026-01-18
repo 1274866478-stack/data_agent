@@ -94,6 +94,7 @@ export interface ChatMessage {
     chart?: import('@/lib/api-client').ChatQueryChart
     echarts_option?: Record<string, any>
     processing_steps?: ProcessingStep[]  // AI推理步骤
+    progress?: number  // V2 流式进度 (0-100)
   }
 }
 
@@ -108,7 +109,7 @@ export interface ChatSession {
 }
 
 // 流式状态类型
-type StreamingStatus = 'idle' | 'streaming' | 'analyzing_sql' | 'generating_chart' | 'error' | 'done'
+type StreamingStatus = 'idle' | 'streaming' | 'paused' | 'analyzing_sql' | 'generating_chart' | 'error' | 'done'
 
 // V2 流式会话管理状态
 interface V2SessionManager {
@@ -201,7 +202,7 @@ interface ChatState {
   saveToStorage: () => void
 
   // 内部方法
-  _sendOnlineMessage: (content: string, sessionId: string, dataSourceIds?: string | string[]) => Promise<void>
+  _sendOnlineMessage: (content: string, sessionId: string, dataSourceIds?: string | string[], useStream?: boolean) => Promise<void>
 }
 
 // 生成唯一ID
@@ -258,7 +259,7 @@ export const useChatStore = create<ChatState>()(
             currentSession: newSession,
             stats: {
               ...state.stats,
-              totalSessions: state.stats.totalSessions + 1,
+              totalSessions: (state?.stats?.totalSessions ?? 0) + 1,
             }
           }
         })
@@ -313,9 +314,9 @@ export const useChatStore = create<ChatState>()(
             currentSession,
             stats: {
               ...state.stats,
-              totalSessions: Math.max(0, state.stats.totalSessions - 1),
-              totalMessages: Math.max(0, state.stats.totalMessages -
-                state.sessions.find(s => s.id === sessionId)?.messages.length || 0),
+              totalSessions: Math.max(0, (state?.stats?.totalSessions ?? 0) - 1),
+              totalMessages: Math.max(0, (state?.stats?.totalMessages ?? 0) -
+                (state?.sessions?.find(s => s.id === sessionId)?.messages.length ?? 0)),
             }
           }
         })
@@ -343,8 +344,8 @@ export const useChatStore = create<ChatState>()(
             currentSession,
             stats: {
               ...state.stats,
-              totalSessions: Math.max(0, state.stats.totalSessions - sessionIds.length),
-              totalMessages: Math.max(0, state.stats.totalMessages - deletedMessages),
+              totalSessions: Math.max(0, (state?.stats?.totalSessions ?? 0) - sessionIds.length),
+              totalMessages: Math.max(0, (state?.stats?.totalMessages ?? 0) - deletedMessages),
             }
           }
         })
@@ -532,9 +533,10 @@ export const useChatStore = create<ChatState>()(
               const { useDataSourceStore } = await import('@/store/dataSourceStore')
               const dataSourceStore = useDataSourceStore.getState()
               const tenantId = 'default_tenant' // TODO: 从认证上下文获取
-              const activeSources = await dataSourceStore.fetchDataSources(tenantId, { active_only: true })
-              if (activeSources && activeSources.length > 0) {
-                finalConnectionId = activeSources[0].id
+              await dataSourceStore.fetchDataSources(tenantId, { active_only: true })
+              const sources = dataSourceStore.dataSources || []
+              if (sources.length > 0 && sources[0]?.id) {
+                finalConnectionId = sources[0].id
                 console.log('[ChatStore] 自动使用第一个活跃数据源:', finalConnectionId)
               }
             } catch (error) {
@@ -564,8 +566,9 @@ export const useChatStore = create<ChatState>()(
               const { useDataSourceStore } = await import('@/store/dataSourceStore')
               const dataSourceStore = useDataSourceStore.getState()
               const tenantId = 'default_tenant'
-              const allSources = await dataSourceStore.fetchDataSources(tenantId, { active_only: true })
-              const selectedSources = (allSources || []).filter(ds => normalizedDataSourceIds.includes(ds.id))
+              await dataSourceStore.fetchDataSources(tenantId, { active_only: true })
+              const allSources = dataSourceStore.dataSources || []
+              const selectedSources = allSources.filter(ds => normalizedDataSourceIds.includes(ds.id))
               console.log('  - 选中的数据源详情:')
               selectedSources.forEach((ds, idx) => {
                 console.log(`    [${idx+1}] ID: ${ds.id}, 名称: ${ds.name}, 类型: ${ds.db_type}, 状态: ${ds.status}`)
@@ -713,6 +716,30 @@ export const useChatStore = create<ChatState>()(
                   accumulatedAnswer += data.chunk
                   currentProgress = data.progress || currentProgress
 
+                  // 🔧 优化：将流式内容显示在当前正在运行的步骤中
+                  // 优先找正在运行的步骤，如果没有则用最后一个步骤
+                  let targetStep = processingSteps.find(s => s.status === 'running')
+                  if (!targetStep && processingSteps.length > 0) {
+                    targetStep = processingSteps[processingSteps.length - 1]
+                  }
+                  
+                  if (targetStep) {
+                    // 在当前步骤中显示流式内容
+                    targetStep.content_preview = accumulatedAnswer
+                    targetStep.streaming = true  // 启用打字机光标
+                  } else {
+                    // 如果还没有任何步骤，创建一个初始的"AI 思考中"步骤
+                    const thinkingStep: ProcessingStep = {
+                      step: 0,
+                      title: 'AI 思考中',
+                      description: '正在分析问题...',
+                      status: 'running' as const,
+                      streaming: true,
+                      content_preview: accumulatedAnswer,
+                    }
+                    processingSteps.push(thinkingStep)
+                  }
+
                   // 🔧 节流更新：使用 requestAnimationFrame 批量更新
                   const now = Date.now()
                   if (!pendingUpdate && (now - lastUpdateTime >= UPDATE_THROTTLE_MS)) {
@@ -740,11 +767,15 @@ export const useChatStore = create<ChatState>()(
                   }
                   pendingUpdate = false
 
-                  // 完成所有步骤
+                  // 完成所有步骤，并禁用打字机光标、清理 content_preview
                   processingSteps.forEach(step => {
                     if (step.status === 'running') {
                       step.status = 'completed'
                     }
+                    // 禁用打字机光标
+                    step.streaming = false
+                    // 清理临时的流式内容预览（最终内容会在正式步骤中显示）
+                    step.content_preview = undefined
                   })
 
                   // 🔧 解析图表配置
@@ -1372,7 +1403,7 @@ export const useChatStore = create<ChatState>()(
             },
             stats: {
               ...state.stats,
-              totalMessages: state.stats.totalMessages + 1,
+              totalMessages: (state?.stats?.totalMessages ?? 0) + 1,
             }
           }
         })
@@ -1457,7 +1488,7 @@ export const useChatStore = create<ChatState>()(
             currentSession: updatedCurrentSession,
             stats: {
               ...state.stats,
-              totalMessages: Math.max(0, state.stats.totalMessages - 1),
+              totalMessages: Math.max(0, (state?.stats?.totalMessages ?? 0) - 1),
             }
           }
         })
@@ -1487,7 +1518,7 @@ export const useChatStore = create<ChatState>()(
               : state.currentSession,
             stats: {
               ...state.stats,
-              totalMessages: Math.max(0, state.stats.totalMessages - sessionMessageCount),
+              totalMessages: Math.max(0, (state?.stats?.totalMessages ?? 0) - sessionMessageCount),
             }
           }
         })
@@ -1557,7 +1588,7 @@ export const useChatStore = create<ChatState>()(
           })
         } catch (error) {
           console.error('[ChatStore] 暂停会话失败:', error)
-          setError(`暂停会话失败: ${error instanceof Error ? error.message : '未知错误'}`)
+          set({ error: `暂停会话失败: ${error instanceof Error ? error.message : '未知错误'}` })
         }
       },
 
@@ -1589,7 +1620,7 @@ export const useChatStore = create<ChatState>()(
           })
         } catch (error) {
           console.error('[ChatStore] 恢复会话失败:', error)
-          setError(`恢复会话失败: ${error instanceof Error ? error.message : '未知错误'}`)
+          set({ error: `恢复会话失败: ${error instanceof Error ? error.message : '未知错误'}` })
         }
       },
 
@@ -1612,7 +1643,7 @@ export const useChatStore = create<ChatState>()(
           })
         } catch (error) {
           console.error('[ChatStore] 取消会话失败:', error)
-          setError(`取消会话失败: ${error instanceof Error ? error.message : '未知错误'}`)
+          set({ error: `取消会话失败: ${error instanceof Error ? error.message : '未知错误'}` })
         }
       },
 
@@ -1671,8 +1702,8 @@ export const useChatStore = create<ChatState>()(
           .filter(m => messageIds.includes(m.id) && m.metadata?.echarts_option)
           .map(m => ({
             messageId: m.id,
-            echarts_option: m.metadata.echarts_option,
-            title: m.metadata.echarts_option?.title?.text || '图表'
+            echarts_option: m.metadata?.echarts_option,
+            title: m.metadata?.echarts_option?.title?.text || '图表'
           }))
 
         if (chartConfigs.length < 2) {

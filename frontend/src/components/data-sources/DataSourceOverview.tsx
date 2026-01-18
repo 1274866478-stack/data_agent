@@ -90,15 +90,15 @@ const ActivityItem: React.FC<ActivityItemProps> = ({ activity }) => {
   return (
     <div className="flex items-center space-x-3 py-2">
       <div className={`flex-shrink-0 p-2 rounded-full ${
-        activity.status === 'success' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
+        activity.status === 'success' ? 'bg-green-500/20 text-green-600' : 'bg-destructive/20 text-destructive'
       }`}>
         {getActivityIcon()}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-gray-900 truncate">
+        <p className="text-sm font-medium text-foreground truncate">
           {getActivityText()}{getTypeText()} &quot;{activity.item_name}&quot;
         </p>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted-foreground">
           {new Date(activity.timestamp).toLocaleString()}
         </p>
       </div>
@@ -124,10 +124,10 @@ export const DataSourceOverview: React.FC = () => {
           {[...Array(4)].map((_, i) => (
             <Card key={i} className="animate-pulse">
               <CardHeader className="pb-2">
-                <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                <div className="h-4 bg-muted rounded w-3/4"></div>
               </CardHeader>
               <CardContent>
-                <div className="h-8 bg-gray-200 rounded w-1/2"></div>
+                <div className="h-8 bg-muted rounded w-1/2"></div>
               </CardContent>
             </Card>
           ))}
@@ -138,9 +138,9 @@ export const DataSourceOverview: React.FC = () => {
 
   if (error) {
     return (
-      <Card className="border-red-200 bg-red-50">
+      <Card className="border-destructive/30 bg-destructive/10">
         <CardContent className="pt-6">
-          <div className="flex items-center space-x-2 text-red-600">
+          <div className="flex items-center space-x-2 text-destructive">
             <AlertCircle className="h-5 w-5" />
             <span>加载概览数据失败: {error}</span>
           </div>
@@ -219,15 +219,15 @@ export const DataSourceOverview: React.FC = () => {
             <div className="grid grid-cols-3 gap-4 text-center">
               <div>
                 <div className="text-lg font-semibold text-green-600">{overview.databases.active}</div>
-                <div className="text-xs text-gray-500">正常</div>
+                <div className="text-xs text-muted-foreground">正常</div>
               </div>
               <div>
-                <div className="text-lg font-semibold text-red-600">{overview.databases.error}</div>
-                <div className="text-xs text-gray-500">错误</div>
+                <div className="text-lg font-semibold text-destructive">{overview.databases.error}</div>
+                <div className="text-xs text-muted-foreground">错误</div>
               </div>
               <div>
-                <div className="text-lg font-semibold text-blue-600">{overview.databases.total}</div>
-                <div className="text-xs text-gray-500">总计</div>
+                <div className="text-lg font-semibold text-primary">{overview.databases.total}</div>
+                <div className="text-xs text-muted-foreground">总计</div>
               </div>
             </div>
           </CardContent>
@@ -252,19 +252,19 @@ export const DataSourceOverview: React.FC = () => {
             <div className="grid grid-cols-4 gap-2 text-center">
               <div>
                 <div className="text-lg font-semibold text-green-600">{overview.documents.ready}</div>
-                <div className="text-xs text-gray-500">就绪</div>
+                <div className="text-xs text-muted-foreground">就绪</div>
               </div>
               <div>
                 <div className="text-lg font-semibold text-yellow-600">{overview.documents.processing}</div>
-                <div className="text-xs text-gray-500">处理中</div>
+                <div className="text-xs text-muted-foreground">处理中</div>
               </div>
               <div>
-                <div className="text-lg font-semibold text-red-600">{overview.documents.error}</div>
-                <div className="text-xs text-gray-500">错误</div>
+                <div className="text-lg font-semibold text-destructive">{overview.documents.error}</div>
+                <div className="text-xs text-muted-foreground">错误</div>
               </div>
               <div>
-                <div className="text-lg font-semibold text-blue-600">{overview.documents.total}</div>
-                <div className="text-xs text-gray-500">总计</div>
+                <div className="text-lg font-semibold text-primary">{overview.documents.total}</div>
+                <div className="text-xs text-muted-foreground">总计</div>
               </div>
             </div>
           </CardContent>
@@ -287,14 +287,14 @@ export const DataSourceOverview: React.FC = () => {
               <Progress
                 value={overview.storage.usage_percentage}
                 className={`h-3 ${
-                  overview.storage.usage_percentage > 80 ? 'text-red-600' :
+                  overview.storage.usage_percentage > 80 ? 'text-destructive' :
                   overview.storage.usage_percentage > 60 ? 'text-yellow-600' : 'text-green-600'
                 }`}
               />
             </div>
-            <div className="text-sm text-gray-600">
+            <div className="text-sm text-muted-foreground">
               {overview.storage.usage_percentage > 80 && (
-                <div className="text-red-600 flex items-center gap-1">
+                <div className="text-destructive flex items-center gap-1">
                   <AlertCircle className="h-4 w-4" />
                   存储空间即将用完，建议清理或升级
                 </div>
@@ -331,7 +331,7 @@ export const DataSourceOverview: React.FC = () => {
                 ))}
               </div>
             ) : (
-              <div className="text-center py-4 text-gray-500">
+              <div className="text-center py-4 text-muted-foreground">
                 暂无最近活动
               </div>
             )}

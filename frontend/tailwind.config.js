@@ -9,53 +9,73 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        background: 'var(--background)',
-        foreground: 'var(--foreground)',
-        // The Curator 主题色彩
+        // 语义化颜色 - 自动适配亮色/暗色模式
+        background: 'hsl(var(--background))',
+        foreground: 'hsl(var(--foreground))',
+
+        // Data Agent V4 主题色彩 - 蓝橙配色方案
         primary: {
-          DEFAULT: '#000000',
-          foreground: '#FFFFFF',
+          DEFAULT: 'hsl(var(--primary))',
+          foreground: 'hsl(var(--primary-foreground))',
+          50: 'hsl(var(--primary) / 0.05)',
+          100: 'hsl(var(--primary) / 0.1)',
+          200: 'hsl(var(--primary) / 0.2)',
+          300: 'hsl(var(--primary) / 0.3)',
+          400: 'hsl(var(--primary) / 0.4)',
+          500: 'hsl(var(--primary) / 0.5)',
+          600: 'hsl(var(--primary) / 0.6)',
+          700: 'hsl(var(--primary) / 0.7)',
+          800: 'hsl(var(--primary) / 0.8)',
+          900: 'hsl(var(--primary) / 0.9)',
+          950: 'hsl(var(--primary) / 0.95)',
         },
         secondary: {
-          DEFAULT: '#666666',
-          foreground: '#FFFFFF',
+          DEFAULT: 'hsl(var(--secondary))',
+          foreground: 'hsl(var(--secondary-foreground))',
         },
         accent: {
-          DEFAULT: '#FF6B6B',
-          foreground: '#000000',
+          DEFAULT: 'hsl(var(--accent))',
+          foreground: 'hsl(var(--accent-foreground))',
+          hover: 'hsl(var(--accent) / 0.9)',
         },
         muted: {
-          DEFAULT: '#F8F9FA',
-          foreground: '#666666',
+          DEFAULT: 'hsl(var(--muted))',
+          foreground: 'hsl(var(--muted-foreground))',
         },
-        border: '#E5E7EB',
-        input: '#FFFFFF',
-        ring: '#000000',
+        border: 'hsl(var(--border))',
+        input: 'hsl(var(--input))',
+        ring: 'hsl(var(--ring))',
         card: {
-          DEFAULT: '#FFFFFF',
-          foreground: '#000000',
+          DEFAULT: 'hsl(var(--card))',
+          foreground: 'hsl(var(--card-foreground))',
         },
         popover: {
           DEFAULT: 'hsl(var(--popover))',
           foreground: 'hsl(var(--popover-foreground))',
         },
-        // 扩展的灰色系统
-        gray: {
-          50: '#F9FAFB',
-          100: '#F3F4F6',
-          200: '#E5E7EB',
-          300: '#D1D5DB',
-          400: '#9CA3AF',
-          500: '#6B7280',
-          600: '#4B5563',
-          700: '#374151',
-          800: '#1F2937',
-          900: '#111827',
+        destructive: {
+          DEFAULT: 'hsl(var(--destructive))',
+          foreground: 'hsl(var(--destructive-foreground))',
+        },
+
+        // Slate 色系 - 中性灰色（保留用于不需要主题切换的场景）
+        slate: {
+          50: '#F8FAFC',
+          100: '#F1F5F9',
+          200: '#E2E8F0',
+          300: '#CBD5E1',
+          400: '#94A3B8',
+          500: '#64748B',
+          600: '#475569',
+          700: '#334155',
+          800: '#1E293B',
+          900: '#0F172A',
+          950: '#020617',
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'monospace'],
+        sans: ['var(--font-fira-sans)', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-fira-code)', 'monospace'],
       },
       spacing: {
         '18': '4.5rem',
@@ -87,6 +107,10 @@ module.exports = {
         'scale-in': 'scaleIn 0.2s ease-out',
         'slide-in-right': 'slideInRight 0.3s ease-out',
         'pulse-soft': 'pulseSoft 2s ease-in-out infinite',
+        // UX Pro Max 新增 - 微交互动画
+        'spin-slow': 'spin 3s linear infinite',
+        'shimmer': 'shimmer 2s linear infinite',
+        'bounce-subtle': 'bounceSubtle 0.5s ease-in-out',
       },
       keyframes: {
         fadeIn: {
@@ -114,6 +138,32 @@ module.exports = {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.8' },
         },
+        // UX Pro Max 新增关键帧
+        shimmer: {
+          '0%': { backgroundPosition: '-1000px 0' },
+          '100%': { backgroundPosition: '1000px 0' },
+        },
+        bounceSubtle: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-4px)' },
+        },
+      },
+      // UX Pro Max - 过渡时长配置
+      transitionDuration: {
+        '150': '150ms',
+        '200': '200ms',
+        '250': '250ms',
+        '300': '300ms',
+      },
+      // Z-index 层次管理
+      zIndex: {
+        'dropdown': 10,
+        'sticky': 20,
+        'fixed': 30,
+        'modal-backdrop': 40,
+        'modal': 50,
+        'popover': 60,
+        'tooltip': 70,
       },
     },
   },

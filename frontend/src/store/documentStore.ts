@@ -344,10 +344,10 @@ export const useDocumentStore = create<DocumentState>()(
         const uploadPromises = files.map(file => get().uploadDocument(file))
 
         try {
-          await Promise.allSettled(uploadPromises)
+          const results = await Promise.allSettled(uploadPromises)
 
           // 检查是否有失败的上传
-          const failedUploads = uploadPromises.filter(
+          const failedUploads = results.filter(
             result => result.status === 'rejected'
           ).length
 

@@ -74,6 +74,18 @@ export function EChartsRenderer({
 }: EChartsRendererProps) {
   const chartRef = useRef<ReactECharts>(null)
 
+  // 使用useEffect处理loading状态
+  useEffect(() => {
+    if (chartRef.current) {
+      const chart = chartRef.current.getEchartsInstance()
+      if (loading) {
+        chart.showLoading()
+      } else {
+        chart.hideLoading()
+      }
+    }
+  }, [loading])
+
   // 如果没有配置，不渲染
   if (!echartsOption) {
     return null
@@ -121,21 +133,20 @@ export function EChartsRenderer({
   }
 
   return (
-    <Card className={`mt-3 border-blue-100 bg-blue-50/40 ${className}`}>
+    <Card className={`mt-3 border-primary/20 bg-primary/5 ${className}`}>
       {title && (
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-semibold text-blue-900">
+          <CardTitle className="text-sm font-semibold text-foreground">
             {title}
           </CardTitle>
         </CardHeader>
       )}
       <CardContent className="pt-0">
-        <div className="rounded-md overflow-hidden bg-white border border-blue-100">
+        <div className="rounded-md overflow-hidden bg-background border border-border">
           <ReactECharts
             ref={chartRef}
             option={validatedOption}
             style={{ height: typeof height === 'number' ? `${height}px` : height, width: '100%' }}
-            loading={loading}
             opts={{ renderer: 'canvas' }}
             notMerge={false}
             lazyUpdate={false}

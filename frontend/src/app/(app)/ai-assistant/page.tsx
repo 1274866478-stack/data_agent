@@ -323,7 +323,7 @@ export default function AIAssistantPage() {
     <div className="h-[calc(100vh-8rem)] flex bg-gradient-to-br from-blue-100 to-indigo-100 -m-6">
       {/* 历史对话侧边栏 */}
       <div className={cn(
-        "h-full bg-white border-r shadow-lg transition-all duration-300 flex flex-col",
+        "h-full bg-card border-r shadow-lg transition-all duration-300 flex flex-col",
         showHistory ? "w-80" : "w-0 overflow-hidden"
       )}>
         {showHistory && (
@@ -331,7 +331,7 @@ export default function AIAssistantPage() {
             {/* 侧边栏头部 */}
             <div className="p-4 border-b flex-shrink-0">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                <h3 className="font-semibold text-foreground flex items-center gap-2">
                   <History className="w-4 h-4" />
                   历史对话
                 </h3>
@@ -359,13 +359,13 @@ export default function AIAssistantPage() {
 
               {/* 批量操作栏 */}
               {batchSelectMode && (
-                <div className="flex items-center justify-between mb-3 p-2 bg-blue-50 rounded-lg">
+                <div className="flex items-center justify-between mb-3 p-2 bg-primary/10 rounded-lg">
                   <div className="flex items-center gap-2">
                     <Checkbox
                       checked={filteredSessions.length > 0 && selectedSessions.size === filteredSessions.length}
                       onCheckedChange={toggleSelectAll}
                     />
-                    <span className="text-sm text-gray-600">
+                    <span className="text-sm text-primary">
                       {selectedSessions.size > 0 ? `已选 ${selectedSessions.size} 项` : '全选'}
                     </span>
                   </div>
@@ -384,7 +384,7 @@ export default function AIAssistantPage() {
 
               {/* 搜索框 */}
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -408,7 +408,7 @@ export default function AIAssistantPage() {
             <ScrollArea className="flex-1">
               <div className="p-2">
                 {filteredSessions.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
+                  <div className="text-center py-8 text-muted-foreground">
                     <MessageSquare className="w-10 h-10 mx-auto mb-2 opacity-50" />
                     <p className="text-sm">
                       {searchQuery ? '没有找到匹配的对话' : '暂无历史对话'}
@@ -422,10 +422,10 @@ export default function AIAssistantPage() {
                       className={cn(
                         "p-3 rounded-lg cursor-pointer mb-1 group transition-colors",
                         selectedSessions.has(session.id)
-                          ? "bg-blue-100 border border-blue-300"
+                          ? "bg-primary/20 border border-primary/40"
                           : session.id === currentSession?.id
-                            ? "bg-blue-100 border border-blue-200"
-                            : "hover:bg-gray-100"
+                            ? "bg-primary/10 border border-primary/30"
+                            : "hover:bg-muted"
                       )}
                     >
                       <div className="flex items-start gap-2">
@@ -440,10 +440,10 @@ export default function AIAssistantPage() {
                         )}
                         <div className="flex-1 min-w-0">
                           <p className="font-medium text-sm truncate">{session.title}</p>
-                          <p className="text-xs text-gray-500 mt-1">
+                          <p className="text-xs text-muted-foreground mt-1">
                             {session.messages.length} 条消息
                           </p>
-                          <p className="text-xs text-gray-400">
+                          <p className="text-xs text-muted-foreground">
                             {new Date(session.updatedAt).toLocaleDateString('zh-CN', {
                               month: 'short',
                               day: 'numeric',
@@ -458,7 +458,7 @@ export default function AIAssistantPage() {
                             variant="ghost"
                             size="icon"
                             onClick={(e) => handleDeleteSession(e, session.id)}
-                            className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-red-500"
+                            className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
@@ -481,8 +481,8 @@ export default function AIAssistantPage() {
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center gap-3 text-2xl">
-                  <div className="p-2 bg-gradient-modern-primary rounded-lg">
-                    <Sparkles className="w-6 h-6 text-white dark:text-slate-100" />
+                  <div className="p-2 bg-gradient-to-r from-violet-600 to-purple-600 rounded-lg">
+                    <Sparkles className="w-6 h-6 text-white" />
                   </div>
                   智能数据助手
                 </CardTitle>
@@ -497,7 +497,7 @@ export default function AIAssistantPage() {
                       const newFormat = outputFormat === 'markdown' ? 'plain' : 'markdown'
                       setOutputFormat(newFormat)
                     }}
-                    className="gap-2 text-gray-700"
+                    className="gap-2 text-foreground"
                     title={outputFormat === 'markdown' ? '切换到纯文本格式' : '切换到Markdown格式'}
                   >
                     {outputFormat === 'markdown' ? (
@@ -517,12 +517,12 @@ export default function AIAssistantPage() {
                     variant="outline"
                     size="sm"
                     onClick={() => setShowHistory(!showHistory)}
-                    className="gap-2 text-gray-700"
+                    className="gap-2 text-foreground"
                   >
                     <History className="w-4 h-4" />
                     历史对话
                     {sessions.length > 0 && (
-                      <span className="bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full">
+                      <span className="bg-primary/20 text-primary text-xs px-1.5 py-0.5 rounded-full">
                         {sessions.length}
                       </span>
                     )}
@@ -531,7 +531,7 @@ export default function AIAssistantPage() {
                   <Button
                     onClick={handleStartNewConversation}
                     size="sm"
-                    className="gap-2 bg-gradient-modern-primary hover:opacity-90 transition-opacity"
+                    className="gap-2 bg-gradient-to-r from-violet-600 to-purple-600 text-white hover:opacity-90 transition-opacity"
                   >
                     <Plus className="w-4 h-4" />
                     新建对话
@@ -560,7 +560,7 @@ export default function AIAssistantPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-8 min-w-[240px] justify-between text-gray-700"
+                        className="h-8 min-w-[240px] justify-between text-foreground"
                       >
                         <div className="flex items-center gap-2 overflow-hidden">
                           <span className="truncate">{selectedDataSourceLabel}</span>
@@ -684,11 +684,11 @@ export default function AIAssistantPage() {
               <div className="flex-1 overflow-y-auto mb-4 space-y-4 min-h-0">
               {messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center">
-                  <div className="p-4 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-full mb-4">
-                    <Bot className="w-16 h-16 text-blue-600" />
+                  <div className="p-4 bg-gradient-to-br from-primary/10 to-primary/20 rounded-full mb-4">
+                    <Bot className="w-16 h-16 text-primary" />
                   </div>
                   <h3 className="text-xl font-semibold mb-2">欢迎使用 智能数据助手</h3>
-                  <p className="text-gray-600 mb-6 max-w-md">
+                  <p className="text-muted-foreground mb-6 max-w-md">
                     我可以帮助您分析数据、回答问题、生成报告。请输入您的问题开始对话。
                   </p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl">
@@ -722,13 +722,13 @@ export default function AIAssistantPage() {
                     >
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
                         message.role === 'user'
-                          ? 'bg-gradient-to-br from-blue-500 to-indigo-600 text-white'
-                          : 'bg-gradient-to-br from-gray-100 to-gray-200'
+                          ? 'bg-gradient-to-br from-primary to-primary/80 text-primary-foreground'
+                          : 'bg-muted text-muted-foreground'
                       }`}>
                         {message.role === 'user' ? (
                           <User className="w-5 h-5" />
                         ) : (
-                          <Bot className="w-5 h-5 text-gray-700" />
+                          <Bot className="w-5 h-5 text-foreground" />
                         )}
                       </div>
                       <div className={`flex-1 max-w-[75%] ${
@@ -736,13 +736,13 @@ export default function AIAssistantPage() {
                       }`}>
                         <div className={`inline-block p-4 rounded-2xl ${
                           message.role === 'user'
-                            ? 'bg-gradient-to-br from-blue-500 to-indigo-600 text-white'
-                            : 'bg-white border border-gray-300 shadow-sm'
+                            ? 'bg-gradient-to-br from-primary to-primary/80 text-primary-foreground'
+                            : 'bg-card border border-border shadow-sm'
                         }`}>
                           {message.role === 'user' ? (
                             <p className="text-base whitespace-pre-wrap">{message.content}</p>
                           ) : (
-                            <div className="text-gray-800">
+                            <div className="text-foreground">
                               {/* 🔴 第三道防线：检测工具调用失败并显示警告 */}
                               {(() => {
                                 const hasSystemError = message.content.includes('SYSTEM ERROR') || 
@@ -752,11 +752,11 @@ export default function AIAssistantPage() {
                                                        (message.metadata as any)?.tool_status === 'error'
                                 if (hasSystemError) {
                                   return (
-                                    <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
-                                      <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                                    <div className="mb-3 p-3 bg-destructive/10 border border-destructive/30 rounded-lg flex items-start gap-2">
+                                      <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
                                       <div className="flex-1">
-                                        <p className="text-sm font-medium text-red-800">数据源连接失败</p>
-                                        <p className="text-xs text-red-600 mt-1">以下回答可能不准确，请检查数据源连接状态</p>
+                                        <p className="text-sm font-medium text-destructive">数据源连接失败</p>
+                                        <p className="text-xs text-destructive/80 mt-1">以下回答可能不准确，请检查数据源连接状态</p>
                                       </div>
                                     </div>
                                   )
@@ -769,14 +769,14 @@ export default function AIAssistantPage() {
                                 <div className="mb-3 space-y-2">
                                   {/* 工具调用状态 */}
                                   {(message.metadata as any).tool_calls && (message.metadata as any).tool_calls.length > 0 && (
-                                    <div className="text-xs bg-blue-50 border border-blue-200 rounded p-2">
-                                      <div className="font-medium text-blue-800 mb-1">工具调用:</div>
+                                    <div className="text-xs bg-primary/10 border border-primary/30 rounded p-2">
+                                      <div className="font-medium text-primary mb-1">工具调用:</div>
                                       <div className="space-y-1">
                                         {(message.metadata as any).tool_calls.map((tc: any, idx: number) => (
                                           <div key={idx} className="flex items-center gap-2">
-                                            <span className="text-blue-600">• {tc.name || 'unknown'}</span>
+                                            <span className="text-primary">• {tc.name || 'unknown'}</span>
                                             {tc.status === 'error' && (
-                                              <AlertTriangle className="w-3 h-3 text-red-500" />
+                                              <AlertTriangle className="w-3 h-3 text-destructive" />
                                             )}
                                           </div>
                                         ))}
@@ -786,9 +786,9 @@ export default function AIAssistantPage() {
                                   
                                   {/* 推理过程（默认展开） */}
                                   {message.metadata.reasoning && (
-                                    <details open className="text-xs bg-gray-50 border border-gray-200 rounded p-2">
-                                      <summary className="font-medium text-gray-700 cursor-pointer mb-1">推理过程</summary>
-                                      <p className="text-gray-600 mt-1 whitespace-pre-wrap">{message.metadata.reasoning}</p>
+                                    <details open className="text-xs bg-muted border border-border rounded p-2">
+                                      <summary className="font-medium text-foreground cursor-pointer mb-1">推理过程</summary>
+                                      <p className="text-muted-foreground mt-1 whitespace-pre-wrap">{message.metadata.reasoning}</p>
                                     </details>
                                   )}
                                 </div>
@@ -796,13 +796,13 @@ export default function AIAssistantPage() {
                               
                               {/* AI 正在思考提示（仅在加载中且该消息是最后一条AI消息时显示，置于推理过程上方） */}
                               {isLoading && message === messages.filter(m => m.role === 'assistant').pop() && (
-                                <div className="mb-3 inline-flex items-center gap-2 px-3 py-2 rounded-full bg-blue-50 border border-blue-200">
+                                <div className="mb-3 inline-flex items-center gap-2 px-3 py-2 rounded-full bg-primary/10 border border-primary/30">
                                   <div className="flex gap-1">
-                                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"></div>
-                                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce delay-75"></div>
-                                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce delay-150"></div>
+                                    <div className="w-2 h-2 bg-primary rounded-full animate-bounce"></div>
+                                    <div className="w-2 h-2 bg-primary rounded-full animate-bounce delay-75"></div>
+                                    <div className="w-2 h-2 bg-primary rounded-full animate-bounce delay-150"></div>
                                   </div>
-                                  <span className="text-sm text-gray-600">AI 正在思考...</span>
+                                  <span className="text-sm text-muted-foreground">AI 正在思考...</span>
                                 </div>
                               )}
 
@@ -823,7 +823,7 @@ export default function AIAssistantPage() {
                             </div>
                           )}
                         </div>
-                        <div className={`text-xs text-gray-500 mt-1 px-2 ${
+                        <div className={`text-xs text-muted-foreground mt-1 px-2 ${
                           message.role === 'user' ? 'text-right' : ''
                         }`}>
                           {message.timestamp.toLocaleTimeString()}
@@ -895,9 +895,9 @@ export default function AIAssistantPage() {
                       key={index}
                       className={cn(
                         "flex items-center gap-2 p-2 rounded text-xs transition-colors",
-                        uploadedFile.status === 'completed' && "bg-green-50 dark:bg-green-950/20",
-                        uploadedFile.status === 'error' && "bg-red-50 dark:bg-red-950/20",
-                        uploadedFile.status === 'uploading' && "bg-blue-50 dark:bg-blue-950/20",
+                        uploadedFile.status === 'completed' && "bg-green-500/10",
+                        uploadedFile.status === 'error' && "bg-destructive/10",
+                        uploadedFile.status === 'uploading' && "bg-primary/10",
                         uploadedFile.status === 'pending' && "bg-muted/30"
                       )}
                     >
@@ -905,10 +905,10 @@ export default function AIAssistantPage() {
                         <CheckCircle className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
                       )}
                       {uploadedFile.status === 'error' && (
-                        <AlertCircle className="h-3.5 w-3.5 text-red-600 flex-shrink-0" />
+                        <AlertCircle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />
                       )}
                       {uploadedFile.status === 'uploading' && (
-                        <Loader2 className="h-3.5 w-3.5 text-blue-600 animate-spin flex-shrink-0" />
+                        <Loader2 className="h-3.5 w-3.5 text-primary animate-spin flex-shrink-0" />
                       )}
                       {uploadedFile.status === 'pending' && (
                         <FileText className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
@@ -922,7 +922,7 @@ export default function AIAssistantPage() {
                           variant="ghost"
                           size="sm"
                           onClick={() => retryUpload(index)}
-                          className="h-auto px-1.5 py-0.5 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-100"
+                          className="h-auto px-1.5 py-0.5 text-xs text-primary hover:text-primary/80 hover:bg-primary/10"
                         >
                           重试
                         </Button>

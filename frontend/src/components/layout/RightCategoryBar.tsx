@@ -69,16 +69,16 @@ export function RightCategoryBar({ collapsed, onToggle }: RightCategoryBarProps)
   return (
     <div
       className={cn(
-        'h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-700/50 transition-all duration-300 flex flex-col',
+        'h-full bg-background border-r border-border transition-all duration-300 flex flex-col',
         collapsed ? 'w-0 overflow-hidden' : 'w-60'
       )}
     >
       {/* 标题栏 */}
-      <div className="h-14 flex items-center justify-between px-4 border-b border-slate-200 dark:border-slate-700/50">
-        <span className="font-semibold text-slate-900 dark:text-white">智能数据Agent</span>
+      <div className="h-14 flex items-center justify-between px-4 border-b border-border">
+        <span className="font-semibold text-foreground">智能数据Agent</span>
         <button
           onClick={onToggle}
-          className="w-6 h-6 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          className="w-6 h-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
@@ -89,7 +89,7 @@ export function RightCategoryBar({ collapsed, onToggle }: RightCategoryBarProps)
         {navGroups.map((group, groupIndex) => (
           <div key={group.label} className={cn(groupIndex > 0 && 'mt-6')}>
             <div className="px-3 mb-2">
-              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 {group.label}
               </span>
             </div>
@@ -106,8 +106,8 @@ export function RightCategoryBar({ collapsed, onToggle }: RightCategoryBarProps)
                     className={cn(
                       'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200',
                       isActive
-                        ? 'bg-gradient-modern-primary text-white shadow-sm'
-                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        ? 'bg-primary text-primary-foreground shadow-sm'
+                        : 'text-foreground hover:bg-muted'
                     )}
                   >
                     <Icon className="h-4 w-4 flex-shrink-0" />
@@ -121,8 +121,8 @@ export function RightCategoryBar({ collapsed, onToggle }: RightCategoryBarProps)
       </nav>
 
       {/* 底部版本信息 */}
-      <div className="p-4 border-t border-slate-200 dark:border-slate-700/50">
-        <p className="text-xs text-slate-400 text-center">
+      <div className="p-4 border-t border-border">
+        <p className="text-xs text-muted-foreground text-center">
           智能数据Agent V4
         </p>
       </div>
@@ -135,7 +135,7 @@ export function RightCategoryBarToggle({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="fixed left-16 top-1/2 -translate-y-1/2 w-6 h-12 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-r-lg flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-sm z-10"
+      className="fixed left-16 top-1/2 -translate-y-1/2 w-6 h-12 bg-card border border-border rounded-r-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shadow-sm z-10"
     >
       <ChevronRight className="h-4 w-4" />
     </button>

@@ -48,6 +48,7 @@ export type StreamEventType =
   | 'chart_config'     // ECharts 图表配置
   | 'processing_step'  // AI处理步骤（用于展示推理过程）
   | 'step_update'      // 步骤更新事件（用于更新正在进行的步骤）
+  | 'connection_init'  // SSE 连接初始化事件
   | 'error'            // 错误信息
   | 'done';            // 结束信号
 
@@ -67,6 +68,7 @@ export interface StepChartData {
   chart_image?: string;
   chart_type?: string;
   title?: string;
+  chart_index?: number;  // 图表索引（用于支持多图表）
 }
 
 // 步骤内容数据
@@ -94,6 +96,8 @@ export interface ProcessingStep {
   content_preview?: string;        // 正在生成的内容预览
   // 🔧 新增：流式输出标识（用于打字机效果）
   streaming?: boolean;             // 是否正在流式输出中
+  // 新增：ECharts 图表配置选项
+  echart_option?: Record<string, any>;  // ECharts 图表配置
 }
 
 export interface StreamEvent {
@@ -200,6 +204,7 @@ export interface V2DoneData {
   processing_steps: string[];
   tenant_id: string;
   processing_time_ms?: number;
+  chart_config?: string | Record<string, any>;  // 图表配置（JSON字符串或对象）
 }
 
 /**

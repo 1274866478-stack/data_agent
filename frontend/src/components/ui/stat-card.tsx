@@ -14,11 +14,11 @@ import * as React from 'react'
 
 // 渐变色配置
 const gradientVariants = {
-  primary: 'bg-gradient-modern-primary',
-  secondary: 'bg-gradient-modern-secondary',
-  accent: 'bg-gradient-modern-accent',
-  success: 'bg-gradient-modern-success',
-  warning: 'bg-gradient-modern-warning',
+  primary: 'bg-gradient-to-r from-violet-600 to-purple-600',
+  secondary: 'bg-gradient-to-r from-pink-600 to-rose-600',
+  accent: 'bg-gradient-to-r from-blue-600 to-cyan-600',
+  success: 'bg-gradient-to-r from-green-600 to-emerald-600',
+  warning: 'bg-gradient-to-r from-orange-600 to-amber-600',
 } as const
 
 // 背景色配置（浅色渐变）
@@ -32,11 +32,11 @@ const bgVariants = {
 
 // 图标背景色
 const iconBgVariants = {
-  primary: 'bg-violet-100 dark:bg-violet-500/20 text-violet-600 dark:text-violet-400',
-  secondary: 'bg-pink-100 dark:bg-pink-500/20 text-pink-600 dark:text-pink-400',
-  accent: 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400',
-  success: 'bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-400',
-  warning: 'bg-orange-100 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400',
+  primary: 'bg-violet-500/20 text-violet-600 dark:text-violet-400',
+  secondary: 'bg-pink-500/20 text-pink-600 dark:text-pink-400',
+  accent: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
+  success: 'bg-green-500/20 text-green-600 dark:text-green-400',
+  warning: 'bg-orange-500/20 text-orange-600 dark:text-orange-400',
 } as const
 
 export interface StatCardProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -62,15 +62,15 @@ const StatCard = React.forwardRef<HTMLDivElement, StatCardProps>(
     ...props 
   }, ref) => {
     const TrendIcon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : Minus
-    const trendColor = trend === 'up' 
-      ? 'text-green-600 dark:text-green-400' 
-      : trend === 'down' 
-        ? 'text-red-600 dark:text-red-400' 
-        : 'text-slate-500'
+    const trendColor = trend === 'up'
+      ? 'text-green-600 dark:text-green-400'
+      : trend === 'down'
+        ? 'text-destructive dark:text-destructive'
+        : 'text-muted-foreground'
 
     const cardClasses = variant === 'filled'
       ? cn(gradientVariants[gradient], 'text-white')
-      : cn('bg-gradient-to-br', bgVariants[gradient], 'border border-slate-200 dark:border-slate-700')
+      : cn('bg-gradient-to-br', bgVariants[gradient], 'border border-border')
 
     return (
       <div
@@ -86,13 +86,13 @@ const StatCard = React.forwardRef<HTMLDivElement, StatCardProps>(
           <div className="flex-1">
             <p className={cn(
               'text-sm font-medium mb-1',
-              variant === 'filled' ? 'text-white/80' : '!text-slate-600 dark:!text-slate-400'
+              variant === 'filled' ? 'text-white/80' : 'text-muted-foreground'
             )}>
               {title}
             </p>
             <p className={cn(
               'text-3xl font-bold',
-              variant === 'filled' ? 'text-white' : '!text-black dark:!text-white'
+              variant === 'filled' ? 'text-white' : 'text-foreground'
             )}>
               {value}
             </p>

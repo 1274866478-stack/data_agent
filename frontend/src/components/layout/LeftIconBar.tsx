@@ -43,7 +43,7 @@ export function LeftIconBar() {
     <div className="w-16 h-full bg-gradient-to-b from-slate-900 to-slate-800 flex flex-col items-center py-4 border-r border-slate-700/50">
       {/* Logo 区域 */}
       <div className="w-10 h-10 rounded-xl bg-gradient-modern-primary flex items-center justify-center mb-6">
-        <span className="text-white dark:text-slate-100 font-bold text-lg">D</span>
+        <span className="text-primary-foreground font-bold text-lg">D</span>
       </div>
 
       {/* 主导航 */}
@@ -59,14 +59,14 @@ export function LeftIconBar() {
               className={cn(
                 'group relative w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200',
                 isActive
-                  ? 'bg-white/10 text-white'
-                  : 'text-slate-300 hover:text-white hover:bg-white/5'
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:text-accent-foreground hover:bg-accent/50'
               )}
             >
               <Icon className="h-5 w-5" />
               
               {/* Tooltip */}
-              <div className="absolute left-full ml-3 px-2 py-1 bg-slate-900 text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-3 px-2 py-1 bg-popover text-popover-foreground text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 shadow-md border border-border">
                 {item.label}
               </div>
 
@@ -92,14 +92,14 @@ export function LeftIconBar() {
               className={cn(
                 'group relative w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200',
                 isActive
-                  ? 'bg-white/10 text-white'
-                  : 'text-slate-300 hover:text-white hover:bg-white/5'
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:text-accent-foreground hover:bg-accent/50'
               )}
             >
               <Icon className="h-5 w-5" />
               
               {/* Tooltip */}
-              <div className="absolute left-full ml-3 px-2 py-1 bg-slate-900 text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+              <div className="absolute left-full ml-3 px-2 py-1 bg-popover text-popover-foreground text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 shadow-md border border-border">
                 {item.label}
               </div>
             </Link>
@@ -108,7 +108,7 @@ export function LeftIconBar() {
 
         {/* 用户头像 */}
         <div className="w-10 h-10 rounded-full bg-gradient-modern-accent flex items-center justify-center mt-2 cursor-pointer hover:ring-2 hover:ring-white/20 transition-all">
-          <User className="h-5 w-5 text-white dark:text-slate-100" />
+          <User className="h-5 w-5 text-primary-foreground" />
         </div>
       </div>
     </div>

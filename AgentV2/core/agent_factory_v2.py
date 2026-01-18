@@ -123,6 +123,7 @@ class AgentFactory:
                     api_key=api_key,
                     base_url=base_url,
                     max_tokens=4000,  # 🔧 增加 token 限制以确保完整输出图表配置
+                    streaming=True,  # 🔧 关键：启用 token 级别的流式输出
                     # 🔧 尝试绕过 DeepSeek 内容审查
                     extra_body={
                         "disable_strict_mode": True,
@@ -139,11 +140,13 @@ class AgentFactory:
                     temperature=self.temperature,
                     api_key=api_key,
                     base_url=base_url,
+                    streaming=True,  # 🔧 关键：启用流式输出
                 )
             else:
                 self._cached_llm = ChatOpenAI(
                     model=self.model,
                     temperature=self.temperature,
+                    streaming=True,  # 🔧 关键：启用流式输出
                 )
 
         return self._cached_llm

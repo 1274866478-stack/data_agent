@@ -197,8 +197,8 @@ export default function ReportsPage() {
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">报告中心</h1>
-          <p className="text-gray-300 mt-2">查看和下载系统性能报告与分析报告</p>
+          <h1 className="text-3xl font-bold text-foreground">报告中心</h1>
+          <p className="text-muted-foreground mt-2">查看和下载系统性能报告与分析报告</p>
         </div>
         <Button>
           <Calendar className="h-4 w-4 mr-2" />

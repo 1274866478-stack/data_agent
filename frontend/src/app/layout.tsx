@@ -42,12 +42,28 @@
  */
 
 import './globals.css'
-import { Inter } from 'next/font/google'
+import { Fira_Sans, Fira_Code } from 'next/font/google'
 import { ClerkProviderWrapper } from '@/components/auth/ClerkProvider'
 import { AuthProvider } from '@/components/auth/AuthContext'
 import { ThemeProvider } from '@/components/theme'
 
-const inter = Inter({ subsets: ['latin'] })
+/**
+ * Fira Sans - 主要正文字体，适合数据密集型界面
+ * Fira Code - 代码和等宽字体，用于数据展示
+ */
+const firaSans = Fira_Sans({
+  subsets: ['latin'],
+  variable: '--font-fira-sans',
+  display: 'swap',
+  weight: ['300', '400', '500', '600', '700'],
+})
+
+const firaCode = Fira_Code({
+  subsets: ['latin'],
+  variable: '--font-fira-code',
+  display: 'swap',
+  weight: ['400', '500', '600'],
+})
 
 export const metadata = {
   title: '智能数据Agent V4 - Multi-tenant SaaS Platform',
@@ -65,8 +81,8 @@ export default function RootLayout({
                             process.env.NEXT_PUBLIC_ENVIRONMENT === 'development'
 
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
-      <body className={inter.className}>
+    <html lang="zh-CN" suppressHydrationWarning className={`${firaSans.variable} ${firaCode.variable}`}>
+      <body className="font-sans antialiased">
         <ThemeProvider>
           {clerkPublishableKey ? (
             <ClerkProviderWrapper publishableKey={clerkPublishableKey}>

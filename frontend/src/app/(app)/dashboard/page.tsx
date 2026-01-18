@@ -66,8 +66,8 @@ export default function DashboardPage() {
       {/* 页面标题 */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">仪表板</h1>
-          <p className="text-gray-200">
+          <h1 className="text-3xl font-bold text-foreground">仪表板</h1>
+          <p className="text-muted-foreground">
             查看您的数据源状态和系统概览
           </p>
         </div>
@@ -91,17 +91,17 @@ export default function DashboardPage() {
           <GradientCard gradient="accent" className="cursor-pointer group h-full">
             <GradientCardHeader className="pb-3">
               <GradientCardTitle className="flex items-center gap-2 text-base">
-                <div className="p-2 bg-blue-100 dark:bg-blue-500/20 rounded-lg">
-                  <Database className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <Database className="h-5 w-5 text-primary" />
                 </div>
                 数据源管理
               </GradientCardTitle>
             </GradientCardHeader>
             <GradientCardContent>
-              <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
+              <p className="text-sm text-foreground mb-3">
                 连接和管理您的数据库
               </p>
-              <div className="flex items-center text-sm text-blue-600 dark:text-blue-400 font-medium group-hover:underline">
+              <div className="flex items-center text-sm text-primary font-medium group-hover:underline">
                 前往管理 <ArrowRight className="h-4 w-4 ml-1 transition-transform group-hover:translate-x-1" />
               </div>
             </GradientCardContent>
@@ -119,7 +119,7 @@ export default function DashboardPage() {
               </GradientCardTitle>
             </GradientCardHeader>
             <GradientCardContent>
-              <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
+              <p className="text-sm text-foreground mb-3">
                 上传和管理您的文档
               </p>
               <div className="flex items-center text-sm text-green-600 dark:text-green-400 font-medium group-hover:underline">
@@ -140,7 +140,7 @@ export default function DashboardPage() {
               </GradientCardTitle>
             </GradientCardHeader>
             <GradientCardContent>
-              <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
+              <p className="text-sm text-foreground mb-3">
                 智能数据分析对话
               </p>
               <div className="flex items-center text-sm text-violet-600 dark:text-violet-400 font-medium group-hover:underline">
@@ -161,7 +161,7 @@ export default function DashboardPage() {
               </GradientCardTitle>
             </GradientCardHeader>
             <GradientCardContent>
-              <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
+              <p className="text-sm text-foreground mb-3">
                 查看分析报告图表
               </p>
               <div className="flex items-center text-sm text-orange-600 dark:text-orange-400 font-medium group-hover:underline">
