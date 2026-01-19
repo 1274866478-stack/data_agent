@@ -65,17 +65,16 @@
 
 'use client'
 
-import { useState, useRef } from 'react'
-import { useForm } from 'react-hook-form'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { ErrorMessage } from '@/components/ui/error-message'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
-import { ErrorMessage } from '@/components/ui/error-message'
-import { useDataSourceStore, CreateDataSourceRequest } from '@/store/dataSourceStore'
-import { FileUp, Database, Server } from 'lucide-react'
+import { CreateDataSourceRequest, useDataSourceStore } from '@/store/dataSourceStore'
+import { Database, FileUp, Server } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { useForm } from 'react-hook-form'
 
 // 支持的数据库类型配置
 const SUPPORTED_DATABASE_TYPES = {
@@ -649,9 +648,14 @@ function FileUploadFormContent({
                 </p>
               </div>
               <div className="flex justify-center gap-2">
-                <label className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground h-8 px-3 cursor-pointer">
+                <label 
+                  htmlFor="file-replace-input"
+                  className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground h-8 px-3 cursor-pointer"
+                >
                   更换文件
                   <input
+                    id="file-replace-input"
+                    ref={fileInputRef}
                     type="file"
                     accept={getSupportedExtensions()}
                     onChange={handleFileInputChange}
@@ -670,12 +674,17 @@ function FileUploadFormContent({
               </div>
             </div>
           ) : (
-            <label className="block space-y-4 cursor-pointer">
+            <div 
+              className="block space-y-4 cursor-pointer"
+              onClick={() => fileInputRef.current?.click()}
+            >
               <input
+                id="file-upload-input"
+                ref={fileInputRef}
                 type="file"
                 accept={getSupportedExtensions()}
                 onChange={handleFileInputChange}
-                className="sr-only"
+                className="hidden"
               />
               <div className="text-4xl">📁</div>
               <div>
@@ -689,7 +698,7 @@ function FileUploadFormContent({
               <p className="text-xs text-gray-400">
                 文件大小限制：表格文件 100MB，数据库文件 500MB
               </p>
-            </label>
+            </div>
           )}
         </div>
         {fileError && (

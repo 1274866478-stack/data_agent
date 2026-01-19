@@ -130,17 +130,30 @@ GROUP BY status;
 **🚨 占比类问题的处理流程**：
 1. **识别问题类型**：包含"占比"、"比例"、"百分比"等关键词
 2. **调用 get_schema**：了解表结构，找到分类字段
-3. **使用 CASE WHEN**：将数值或状态转换为可读的分类名称
-4. **GROUP BY 分类**：按分类字段分组统计
+3. **使用一次 GROUP BY 聚合查询**：按分类字段分组统计，一次性获取所有分类的计数
+4. **可选：使用 CASE WHEN**：将数值或状态转换为可读的分类名称
 5. **生成饼图**：必须输出 `[CHART_START]...[CHART_END]` 饼图配置
 
-**❌ 错误做法**：
+**🔴🔴🔴 绝对禁止的错误做法**：
 ```sql
--- ❌ 错误：只返回总数，无法生成占比图
+-- ❌ 错误1：只返回某一类的总数，无法计算占比
 SELECT COUNT(*) FROM inventory WHERE quantity <= 0;
 
--- ❌ 错误：只返回单一分类，没有完整分布
+-- ❌ 错误2：执行多次COUNT查询来获取各类总数（绝对禁止！）
+-- 第一次查询：SELECT COUNT(*) FROM customers WHERE region_id = 5;
+-- 第二次查询：SELECT COUNT(*) FROM customers WHERE region_id = 3;
+-- 这样做效率低且容易出错！必须用一次GROUP BY查询！
+
+-- ❌ 错误3：只返回单一分类，没有完整分布
 SELECT COUNT(*) FROM inventory WHERE quantity <= reorder_point;
+```
+
+**✅ 正确做法：使用一次 GROUP BY 查询**：
+```sql
+-- ✅ 正确：一次查询获取所有分类的数量
+SELECT region_id as category, COUNT(*) as value
+FROM customers
+GROUP BY region_id;
 ```
 
 ### 🛒 关联分析/购物篮分析
