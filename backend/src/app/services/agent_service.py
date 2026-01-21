@@ -107,6 +107,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# 导入统计分析服务
+try:
+    from .stats_analysis_service import get_stats_service
+    _stats_analysis_available = True
+    logger.info("✅ 统计分析服务已加载")
+except ImportError as e:
+    _stats_analysis_available = False
+    get_stats_service = None
+    logger.warning(f"⚠️ 统计分析服务导入失败: {e}，统计功能将不可用")
+
 # 添加 Agent 目录到 Python 路径
 # agent_service.py 位于 backend/src/app/services/
 # 需要向上到项目根目录，然后进入 Agent 目录
@@ -407,6 +417,86 @@ def safe_get_attr(obj: Any, attr: str, default: Any = None) -> Any:
         return default
 
 
+def _format_stats_analysis(stats: Dict[str, Any]) -> str:
+    """
+    将统计分析结果格式化为关键数据点摘要（非固定模板）
+
+    关键设计原则：
+    1. 只提供"值得报告"的关键数据点
+    2. 根据数据特征动态选择报告内容
+    3. 避免机械式列出所有统计指标
+    4. 让 LLM 基于这些关键点生成动态分析
+
+    Args:
+        stats: 统计分析结果字典
+
+    Returns:
+        格式化后的关键数据点摘要
+    """
+    if not stats:
+        return ""
+
+    key_points = []
+
+    # 1. 基础信息（始终提供）
+    basic_stats = stats.get('basic_stats', {})
+    if basic_stats:
+        count = basic_stats.get('count', 0)
+        total = basic_stats.get('total', 0)
+        mean = basic_stats.get('mean', 0)
+        key_points.append(f"数据量: {count} 条, 总计: {total}, 平均: {mean}")
+
+    # 2. 趋势分析（仅当有明显趋势时报告）
+    trend = stats.get('trend_analysis', {})
+    if trend and 'error' not in trend:
+        total_growth = trend.get('total_growth_percent', 0)
+        volatility = trend.get('volatility', 0)
+        trend_dir = trend.get('trend_direction', '')
+
+        # 只有当变化幅度 > 5% 或波动性 > 10% 时才报告趋势
+        if abs(total_growth) > 5 or volatility > 10:
+            key_points.append(f"趋势: {trend_dir} {total_growth:+.1f}%, 波动性: {volatility:.1f}%")
+
+    # 3. 异常值（仅当存在异常值时报告）
+    extremes = stats.get('extremes', {})
+    if extremes:
+        outlier_count = extremes.get('outliers_count', 0)
+        if outlier_count > 0:
+            key_points.append(f"检测到 {outlier_count} 个异常值")
+
+    # 4. 极值（仅当极值与平均值差异较大时报告）
+    if extremes and basic_stats:
+        max_val = extremes.get('max_value')
+        min_val = extremes.get('min_value')
+        mean_val = basic_stats.get('mean', 0)
+
+        # 计算极值与平均值的偏离程度
+        if max_val and mean_val > 0:
+            max_deviation = abs(max_val - mean_val) / mean_val * 100
+            if max_deviation > 30:  # 最大值偏离平均值超过30%
+                key_points.append(f"峰值显著: {max_val} (偏离平均 {max_deviation:.0f}%)")
+
+        if min_val and mean_val > 0:
+            min_deviation = abs(min_val - mean_val) / mean_val * 100
+            if min_deviation > 30:  # 最小值偏离平均值超过30%
+                key_points.append(f"谷值显著: {min_val} (偏离平均 {min_deviation:.0f}%)")
+
+    # 5. 数据稳定性（仅当变异系数较高时报告）
+    if basic_stats:
+        cv_percent = basic_stats.get('cv_percent', 0)
+        if cv_percent > 20:  # 变异系数超过20%表示数据不稳定
+            key_points.append(f"数据波动较大 (变异系数: {cv_percent:.1f}%)")
+
+    # 如果没有关键数据点，提供最基本的信息
+    if not key_points:
+        count = basic_stats.get('count', 'N/A')
+        total = basic_stats.get('total', 'N/A')
+        mean = basic_stats.get('mean', 'N/A')
+        return f"\n【统计】 {count} 条数据, 总计 {total}, 平均 {mean}" if basic_stats else ""
+
+    return "\n【关键数据点】\n" + "\n".join(f"• {p}" for p in key_points)
+
+
 def convert_agent_response_to_query_response(
     agent_response: VisualizationResponse,
     query_id: str,
@@ -670,13 +760,47 @@ def convert_agent_response_to_query_response(
                 }
             )
 
+    # 🆕 深度统计分析增强：从 response 对象获取统计结果，追加到 explanation 中
+    # 尝试从 response 对象的 _stats_analysis 属性获取统计结果
+    stats_analysis = getattr(agent_response, '_stats_analysis', None)
+
+    # 调试日志
+    logger.info(f"🔍 [调试] 检查统计结果: stats_analysis 是否存在 = {stats_analysis is not None}")
+    if stats_analysis:
+        logger.info(f"🔍 [调试] 统计结果类型: {type(stats_analysis)}, 键: {list(stats_analysis.keys()) if isinstance(stats_analysis, dict) else 'N/A'}")
+
+    if not stats_analysis and metadata and isinstance(metadata, dict):
+        # 兼容旧方式：从 metadata 中获取
+        stats_analysis = metadata.get('stats_analysis')
+        logger.info(f"🔍 [调试] 从 metadata 获取统计结果: {stats_analysis is not None}")
+
+    if stats_analysis and isinstance(stats_analysis, dict) and 'error' not in stats_analysis:
+        # 生成统计结果的可读文本
+        stats_text = _format_stats_analysis(stats_analysis)
+
+        # 调试日志
+        logger.info(f"🔍 [调试] 格式化后统计文本长度: {len(stats_text)}, 前100字符: {stats_text[:100]}")
+
+        # 如果 stats_text 不为空，追加到 explanation
+        if stats_text and explanation:
+            # 检查是否需要在前面添加分隔符
+            if not explanation.endswith('\n'):
+                explanation += '\n\n'
+            explanation += stats_text
+            logger.info("✅ [统计分析] 已将统计结果追加到 explanation 中")
+    else:
+        if stats_analysis:
+            logger.warning(f"⚠️ [统计分析] 统计结果包含错误: {stats_analysis.get('error', 'Unknown error')}")
+        else:
+            logger.info("ℹ️ [统计分析] 没有可用的统计结果需要追加")
+
     # 🛡️ 安全访问所有属性
     sql = safe_get(agent_response, 'sql', '')
     data_obj = safe_get(agent_response, 'data')
     row_count = 0
     if data_obj:
         row_count = safe_get(data_obj, 'row_count', 0)
-    
+
     error = safe_get(agent_response, 'error')
     echarts_option = safe_get(agent_response, 'echarts_option')
     
@@ -1014,13 +1138,49 @@ async def run_agent_query(
             )
             logger.info("🔧 [Router] Detected FILE MODE. Locking SQL tools.")
         else:
-            # 🛢️ DATABASE MODE: Standard SQL behavior
+            # 🛢️ DATABASE MODE: Standard SQL behavior with enhanced analysis requirements
             system_instruction = (
                 "【SYSTEM MODE: DATABASE ANALYSIS】\n"
                 "You are connected to a SQL database. \n"
                 "RULES:\n"
                 "1. Use `list_available_tables` or `list_tables` to see available tables first.\n"
-                "2. Query the relevant tables using `execute_sql_safe` or `query_database` tools."
+                "2. Query the relevant tables using `execute_sql_safe` or `query_database` tools.\n"
+                "\n\n🔴【CRITICAL: DEEP DATA ANALYSIS REQUIREMENT】\n"
+                "After executing SQL, you MUST provide detailed analysis including:\n"
+                "\n"
+                "**1. Statistical Metrics (必填)**:\n"
+                "- Total, Mean, Median, Standard Deviation\n"
+                "- Min/Max values and Range\n"
+                "- Growth rates (同比/环比) if time series data\n"
+                "- Coefficient of Variation (data stability)\n"
+                "\n"
+                "**2. Trend & Pattern Analysis (必填)**:\n"
+                "- Overall trend direction (上升/下降/平稳)\n"
+                "- Key fluctuations and volatility\n"
+                "- Seasonal patterns (if applicable)\n"
+                "- Outliers and anomalies detection\n"
+                "\n"
+                "**3. Numerical Insights (必填)**:\n"
+                "- What the numbers actually mean\n"
+                "- Percentage changes and comparisons\n"
+                "- Rankings (top/bottom performers)\n"
+                "- Correlations between metrics\n"
+                "\n"
+                "**4. Business Intelligence (必填)**:\n"
+                "- Actionable recommendations\n"
+                "- Risk identification\n"
+                "- Opportunity detection\n"
+                "- Strategic suggestions\n"
+                "\n"
+                "⚠️ Example format for time series:\n"
+                "• 总销售额：X 万元，平均每月 Y 万元\n"
+                "• 整体趋势：上升/下降 Z%（从 A 万增长到 B 万）\n"
+                "• 峰值：C 万元（某月），谷值：D 万元（某月）\n"
+                "• 波动性：标准差 E，变异系数 F%\n"
+                "• 建议：基于以上发现...\n"
+                "\n"
+                "⚠️ Even for simple queries, calculate and present statistics.\n"
+                "⚠️ Do NOT just list data rows - provide insights!\n"
             )
             logger.info("🛢️ [Router] Detected DATABASE MODE.")
         
@@ -1144,12 +1304,42 @@ async def run_agent_query(
                 )
                 logger.info(f"⚠️ [QA] 错误记录已保存 (Agent返回错误: {_response_error[:100]})")
 
+        # 🆕 深度统计分析集成
+        stats_result = None  # 在外部变量中保存统计结果
+        if _stats_analysis_available and response and getattr(response, 'success', False):
+            try:
+                # 获取查询数据
+                data_obj = getattr(response, 'data', None)
+                if data_obj and hasattr(data_obj, 'rows') and data_obj.rows:
+                    # 准备数据格式
+                    data_for_stats = {
+                        "columns": list(data_obj.columns) if hasattr(data_obj, 'columns') else [],
+                        "rows": data_obj.rows
+                    }
+
+                    # 调用统计分析服务
+                    stats_service = get_stats_service()
+                    stats_result = stats_service.analyze_query_result(data_for_stats)
+
+                    # 将统计结果添加到 response 对象中（使用私有属性避免冲突）
+                    if stats_result and 'error' not in stats_result:
+                        setattr(response, '_stats_analysis', stats_result)
+                        logger.info(
+                            "✅ [统计分析] 深度统计指标计算完成",
+                            extra={
+                                "stats_basic": stats_result.get('basic_stats', {}),
+                                "stats_trend": stats_result.get('trend_analysis', {})
+                            }
+                        )
+            except Exception as stats_error:
+                logger.warning(f"统计分析失败（非致命）: {stats_error}", exc_info=True)
+
         # 恢复原始配置（只有当 original_url 被设置时才恢复）
         if original_url is not None:
             from config import config
             logger.info("Restoring original Agent database_url")
             config.database_url = original_url
-        
+
         return response
     
     except Exception as e:

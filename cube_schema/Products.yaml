@@ -1,0 +1,300 @@
+# Products Cube - 商品语义层定义
+#
+# 此文件定义了商品相关的语义层，包括商品度量和维度
+# Cube.js 会根据此定义自动生成优化的 SQL 查询
+
+cube: Products
+  # 数据源配置
+  sql_table: |
+    SELECT
+      p.id,
+      p.name,
+      p.category_id,
+      c.name as category_name,
+      p.sku,
+      p.price,
+      p.original_price,
+      p.stock,
+      p.sales_count,
+      p.rating,
+      p.review_count,
+      p.brand,
+      p.is_on_sale,
+      p.created_at,
+      ROUND((p.original_price - p.price) / p.original_price * 100, 2) as discount_percent,
+      CASE WHEN p.stock > 0 THEN true ELSE false END as in_stock,
+      CASE WHEN p.stock < 50 THEN true ELSE false END as low_stock
+    FROM products p
+    LEFT JOIN categories c ON p.category_id = c.id
+
+  # 度量 (Measures) - 可聚合的数值
+  measures:
+    - name: product_count
+      description: "商品总数"
+      type: count
+      sql: ${id}
+
+    - name: total_inventory
+      description: "总库存数量"
+      type: sum
+      sql: ${stock}
+
+    - name: total_sales
+      description: "总销量"
+      type: sum
+      sql: ${sales_count}
+
+    - name: avg_price
+      description: "平均价格"
+      type: avg
+      sql: ${price}
+
+    - name: avg_rating
+      description: "平均评分"
+      type: avg
+      sql: ${rating}
+
+    - name: total_reviews
+      description: "总评价数"
+      type: sum
+      sql: ${review_count}
+
+    - name: in_stock_products
+      description: "有货商品数"
+      type: count
+      sql: |
+        CASE
+          WHEN ${in_stock} THEN ${id}
+          ELSE NULL
+        END
+
+    - name: low_stock_products
+      description: "低库存商品数"
+      type: count
+      sql: |
+        CASE
+          WHEN ${low_stock} THEN ${id}
+          ELSE NULL
+        END
+
+    - name: out_of_stock_products
+      description: "缺货商品数"
+      type: count
+      sql: |
+        CASE
+          WHEN ${stock} = 0 THEN ${id}
+          ELSE NULL
+        END
+
+    - name: on_sale_products
+      description: "在售商品数"
+      type: count
+      sql: |
+        CASE
+          WHEN ${is_on_sale} THEN ${id}
+          ELSE NULL
+        END
+
+    - name: total_discount_value
+      description: "总折扣金额"
+      type: sum
+      sql: ${original_price} - ${price}
+
+    - name: avg_discount_percent
+      description: "平均折扣百分比"
+      type: avg
+      sql: ${discount_percent}
+
+    - name: high_rating_products
+      description: "高评分商品数（≥4.5）"
+      type: count
+      sql: |
+        CASE
+          WHEN ${rating} >= 4.5 THEN ${id}
+          ELSE NULL
+        END
+
+    - name: popular_products
+      description: "热销商品数（销量>100）"
+      type: count
+      sql: |
+        CASE
+          WHEN ${sales_count} > 100 THEN ${id}
+          ELSE NULL
+        END
+
+  # 维度 (Dimensions) - 用于分组和过滤
+  dimensions:
+    # 时间维度
+    - name: created_at
+      description: "创建时间"
+      type: time
+      sql: ${created_at}
+
+    # 字符串维度
+    - name: name
+      description: "商品名称"
+      type: string
+      sql: ${name}
+
+    - name: sku
+      description: "商品SKU"
+      type: string
+      sql: ${sku}
+
+    - name: brand
+      description: "品牌"
+      type: string
+      sql: ${brand}
+
+    - name: category_name
+      description: "分类名称"
+      type: string
+      sql: ${category_name}
+
+    - name: category_id
+      description: "分类ID"
+      type: number
+      sql: ${category_id}
+
+    # 数值维度
+    - name: price
+      description: "当前价格"
+      type: number
+      sql: ${price}
+
+    - name: original_price
+      description: "原价"
+      type: number
+      sql: ${original_price}
+
+    - name: stock
+      description: "库存数量"
+      type: number
+      sql: ${stock}
+
+    - name: sales_count
+      description: "销量"
+      type: number
+      sql: ${sales_count}
+
+    - name: rating
+      description: "评分"
+      type: number
+      sql: ${rating}
+
+    - name: review_count
+      description: "评价数"
+      type: number
+      sql: ${review_count}
+
+    - name: discount_percent
+      description: "折扣百分比"
+      type: number
+      sql: ${discount_percent}
+
+    # 布尔维度
+    - name: is_on_sale
+      description: "是否在售"
+      type: boolean
+      sql: ${is_on_sale}
+
+    - name: in_stock
+      description: "是否有库存"
+      type: boolean
+      sql: ${in_stock}
+
+    - name: low_stock
+      description: "是否低库存"
+      type: boolean
+      sql: ${low_stock}
+
+    - name: has_discount
+      description: "是否有折扣"
+      type: boolean
+      sql: ${price} < ${original_price}
+
+    # 计算维度
+    - name: price_range
+      description: "价格区间"
+      type: string
+      case:
+        when ${price} < 100 then '低价位'
+        when ${price} < 1000 then '中价位'
+        when ${price} < 5000 then '高价位'
+        else '奢侈价位'
+
+    - name: stock_status
+      description: "库存状态"
+      type: string
+      case:
+        when ${stock} = 0 then '缺货'
+        when ${stock} < 50 then '库存紧张'
+        when ${stock} < 200 then '库存充足'
+        else '库存丰富'
+
+    - name: rating_tier
+      description: "评级分层"
+      type: string
+      case:
+        when ${rating} >= 4.5 then '优秀'
+        when ${rating} >= 4.0 then '良好'
+        when ${rating} >= 3.5 then '一般'
+        else '较差'
+
+    - name: popularity_level
+      description: "热度等级"
+      type: string
+      case:
+        when ${sales_count} >= 500 then '爆款'
+        when ${sales_count} >= 200 then '热销'
+        when ${sales_count} >= 50 then '一般'
+        else '冷门'
+
+  # 预聚合（可选，用于提升性能）
+  pre_aggregations:
+    - name: products_category
+      refresh_key:
+        every: '2 hours'
+      measures:
+        - product_count
+        - total_inventory
+        - total_sales
+        - avg_price
+        - avg_rating
+      dimensions:
+        - category_name
+        - brand
+      rollup: true
+
+    - name: products_daily
+      refresh_key:
+        every: '1 hour'
+      measures:
+        - product_count
+        - total_inventory
+        - total_sales
+      time_dimension: created_at
+      granularity: day
+      rollup: true
+
+# 数据缓存配置（可选）
+cubes:
+  - name: Products
+    # 查询缓存 TTL（秒）
+    cache_max_queries: 1000
+    cache_max_import_duration: 3600
+
+    # 跨 Cube 联合（ joins ）定义
+    joins:
+      - name: Orders
+        sql: |
+          EXISTS (
+            SELECT 1 FROM order_items oi
+            WHERE oi.product_id = ${Products}.id
+          )
+        relationship: one_to_many
+
+      - name: Categories
+        sql: ${Products}.category_id = ${Categories}.id
+        relationship: many_to_one

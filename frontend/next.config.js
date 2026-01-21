@@ -1,7 +1,4 @@
 /** @type {import('next').NextConfig} */
-const withBundleAnalyzer = require('@next/bundle-analyzer')({
-  enabled: process.env.ANALYZE === 'true',
-})
 
 const nextConfig = {
   // 启用 standalone 模式以支持 Docker 部署
@@ -36,4 +33,17 @@ const nextConfig = {
   },
 }
 
-module.exports = withBundleAnalyzer(nextConfig)
+// 仅在生产构建且启用分析时使用 bundle-analyzer
+if (process.env.ANALYZE === 'true') {
+  try {
+    const withBundleAnalyzer = require('@next/bundle-analyzer')({
+      enabled: true,
+    })
+    module.exports = withBundleAnalyzer(nextConfig)
+  } catch (e) {
+    console.warn('Bundle analyzer not available, proceeding without it')
+    module.exports = nextConfig
+  }
+} else {
+  module.exports = nextConfig
+}

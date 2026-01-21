@@ -1,0 +1,172 @@
+# Orders Cube - 订单语义层定义
+#
+# 此文件定义了订单相关的语义层，包括度量和维度
+# Cube.js 会根据此定义自动生成优化的 SQL 查询
+
+cube: Orders
+  # 数据源配置
+  sql_table: |
+    SELECT
+      id,
+      tenant_id,
+      customer_id,
+      order_date,
+      status,
+      amount,
+      discount_amount,
+      tax_amount,
+      shipping_amount,
+      total_amount,
+      created_at,
+      updated_at
+    FROM orders
+    WHERE deleted_at IS NULL
+
+  # 多租户过滤器（自动注入）
+  filters:
+    - type: memory
+      expression: |
+        { TABLE }.tenant_id = { securityContext.tenant_id::string }
+
+  # 度量 (Measures) - 可聚合的数值
+  measures:
+    - name: total_revenue
+      description: "订单总收入（包含折扣、税费和运费）"
+      type: sum
+      sql: ${total_amount}
+
+    - name: net_revenue
+      description: "订单净收入（总收入减去折扣）"
+      type: sum
+      sql: ${total_amount} - ${discount_amount}
+
+    - name: order_count
+      description: "订单数量"
+      type: count
+      sql: ${id}
+
+    - name: unique_customers
+      description: "唯一客户数量"
+      type: countDistinct
+      sql: ${customer_id}
+
+    - name: average_order_value
+      description: "平均订单价值"
+      type: avg
+      sql: ${total_amount}
+
+    - name: discount_total
+      description: "折扣总额"
+      type: sum
+      sql: ${discount_amount}
+
+    - name: tax_total
+      description: "税费总额"
+      type: sum
+      sql: ${tax_amount}
+
+    - name: shipping_total
+      description: "运费总额"
+      type: sum
+      sql: ${shipping_amount}
+
+    - name: completed_orders
+      description: "已完成订单数量"
+      type: count
+      sql: |
+        CASE
+          WHEN ${status} = 'completed' THEN ${id}
+          ELSE NULL
+        END
+
+  # 维度 (Dimensions) - 用于分组和过滤
+  dimensions:
+    # 时间维度
+    - name: created_at
+      description: "订单创建时间"
+      type: time
+      sql: ${created_at}
+
+    - name: order_date
+      description: "订单日期"
+      type: time
+      sql: ${order_date}
+
+    - name: updated_at
+      description: "订单更新时间"
+      type: time
+      sql: ${updated_at}
+
+    # 字符串维度
+    - name: status
+      description: "订单状态"
+      type: string
+      sql: ${status}
+      # 定义可能的值（用于前端过滤）
+      enumerations:
+        - pending
+        - processing
+        - completed
+        - cancelled
+        - refunded
+
+    - name: customer_id
+      description: "客户ID"
+      type: string
+      sql: ${customer_id}
+
+    # 数值维度
+    - name: amount
+      description: "订单金额（未含税费和运费）"
+      type: number
+      sql: ${amount}
+
+    - name: discount_amount
+      description: "折扣金额"
+      type: number
+      sql: ${discount_amount}
+
+    - name: total_amount
+      description: "订单总金额"
+      type: number
+      sql: ${total_amount}
+
+    # 计算维度
+    - name: revenue_range
+      description: "收入范围分组"
+      type: string
+      case:
+        when ${total_amount} < 100 then 'Low'
+        when ${total_amount} < 500 then 'Medium'
+        when ${total_amount} < 1000 then 'High'
+        else 'Premium'
+
+    - name: is_completed
+      description: "是否已完成"
+      type: boolean
+      sql: ${status} = 'completed'
+
+  # 预聚合（可选，用于提升性能）
+  pre_aggregations:
+    - name: orders_daily
+      refresh_key:
+        every: '1 hour'
+      measures:
+        - total_revenue
+        - order_count
+      time_dimension: created_at
+      granularity: day
+      rollup: true
+
+# 数据缓存配置（可选）
+cubes:
+  - name: Orders
+    # 查询缓存 TTL（秒）
+    cache_max_queries: 1000
+    cache_max_import_duration: 3600
+
+    # 跨 Cube 联合（ joins ）定义
+    joins:
+      - name: Customers
+        sql: ${Orders}.customer_id = ${Customers}.id
+        relationship: one_to_many

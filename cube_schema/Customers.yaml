@@ -1,0 +1,201 @@
+# Customers Cube - 客户语义层定义
+#
+# 此文件定义了客户相关的语义层，包括客户度量和维度
+# Cube.js 会根据此定义自动生成优化的 SQL 查询
+
+cube: Customers
+  # 数据源配置
+  sql_table: |
+    SELECT
+      id,
+      username,
+      email,
+      phone,
+      gender,
+      birth_date,
+      registration_date,
+      vip_level,
+      total_spent,
+      is_active,
+      EXTRACT(YEAR FROM AGE(CURRENT_DATE, birth_date)) as age,
+      EXTRACT(YEAR FROM AGE(CURRENT_DATE, registration_date)) as membership_years
+    FROM users
+
+  # 度量 (Measures) - 可聚合的数值
+  measures:
+    - name: customer_count
+      description: "客户总数"
+      type: count
+      sql: ${id}
+
+    - name: active_customers
+      description: "活跃客户数"
+      type: count
+      sql: |
+        CASE
+          WHEN ${is_active} THEN ${id}
+          ELSE NULL
+        END
+
+    - name: total_revenue
+      description: "客户总消费金额"
+      type: sum
+      sql: ${total_spent}
+
+    - name: avg_customer_value
+      description: "平均客户价值"
+      type: avg
+      sql: ${total_spent}
+
+    - name: vip_customers
+      description: "VIP客户数量"
+      type: count
+      sql: |
+        CASE
+          WHEN ${vip_level} > 0 THEN ${id}
+          ELSE NULL
+        END
+
+    - name: new_customers
+      description: "新客户数（30天内注册）"
+      type: count
+      sql: |
+        CASE
+          WHEN ${registration_date} >= CURRENT_DATE - INTERVAL '30 days' THEN ${id}
+          ELSE NULL
+        END
+
+    - name: avg_age
+      description: "客户平均年龄"
+      type: avg
+      sql: ${age}
+
+    - name: gender_ratio
+      description: "性别比例"
+      type: count
+      sql: ${gender}
+
+  # 维度 (Dimensions) - 用于分组和过滤
+  dimensions:
+    # 时间维度
+    - name: registration_date
+      description: "注册日期"
+      type: time
+      sql: ${registration_date}
+
+    # 字符串维度
+    - name: username
+      description: "用户名"
+      type: string
+      sql: ${username}
+
+    - name: email
+      description: "电子邮件"
+      type: string
+      sql: ${email}
+
+    - name: phone
+      description: "电话号码"
+      type: string
+      sql: ${phone}
+
+    - name: gender
+      description: "性别"
+      type: string
+      sql: ${gender}
+      enumerations:
+        - 男
+        - 女
+        - 其他
+
+    - name: vip_level
+      description: "VIP等级"
+      type: number
+      sql: ${vip_level}
+
+    - name: vip_level_name
+      description: "VIP等级名称"
+      type: string
+      case:
+        when ${vip_level} = 0 then '普通会员'
+        when ${vip_level} = 1 then '铜牌会员'
+        when ${vip_level} = 2 then '银牌会员'
+        when ${vip_level} = 3 then '金牌会员'
+        else '钻石会员'
+
+    # 数值维度
+    - name: total_spent
+      description: "累计消费金额"
+      type: number
+      sql: ${total_spent}
+
+    - name: age
+      description: "年龄"
+      type: number
+      sql: ${age}
+
+    - name: membership_years
+      description: "会员年限"
+      type: number
+      sql: ${membership_years}
+
+    # 布尔维度
+    - name: is_active
+      description: "是否活跃"
+      type: boolean
+      sql: ${is_active}
+
+    - name: is_vip
+      description: "是否VIP会员"
+      type: boolean
+      sql: ${vip_level} > 0
+
+    # 计算维度
+    - name: customer_segment
+      description: "客户分群"
+      type: string
+      case:
+        when ${total_spent} >= 15000 then '高价值客户'
+        when ${total_spent} >= 5000 then '中等价值客户'
+        when ${total_spent} > 0 then '低价值客户'
+        else '未消费客户'
+
+    - name: age_group
+      description: "年龄分组"
+      type: string
+      case:
+        when ${age} < 18 then '未成年'
+        when ${age} < 30 then '青年'
+        when ${age} < 50 then '中年'
+        else '老年'
+
+    - name: registration_month
+      description: "注册月份"
+      type: time
+      sql: DATE_TRUNC('month', ${registration_date})
+
+  # 预聚合（可选，用于提升性能）
+  pre_aggregations:
+    - name: customers_daily
+      refresh_key:
+        every: '1 hour'
+      measures:
+        - customer_count
+        - active_customers
+        - total_revenue
+      time_dimension: registration_date
+      granularity: day
+      rollup: true
+
+# 数据缓存配置（可选）
+cubes:
+  - name: Customers
+    # 查询缓存 TTL（秒）
+    cache_max_queries: 1000
+    cache_max_import_duration: 3600
+
+    # 跨 Cube 联合（ joins ）定义
+    joins:
+      - name: Orders
+        sql: ${Customers}.id = ${Orders}.customer_id
+        relationship: one_to_many

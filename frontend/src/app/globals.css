@@ -5,11 +5,22 @@
 /* Data Agent V4 - Fira 字体引入 */
 @import url('https://fonts.googleapis.com/css2?family=Fira+Sans:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap');
 
+/* Tiffany UI - Inter 和 JetBrains Mono 字体引入 */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @layer base {
   :root {
     /* Data Agent V4 主题色彩 - 蓝橙配色 */
     --background: 210 40% 98%;
     --foreground: 222 47% 11%;
+
+    /* 字体变量 - 保留原有字体 */
+    --font-fira-sans: 'Fira Sans', system-ui, sans-serif;
+    --font-fira-code: 'Fira Code', monospace;
+
+    /* 新增字体变量 - 用于AI助手页面 */
+    --font-inter: 'Inter', system-ui, sans-serif;
+    --font-jetbrains: 'JetBrains Mono', monospace;
 
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
@@ -322,4 +333,39 @@
       transition-duration: 0.01ms !important;
     }
   }
+}
+
+/* ============================================================
+   Tiffany UI 主题 - 页面级样式隔离
+   仅影响带有 data-theme="tiffany" 属性的元素（AI助手页面）
+   ============================================================ */
+
+[data-theme="tiffany"] {
+  /* 覆盖主色调为 Tiffany Blue */
+  --tiffany-primary: 174 62% 67%;
+  --tiffany-secondary: 174 50% 85%;
+  --tiffany-accent: 174 70% 75%;
+
+  /* 使用 Inter 字体 */
+  --font-ui: var(--font-inter);
+  --font-mono: var(--font-jetbrains);
+}
+
+[data-theme="tiffany"].dark {
+  /* 暗色模式下的 Tiffany Blue */
+  --tiffany-primary: 174 65% 55%;
+  --tiffany-secondary: 174 45% 75%;
+  --tiffany-accent: 174 60% 65%;
+}
+
+/* Tiffany UI 特有的工具类 */
+.tiffany-gradient {
+  background: linear-gradient(135deg, #81d8cf 0%, #6bc9c0 100%);
+}
+
+.tiffany-gradient-text {
+  background: linear-gradient(135deg, #81d8cf 0%, #6bc9c0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }

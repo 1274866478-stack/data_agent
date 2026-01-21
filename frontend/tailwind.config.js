@@ -29,6 +29,21 @@ module.exports = {
           900: 'hsl(var(--primary) / 0.9)',
           950: 'hsl(var(--primary) / 0.95)',
         },
+
+        // Tiffany Blue 色系 - 仅用于AI助手页面
+        tiffany: {
+          50: 'hsl(174 80% 97%)',
+          100: 'hsl(174 75% 92%)',
+          200: 'hsl(174 70% 85%)',
+          300: 'hsl(174 65% 78%)',
+          400: 'hsl(174 62% 67%)', // #81d8cf
+          500: 'hsl(174 62% 58%)',
+          600: 'hsl(174 65% 50%)',
+          700: 'hsl(174 70% 42%)',
+          800: 'hsl(174 75% 35%)',
+          900: 'hsl(174 80% 28%)',
+          950: 'hsl(174 85% 20%)',
+        },
         secondary: {
           DEFAULT: 'hsl(var(--secondary))',
           foreground: 'hsl(var(--secondary-foreground))',
@@ -76,6 +91,9 @@ module.exports = {
       fontFamily: {
         sans: ['var(--font-fira-sans)', 'system-ui', 'sans-serif'],
         mono: ['var(--font-fira-code)', 'monospace'],
+        // 新增字体 - 用于AI助手页面
+        inter: ['var(--font-inter)', 'system-ui', 'sans-serif'],
+        jetbrains: ['var(--font-jetbrains)', 'monospace'],
       },
       spacing: {
         '18': '4.5rem',

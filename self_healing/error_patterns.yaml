@@ -1,0 +1,147 @@
+# 错误模式配置
+# 用于 Repair Agent 识别和自动修复 DSL 错误
+
+patterns:
+  # ========== 度量相关错误 ==========
+  - name: "measure_not_found"
+    description: "度量不存在"
+    regex: "Measure '(.+)' not found"
+    fix_strategy: "suggest_similar_measures"
+    auto_fix: true
+
+  - name: "invalid_measure_type"
+    description: "无效的度量类型"
+    regex: "Invalid measure type '(.+)'"
+    fix_strategy: "use_correct_measure_type"
+    auto_fix: true
+
+  - name: "measure_aggregation_error"
+    description: "度量聚合错误"
+    regex: "Cannot aggregate (.+) with (.+)"
+    fix_strategy: "change_aggregation_type"
+    auto_fix: true
+
+  # ========== 维度相关错误 ==========
+  - name: "dimension_not_found"
+    description: "维度不存在"
+    regex: "Dimension '(.+)' not found"
+    fix_strategy: "suggest_similar_dimensions"
+    auto_fix: true
+
+  - name: "invalid_dimension_type"
+    description: "无效的维度类型"
+    regex: "Invalid dimension type '(.+)'"
+    fix_strategy: "use_correct_dimension_type"
+    auto_fix: true
+
+  # ========== Cube 相关错误 ==========
+  - name: "cube_not_found"
+    description: "Cube 不存在"
+    regex: "Cube '(.+)' does not exist"
+    fix_strategy: "list_available_cubes"
+    auto_fix: false  # 需要用户介入
+
+  - name: "cube_not_accessible"
+    description: "Cube 不可访问"
+    regex: "Cube '(.+)' is not accessible"
+    fix_strategy: "check_permissions"
+    auto_fix: false
+
+  # ========== JOIN 相关错误 ==========
+  - name: "invalid_join"
+    description: "无效的 JOIN"
+    regex: "Cannot join (.+) on (.+)"
+    fix_strategy: "use_precomputed_joins"
+    auto_fix: true
+
+  - name: "ambiguous_join"
+    description: "模糊的 JOIN 条件"
+    regex: "Ambiguous join condition"
+    fix_strategy: "specify_join_columns"
+    auto_fix: true
+
+  # ========== 过滤器相关错误 ==========
+  - name: "missing_filter"
+    description: "缺少必需的过滤器"
+    regex: "Required filter missing: (.+)"
+    fix_strategy: "infer_from_context"
+    auto_fix: true
+
+  - name: "invalid_filter_operator"
+    description: "无效的过滤操作符"
+    regex: "Invalid filter operator '(.+)'"
+    fix_strategy: "use_valid_operator"
+    auto_fix: true
+
+  - name: "filter_value_mismatch"
+    description: "过滤值类型不匹配"
+    regex: "Filter value type mismatch"
+    fix_strategy: "convert_filter_value"
+    auto_fix: true
+
+  # ========== 时间相关错误 ==========
+  - name: "time_range_error"
+    description: "时间范围错误"
+    regex: "Time range (.+) is invalid"
+    fix_strategy: "adjust_time_range"
+    auto_fix: true
+
+  - name: "invalid_granularity"
+    description: "无效的时间粒度"
+    regex: "Invalid granularity '(.+)'"
+    fix_strategy: "use_valid_granularity"
+    auto_fix: true
+
+  - name: "time_dimension_required"
+    description: "需要时间维度"
+    regex: "Time dimension required for (.+)"
+    fix_strategy: "add_time_dimension"
+    auto_fix: true
+
+  # ========== 语法相关错误 ==========
+  - name: "invalid_json"
+    description: "无效的 JSON 格式"
+    regex: "Invalid JSON"
+    fix_strategy: "fix_json_syntax"
+    auto_fix: true
+
+  - name: "missing_required_field"
+    description: "缺少必需字段"
+    regex: "Missing required field: (.+)"
+    fix_strategy: "add_missing_field"
+    auto_fix: true
+
+  # ========== 性能相关错误 ==========
+  - name: "query_timeout"
+    description: "查询超时"
+    regex: "Query timeout"
+    fix_strategy: "optimize_query"
+    auto_fix: false  # 需要人工优化
+
+  - name: "result_set_too_large"
+    description: "结果集过大"
+    regex: "Result set too large"
+    fix_strategy: "add_limit_or_filters"
+    auto_fix: true
+
+# ========== 修复策略说明 ==========
+# fix_strategy 可选值:
+# - suggest_similar_measures: 建议相似的度量
+# - suggest_similar_dimensions: 建议相似的维度
+# - use_correct_measure_type: 使用正确的度量类型
+# - change_aggregation_type: 更改聚合类型
+# - use_correct_dimension_type: 使用正确的维度类型
+# - list_available_cubes: 列出可用的 Cube
+# - check_permissions: 检查权限
+# - use_precomputed_joins: 使用预定义的关联
+# - specify_join_columns: 指定关联列
+# - infer_from_context: 从上下文推断
+# - use_valid_operator: 使用有效的操作符
+# - convert_filter_value: 转换过滤值
+# - adjust_time_range: 调整时间范围
+# - use_valid_granularity: 使用有效的粒度
+# - add_time_dimension: 添加时间维度
+# - fix_json_syntax: 修复 JSON 语法
+# - add_missing_field: 添加缺失字段
+# - optimize_query: 优化查询
+# - add_limit_or_filters: 添加限制或过滤条件

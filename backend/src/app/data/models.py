@@ -47,10 +47,11 @@
 **依赖深度**: 直接依赖 database.py；被所有服务层和API层依赖
 """
 
+from typing import Dict, Any, Optional
 from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Enum, BigInteger, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from datetime import datetime, timezone
 import uuid
 import enum
@@ -921,3 +922,96 @@ class SQLErrorMemory(Base):
         if self.occurrence_count == 0:
             return 0.0
         return round(self.success_count / self.occurrence_count, 2)
+
+
+# =============================================================================
+# SOTA 重构 - 语义层和自愈相关模型
+# =============================================================================
+
+class SuccessfulQuery(Base):
+    """
+    成功查询历史模型 - 用于少样本 RAG
+    存储用户成功的查询及其 DSL，用于动态学习和 Prompt 构建
+    """
+    __tablename__ = "successful_queries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(255), ForeignKey('tenants.id'), nullable=False, index=True)
+    original_question = Column(Text, nullable=False)
+    rewritten_question = Column(Text, nullable=True)
+    dsl_json = Column(JSONB, nullable=False)
+    cube_name = Column(String(255), nullable=False)
+    execution_time_ms = Column(Integer, nullable=True)
+    row_count = Column(Integer, nullable=True)
+    user_rating = Column(Integer, nullable=True)
+    qdrant_point_id = Column(String(255), nullable=True)  # Qdrant 向量 ID
+
+    # 元数据
+    query_complexity = Column(String(50), nullable=True)  # simple, medium, complex
+    success = Column(Boolean, default=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # 关系
+    tenant = relationship("Tenant", back_populates="successful_queries")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return {
+            "id": self.id,
+            "tenant_id": self.tenant_id,
+            "original_question": self.original_question,
+            "rewritten_question": self.rewritten_question,
+            "dsl_json": self.dsl_json,
+            "cube_name": self.cube_name,
+            "execution_time_ms": self.execution_time_ms,
+            "row_count": self.row_count,
+            "user_rating": self.user_rating,
+            "qdrant_point_id": self.qdrant_point_id,
+            "query_complexity": self.query_complexity,
+            "success": self.success,
+            "error_message": self.error_message,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+
+
+class RepairHistory(Base):
+    """
+    修复历史模型 - DSL 自愈机制
+    存储错误的 DSL 及其修复方案，用于学习最佳修复策略
+    """
+    __tablename__ = "repair_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(255), ForeignKey('tenants.id'), nullable=False, index=True)
+    original_dsl = Column(JSONB, nullable=False)
+    repaired_dsl = Column(JSONB, nullable=False)
+    error_message = Column(Text, nullable=False)
+    error_pattern = Column(String(255), nullable=False)  # 错误模式名称
+    fix_strategy = Column(String(255), nullable=False)  # 修复策略
+    successful = Column(Boolean, default=True)
+    attempt_count = Column(Integer, default=1)  # 尝试次数
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # 关系
+    tenant = relationship("Tenant", back_populates="repair_histories")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return {
+            "id": self.id,
+            "tenant_id": self.tenant_id,
+            "original_dsl": self.original_dsl,
+            "repaired_dsl": self.repaired_dsl,
+            "error_message": self.error_message,
+            "error_pattern": self.error_pattern,
+            "fix_strategy": self.fix_strategy,
+            "successful": self.successful,
+            "attempt_count": self.attempt_count,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+
+
+# 更新 Tenant 模型的关系
+Tenant.successful_queries = relationship("SuccessfulQuery", back_populates="tenant", cascade="all, delete-orphan")
+Tenant.repair_histories = relationship("RepairHistory", back_populates="tenant", cascade="all, delete-orphan")

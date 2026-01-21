@@ -61,6 +61,17 @@ services:
       - CORS_ORIGINS=["http://localhost:3000", "http://127.0.0.1:3000"]
       - LOG_LEVEL=INFO
       - ENABLE_RAG=true
+      # ========== SOTA 重构配置 ==========
+      - USE_SOTA_AGENT=${USE_SOTA_AGENT:-false}
+      - ENABLE_SEMANTIC_LAYER=${ENABLE_SEMANTIC_LAYER:-false}
+      - ENABLE_FEW_SHOT_RAG=${ENABLE_FEW_SHOT_RAG:-false}
+      - ENABLE_SELF_HEALING=${ENABLE_SELF_HEALING:-false}
+      - ENABLE_DISAMBIGUATION=${ENABLE_DISAMBIGUATION:-false}
+      - CUBE_API_URL=http://cube:4000
+      - CUBE_API_SECRET=${CUBEJS_API_SECRET}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_COLLECTION_PREFIX=dataagent
       # 🔧 修复：添加 PYTHONPATH 使 AgentV2 和 Agent 模块可以正确导入
       # 注意：需要添加根目录 / 使 import AgentV2 能正确找到 /AgentV2
       - PYTHONPATH=/app:/
@@ -173,12 +184,65 @@ services:
       retries: 3
       start_period: 10s
 
+  # ========== SOTA 重构 - Phase 1: 语义层服务 ==========
+
+  # Cube.js 语义层
+  cube:
+    image: cubejs/cube:latest
+    container_name: dataagent-cube
+    restart: unless-stopped
+    environment:
+      - CUBEJS_DB_TYPE=postgres
+      - CUBEJS_DB_HOST=db
+      - CUBEJS_DB_PORT=5432
+      - CUBEJS_DB_NAME=dataagent
+      - CUBEJS_DB_USER=postgres
+      - CUBEJS_DB_PASS=${CUBEJS_DB_PASSWORD:-password}
+      - CUBEJS_API_SECRET=${CUBEJS_API_SECRET}
+      - CUBEJS_DEV_MODE=true
+    volumes:
+      - ./cube_schema:/cube/schema
+    ports:
+      - "4000:4000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - dataagent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  # Qdrant 向量数据库 (替代 ChromaDB)
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: dataagent-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    networks:
+      - dataagent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
 volumes:
   postgres_data:
     driver: local
   minio_data:
     driver: local
   chroma_data:
+    driver: local
+  qdrant_data:
     driver: local
   # 注意：backend_uploads 已移除，改用本地目录映射 ./data_storage:/app/uploads
 

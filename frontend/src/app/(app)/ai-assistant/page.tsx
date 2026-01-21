@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { ContextCard, ContextCardList, SchemaMapDisplay } from '@/components/ui/ContextCard'
 import {
     DropdownMenu,
     DropdownMenuCheckboxItem,
@@ -20,6 +21,7 @@ import { PlainText } from '@/components/ui/plain-text'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { ThemeToggle } from '@/components/theme'
+import { ThreeColumnLayout, ThreeColumnLayoutPanel } from '@/components/layout/ThreeColumnLayout'
 import { cn } from '@/lib/utils'
 import { fileUploadService, uploadFile, UploadProgress } from '@/services/fileUploadService'
 import { useChatStore } from '@/store/chatStore'
@@ -320,7 +322,10 @@ export default function AIAssistantPage() {
   const completedUploads = uploadedFiles.filter(f => f.status === 'completed').length
 
   return (
-    <div className="h-[calc(100vh-8rem)] flex bg-gradient-to-br from-blue-100 to-indigo-100 -m-6">
+    <div
+      className="h-[calc(100vh-8rem)] flex bg-gradient-to-br from-tiffany-100 to-tiffany-50 -m-6 font-inter"
+      data-theme="tiffany"
+    >
       {/* 历史对话侧边栏 */}
       <div className={cn(
         "h-full bg-card border-r shadow-lg transition-all duration-300 flex flex-col",
@@ -477,11 +482,11 @@ export default function AIAssistantPage() {
       <div className="flex-1 flex flex-col p-6 min-h-0">
         <div className="flex-1 max-w-6xl mx-auto w-full flex flex-col min-h-0 overflow-hidden">
           {/* Header */}
-          <Card className="mb-6 border border-violet-200/60 dark:border-violet-500/30 bg-gradient-to-br from-violet-50/50 to-purple-50/50 dark:from-violet-500/10 dark:to-purple-500/10 shadow-lg hover:shadow-xl transition-all duration-200 flex-shrink-0">
+          <Card className="mb-6 border border-tiffany-200/60 dark:border-tiffany-500/30 bg-gradient-to-br from-tiffany-50/50 to-tiffany-100/50 dark:from-tiffany-500/10 dark:to-tiffany-600/10 shadow-lg hover:shadow-xl transition-all duration-200 flex-shrink-0">
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center gap-3 text-2xl">
-                  <div className="p-2 bg-gradient-to-r from-violet-600 to-purple-600 rounded-lg">
+                  <div className="p-2 bg-gradient-to-r from-tiffany-500 to-tiffany-600 rounded-lg">
                     <Sparkles className="w-6 h-6 text-white" />
                   </div>
                   智能数据助手
@@ -531,7 +536,7 @@ export default function AIAssistantPage() {
                   <Button
                     onClick={handleStartNewConversation}
                     size="sm"
-                    className="gap-2 bg-gradient-to-r from-violet-600 to-purple-600 text-white hover:opacity-90 transition-opacity"
+                    className="gap-2 bg-gradient-to-r from-tiffany-500 to-tiffany-600 text-white hover:opacity-90 transition-opacity"
                   >
                     <Plus className="w-4 h-4" />
                     新建对话

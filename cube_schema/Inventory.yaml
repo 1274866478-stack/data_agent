@@ -1,0 +1,311 @@
+# Inventory Cube - 库存语义层定义
+#
+# 此文件定义了库存监控相关的语义层
+# 专注于库存水平、周转和预警
+# Cube.js 会根据此定义自动生成优化的 SQL 查询
+
+cube: Inventory
+  # 数据源配置
+  sql_table: |
+    SELECT
+      p.id,
+      p.name,
+      p.sku,
+      p.category_id,
+      c.name as category_name,
+      p.brand,
+      p.stock,
+      p.sales_count,
+      p.price,
+      CASE
+        WHEN p.stock = 0 THEN 'out_of_stock'
+        WHEN p.stock < 50 THEN 'low_stock'
+        WHEN p.stock < 200 THEN 'normal_stock'
+        ELSE 'high_stock'
+      END as stock_level,
+      CASE WHEN p.stock > 0 THEN p.sales_count / NULLIF(p.stock, 0) ELSE 0 END as turnover_ratio,
+      p.stock * p.price as inventory_value,
+      p.created_at,
+      p.updated_at
+    FROM products p
+    LEFT JOIN categories c ON p.category_id = c.id
+
+  # 多租户过滤器（如果需要）
+  filters:
+    - type: memory
+      expression: |
+        { TABLE }.stock >= 0
+
+  # 度量 (Measures) - 可聚合的数值
+  measures:
+    - name: total_products
+      description: "总商品数"
+      type: count
+      sql: ${id}
+
+    - name: total_stock
+      description: "总库存量"
+      type: sum
+      sql: ${stock}
+
+    - name: total_inventory_value
+      description: "总库存价值"
+      type: sum
+      sql: ${inventory_value}
+
+    - name: out_of_stock_count
+      description: "缺货商品数"
+      type: count
+      sql: |
+        CASE
+          WHEN ${stock} = 0 THEN ${id}
+          ELSE NULL
+        END
+
+    - name: low_stock_count
+      description: "低库存商品数（<50）"
+      type: count
+      sql: |
+        CASE
+          WHEN ${stock} > 0 AND ${stock} < 50 THEN ${id}
+          ELSE NULL
+        END
+
+    - name: healthy_stock_count
+      description: "库存健康商品数（≥50）"
+      type: count
+      sql: |
+        CASE
+          WHEN ${stock} >= 50 THEN ${id}
+          ELSE NULL
+        END
+
+    - name: avg_stock_level
+      description: "平均库存量"
+      type: avg
+      sql: ${stock}
+
+    - name: avg_turnover_ratio
+      description: "平均周转率"
+      type: avg
+      sql: ${turnover_ratio}
+
+    - name: total_sales
+      description: "总销量"
+      type: sum
+      sql: ${sales_count}
+
+    - name: stock_out_rate
+      description: "缺货率"
+      type: count
+      sql: |
+        CASE
+          WHEN ${stock} = 0 THEN 1
+          ELSE NULL
+        END
+
+    - name: low_stock_rate
+      description: "低库存率"
+      type: count
+      sql: |
+        CASE
+          WHEN ${stock} > 0 AND ${stock} < 50 THEN 1
+          ELSE NULL
+        END
+
+    - name: high_value_inventory
+      description: "高库存价值商品数（价值>50000）"
+      type: count
+      sql: |
+        CASE
+          WHEN ${inventory_value} > 50000 THEN ${id}
+          ELSE NULL
+        END
+
+    - name: slow_moving_products
+      description: "滞销商品数（库存>100且销量<10）"
+      type: count
+      sql: |
+        CASE
+          WHEN ${stock} > 100 AND ${sales_count} < 10 THEN ${id}
+          ELSE NULL
+        END
+
+    - name: fast_moving_products
+      description: "快周转商品数（周转率>2）"
+      type: count
+      sql: |
+        CASE
+          WHEN ${turnover_ratio} > 2 THEN ${id}
+          ELSE NULL
+        END
+
+  # 维度 (Dimensions) - 用于分组和过滤
+  dimensions:
+    # 时间维度
+    - name: created_at
+      description: "创建时间"
+      type: time
+      sql: ${created_at}
+
+    # 字符串维度
+    - name: name
+      description: "商品名称"
+      type: string
+      sql: ${name}
+
+    - name: sku
+      description: "商品SKU"
+      type: string
+      sql: ${sku}
+
+    - name: brand
+      description: "品牌"
+      type: string
+      sql: ${brand}
+
+    - name: category_name
+      description: "分类名称"
+      type: string
+      sql: ${category_name}
+
+    - name: stock_level
+      description: "库存水平"
+      type: string
+      sql: ${stock_level}
+
+    # 数值维度
+    - name: stock
+      description: "库存数量"
+      type: number
+      sql: ${stock}
+
+    - name: sales_count
+      description: "销量"
+      type: number
+      sql: ${sales_count}
+
+    - name: turnover_ratio
+      description: "周转率"
+      type: number
+      sql: ${turnover_ratio}
+
+    - name: inventory_value
+      description: "库存价值"
+      type: number
+      sql: ${inventory_value}
+
+    - name: price
+      description: "商品价格"
+      type: number
+      sql: ${price}
+
+    # 布尔维度
+    - name: is_out_of_stock
+      description: "是否缺货"
+      type: boolean
+      sql: ${stock} = 0
+
+    - name: is_low_stock
+      description: "是否低库存"
+      type: boolean
+      sql: ${stock} > 0 AND ${stock} < 50
+
+    - name: is_overstocked
+      description: "是否库存积压"
+      type: boolean
+      sql: ${stock} > 500
+
+    - name: is_slow_moving
+      description: "是否滞销"
+      type: boolean
+      sql: ${stock} > 100 AND ${sales_count} < 10
+
+    - name: needs_reorder
+      description: "需要补货"
+      type: boolean
+      sql: ${stock} < 50
+
+    # 计算维度
+    - name: inventory_tier
+      description: "库存分级"
+      type: string
+      case:
+        when ${stock} = 0 then '缺货'
+        when ${stock} < 50 then '低库存'
+        when ${stock} < 200 then '正常库存'
+        else '高库存'
+
+    - name: turnover_category
+      description: "周转分类"
+      type: string
+      case:
+        when ${turnover_ratio} = 0 then '无周转'
+        when ${turnover_ratio} < 0.5 then '慢周转'
+        when ${turnover_ratio} < 2 then '正常周转'
+        else '快周转'
+
+    - name: value_category
+      description: "价值分类"
+      type: string
+      case:
+        when ${inventory_value} < 10000 then '低价值'
+        when ${inventory_value} < 50000 then '中等价值'
+        else '高价值'
+
+    - name: replenishment_priority
+      description: "补货优先级"
+      type: string
+      case:
+        when ${stock} = 0 then '紧急'
+        when ${stock} < 20 then '高'
+        when ${stock} < 50 then '中'
+        else '低'
+
+  # 预聚合（可选，用于提升性能）
+  pre_aggregations:
+    - name: inventory_summary
+      refresh_key:
+        every: '30 minutes'
+      measures:
+        - total_products
+        - total_stock
+        - total_inventory_value
+        - out_of_stock_count
+        - low_stock_count
+      dimensions:
+        - stock_level
+        - category_name
+      rollup: true
+
+    - name: inventory_by_brand
+      refresh_key:
+        every: '1 hour'
+      measures:
+        - total_stock
+        - total_inventory_value
+        - avg_turnover_ratio
+      dimensions:
+        - brand
+      rollup: true
+
+# 数据缓存配置（可选）
+cubes:
+  - name: Inventory
+    # 查询缓存 TTL（秒）
+    cache_max_queries: 500
+    cache_max_import_duration: 1800
+
+    # 跨 Cube 联合（ joins ）定义
+    joins:
+      - name: Products
+        sql: ${Inventory}.id = ${Products}.id
+        relationship: one_to_one
+
+      - name: Orders
+        sql: |
+          EXISTS (
+            SELECT 1 FROM order_items oi
+            WHERE oi.product_id = ${Inventory}.id
+          )
+        relationship: one_to_many

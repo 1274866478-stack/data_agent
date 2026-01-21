@@ -1274,11 +1274,24 @@ async def build_agent(
 
     # Define routing logic
     def should_continue(state: MessagesState) -> Literal["tools", "__end__"]:
+        """
+        增强的路由逻辑：
+        - 检测 AI 是否要调用工具
+        - 限制工具调用次数防止无限循环
+        """
         messages = state["messages"]
         last_message = messages[-1]
 
+        # 检查工具调用次数，防止无限循环
+        tool_message_count = sum(1 for m in messages if isinstance(m, ToolMessage))
+        if tool_message_count > 5:  # 最多允许 5 次工具调用（约 10-15 步）
+            print(f"⚠️ 达到最大工具调用次数限制 ({tool_message_count})，结束执行")
+            return END
+
+        # 检查 AI 是否要调用工具
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
             return "tools"
+
         return END
 
     # Build graph
@@ -1438,7 +1451,10 @@ async def run_agent(
         )
 
         # Configure session
-        config = {"configurable": {"thread_id": thread_id}}
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": 50  # 增加递归限制到 50 步
+        }
 
         if verbose:
             logger.info(f"Running agent with question: {question[:100]}...")
@@ -1560,115 +1576,154 @@ async def run_agent(
                             all_messages.extend(messages)
 
                             for msg in messages:
-                            # DEBUG: 打印所有消息类型
-                            import sys
-                            try:
-                                print(f"[DEBUG] MESSAGE TYPE: {type(msg).__name__}", flush=True)
-                            except UnicodeEncodeError:
-                                logger.debug(f"MESSAGE TYPE: {type(msg).__name__}")
-                            if isinstance(msg, AIMessage):
+                                # DEBUG: 打印所有消息类型
+                                import sys
                                 try:
-                                    print(f"[DEBUG] AIMessage - has content: {bool(msg.content)}, content type: {type(msg.content)}, has tool_calls: {bool(getattr(msg, 'tool_calls', None))}", flush=True)
+                                    print(f"[DEBUG] MESSAGE TYPE: {type(msg).__name__}", flush=True)
                                 except UnicodeEncodeError:
-                                    logger.debug(f"AIMessage - has content: {bool(msg.content)}, content type: {type(msg.content)}, has tool_calls: {bool(getattr(msg, 'tool_calls', None))}")
-                                if msg.content:
-                                    final_content = msg.content
-                                    # DEBUG: 打印 LLM 原始输出
+                                    logger.debug(f"MESSAGE TYPE: {type(msg).__name__}")
+                                if isinstance(msg, AIMessage):
                                     try:
-                                        print("=" * 80, flush=True)
-                                        print("[DEBUG] FINAL LLM OUTPUT (Raw String):", flush=True)
-                                        print("=" * 80, flush=True)
-                                        print(final_content, flush=True)
-                                        print("=" * 80, flush=True)
-                                        sys.stdout.flush()
+                                        print(f"[DEBUG] AIMessage - has content: {bool(msg.content)}, content type: {type(msg.content)}, has tool_calls: {bool(getattr(msg, 'tool_calls', None))}", flush=True)
                                     except UnicodeEncodeError:
-                                        logger.debug("FINAL LLM OUTPUT (Raw String)")
-                                    logger.info(f"[DEBUG] FINAL LLM OUTPUT (length: {len(final_content)}): {final_content[:500]}...")
-                                elif getattr(msg, 'tool_calls', None):
-                                    try:
-                                        print(f"[DEBUG] AIMessage has tool_calls but no content. Tool calls: {len(msg.tool_calls)}", flush=True)
-                                    except UnicodeEncodeError:
-                                        logger.debug(f"AIMessage has tool_calls but no content. Tool calls: {len(msg.tool_calls)}")
-                                    sys.stdout.flush()
-
-                                # Extract SQL from tool calls
-                                if msg.tool_calls:
-                                    # 🔍 详细记录工具调用（用于诊断编造数据问题）
-                                    logger.info(f"🔍 [AI工具调用] 共 {len(msg.tool_calls)} 个工具调用")
-                                    for tc in msg.tool_calls:
-                                        tool_name = tc.get("name", "unknown")
-                                        tool_args = tc.get("args", {})
-                                        logger.info(f"🔍 [AI工具调用] 工具: {tool_name}, 参数: {tool_args}")
-                                        if verbose:
-                                            logger.debug(f"AI tool call: {tool_name}")
-                                        
-                                        # Check if this is a chart tool call
-                                        if "chart" in tool_name.lower() or "echarts" in tool_name.lower():
-                                            if verbose:
-                                                logger.info(f"Detected chart tool call: {tool_name}")
-                                        
-                                        if tc.get("name") in ("query", "execute_sql_safe"):
-                                            executed_sql = tc.get("args", {}).get("query") or tc.get("args", {}).get("sql")
-
-                            # Capture tool results
-                            elif isinstance(msg, ToolMessage):
-                                try:
-                                    content = msg.content
-                                    tool_name = getattr(msg, 'name', None) or 'unknown'
-                                    
-                                    # 🔍 详细记录工具调用结果（用于诊断编造数据问题）
-                                    logger.info(f"🔍 [工具调用结果] 工具名: {tool_name}")
-                                    logger.info(f"🔍 [工具调用结果] 内容类型: {type(content)}")
-                                    if isinstance(content, str):
-                                        content_preview = content[:500] if len(content) > 500 else content
-                                        logger.info(f"🔍 [工具调用结果] 内容预览: {content_preview}")
-                                        # 检查是否包含错误信息
-                                        if "错误" in content or "Error" in content or "失败" in content:
-                                            logger.warning(f"⚠️ [工具调用结果] 工具返回了错误信息: {content[:200]}")
-                                    else:
-                                        logger.info(f"🔍 [工具调用结果] 内容: {str(content)[:500]}")
-                                    
-                                    # Log tool message for debugging
-                                    if verbose:
-                                        logger.debug(f"Received ToolMessage from tool: {tool_name}, content type: {type(content)}")
-                                    
-                                    # Check if this is a chart tool result (MCP ECharts)
-                                    # MCP ECharts tools typically return content with image data
-                                    if isinstance(content, str):
-                                        if verbose:
-                                            logger.debug(f"ToolMessage content (first 200 chars): {content[:200]}")
-                                        # Try to parse as JSON first
+                                        logger.debug(f"AIMessage - has content: {bool(msg.content)}, content type: {type(msg.content)}, has tool_calls: {bool(getattr(msg, 'tool_calls', None))}")
+                                    if msg.content:
+                                        final_content = msg.content
+                                        # DEBUG: 打印 LLM 原始输出
                                         try:
-                                            parsed_content = json.loads(content)
-                                            
-                                            # Check if it's a list of content items (MCP format)
-                                            if isinstance(parsed_content, list):
-                                                for item in parsed_content:
-                                                    if isinstance(item, dict):
-                                                        # Check for image type content
-                                                        if item.get("type") == "image" and item.get("data"):
-                                                            # Extract Base64 image data
-                                                            image_data = item.get("data")
-                                                            # Ensure it's a data URI
-                                                            if isinstance(image_data, str):
-                                                                if image_data.startswith("data:"):
-                                                                    chart_image = image_data
-                                                                elif image_data.startswith("http"):
-                                                                    chart_image = image_data
-                                                                else:
-                                                                    # Assume it's base64 without prefix
-                                                                    chart_image = f"data:image/png;base64,{image_data}"
-                                                            logger.info(f"Extracted chart image from MCP tool result (length: {len(chart_image) if chart_image else 0})")
-                                                        # Also check for text content that might be a URL
-                                                        elif item.get("type") == "text" and isinstance(item.get("text"), str):
-                                                            text = item.get("text")
-                                                            if text.startswith("http") and not chart_image:
-                                                                chart_image = text
-                                                                logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
-                                            # If it's a dict, check for image fields
-                                            elif isinstance(parsed_content, dict):
-                                                if parsed_content.get("type") == "image" and parsed_content.get("data"):
-                                                    image_data = parsed_content.get("data")
+                                            print("=" * 80, flush=True)
+                                            print("[DEBUG] FINAL LLM OUTPUT (Raw String):", flush=True)
+                                            print("=" * 80, flush=True)
+                                            print(final_content, flush=True)
+                                            print("=" * 80, flush=True)
+                                            sys.stdout.flush()
+                                        except UnicodeEncodeError:
+                                            logger.debug("FINAL LLM OUTPUT (Raw String)")
+                                        logger.info(f"[DEBUG] FINAL LLM OUTPUT (length: {len(final_content)}): {final_content[:500]}...")
+                                    elif getattr(msg, 'tool_calls', None):
+                                        try:
+                                            print(f"[DEBUG] AIMessage has tool_calls but no content. Tool calls: {len(msg.tool_calls)}", flush=True)
+                                        except UnicodeEncodeError:
+                                            logger.debug(f"AIMessage has tool_calls but no content. Tool calls: {len(msg.tool_calls)}")
+                                        sys.stdout.flush()
+
+                                    # Extract SQL from tool calls
+                                    if msg.tool_calls:
+                                        # 🔍 详细记录工具调用（用于诊断编造数据问题）
+                                        logger.info(f"🔍 [AI工具调用] 共 {len(msg.tool_calls)} 个工具调用")
+                                        for tc in msg.tool_calls:
+                                            tool_name = tc.get("name", "unknown")
+                                            tool_args = tc.get("args", {})
+                                            logger.info(f"🔍 [AI工具调用] 工具: {tool_name}, 参数: {tool_args}")
+                                            if verbose:
+                                                logger.debug(f"AI tool call: {tool_name}")
+
+                                            # Check if this is a chart tool call
+                                            if "chart" in tool_name.lower() or "echarts" in tool_name.lower():
+                                                if verbose:
+                                                    logger.info(f"Detected chart tool call: {tool_name}")
+
+                                            if tc.get("name") in ("query", "execute_sql_safe"):
+                                                executed_sql = tc.get("args", {}).get("query") or tc.get("args", {}).get("sql")
+
+                                # Capture tool results
+                                elif isinstance(msg, ToolMessage):
+                                    try:
+                                        content = msg.content
+                                        tool_name = getattr(msg, 'name', None) or 'unknown'
+
+                                        # 🔍 详细记录工具调用结果（用于诊断编造数据问题）
+                                        logger.info(f"🔍 [工具调用结果] 工具名: {tool_name}")
+                                        logger.info(f"🔍 [工具调用结果] 内容类型: {type(content)}")
+                                        if isinstance(content, str):
+                                            content_preview = content[:500] if len(content) > 500 else content
+                                            logger.info(f"🔍 [工具调用结果] 内容预览: {content_preview}")
+                                            # 检查是否包含错误信息
+                                            if "错误" in content or "Error" in content or "失败" in content:
+                                                logger.warning(f"⚠️ [工具调用结果] 工具返回了错误信息: {content[:200]}")
+                                        else:
+                                            logger.info(f"🔍 [工具调用结果] 内容: {str(content)[:500]}")
+
+                                        # Log tool message for debugging
+                                        if verbose:
+                                            logger.debug(f"Received ToolMessage from tool: {tool_name}, content type: {type(content)}")
+
+                                        # Check if this is a chart tool result (MCP ECharts)
+                                        # MCP ECharts tools typically return content with image data
+                                        if isinstance(content, str):
+                                            if verbose:
+                                                logger.debug(f"ToolMessage content (first 200 chars): {content[:200]}")
+                                            # Try to parse as JSON first
+                                            try:
+                                                parsed_content = json.loads(content)
+
+                                                # Check if it's a list of content items (MCP format)
+                                                if isinstance(parsed_content, list):
+                                                    for item in parsed_content:
+                                                        if isinstance(item, dict):
+                                                            # Check for image type content
+                                                            if item.get("type") == "image" and item.get("data"):
+                                                                # Extract Base64 image data
+                                                                image_data = item.get("data")
+                                                                # Ensure it's a data URI
+                                                                if isinstance(image_data, str):
+                                                                    if image_data.startswith("data:"):
+                                                                        chart_image = image_data
+                                                                    elif image_data.startswith("http"):
+                                                                        chart_image = image_data
+                                                                    else:
+                                                                        # Assume it's base64 without prefix
+                                                                        chart_image = f"data:image/png;base64,{image_data}"
+                                                                logger.info(f"Extracted chart image from MCP tool result (length: {len(chart_image) if chart_image else 0})")
+                                                            # Also check for text content that might be a URL
+                                                            elif item.get("type") == "text" and isinstance(item.get("text"), str):
+                                                                text = item.get("text")
+                                                                if text.startswith("http") and not chart_image:
+                                                                    chart_image = text
+                                                                    logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
+                                                # If it's a dict, check for image fields
+                                                elif isinstance(parsed_content, dict):
+                                                    if parsed_content.get("type") == "image" and parsed_content.get("data"):
+                                                        image_data = parsed_content.get("data")
+                                                        if isinstance(image_data, str):
+                                                            if image_data.startswith("data:"):
+                                                                chart_image = image_data
+                                                            elif image_data.startswith("http"):
+                                                                chart_image = image_data
+                                                            else:
+                                                                chart_image = f"data:image/png;base64,{image_data}"
+                                                        logger.info(f"Extracted chart image from MCP tool result (dict format)")
+                                                    elif parsed_content.get("url") and not chart_image:
+                                                        chart_image = parsed_content.get("url")
+                                                        logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
+                                                else:
+                                                    # Fallback: treat as query results
+                                                    query_results = parsed_content
+                                            except json.JSONDecodeError:
+                                                # Not JSON, might be plain text or other format
+                                                # Check if it looks like a URL
+                                                if content.startswith("http") and not chart_image:
+                                                    chart_image = content
+                                                    logger.info(f"Extracted chart URL from tool result: {chart_image}")
+                                                else:
+                                                    query_results = content
+                                        else:
+                                            # Content is not a string, check if it's a dict/list with image data
+                                            if isinstance(content, list):
+                                                for item in content:
+                                                    if isinstance(item, dict) and item.get("type") == "image" and item.get("data"):
+                                                        image_data = item.get("data")
+                                                        if isinstance(image_data, str):
+                                                            if image_data.startswith("data:"):
+                                                                chart_image = image_data
+                                                            elif image_data.startswith("http"):
+                                                                chart_image = image_data
+                                                            else:
+                                                                chart_image = f"data:image/png;base64,{image_data}"
+                                                        logger.info(f"Extracted chart image from MCP tool result (list format)")
+                                            elif isinstance(content, dict):
+                                                if content.get("type") == "image" and content.get("data"):
+                                                    image_data = content.get("data")
                                                     if isinstance(image_data, str):
                                                         if image_data.startswith("data:"):
                                                             chart_image = image_data
@@ -1677,55 +1732,17 @@ async def run_agent(
                                                         else:
                                                             chart_image = f"data:image/png;base64,{image_data}"
                                                     logger.info(f"Extracted chart image from MCP tool result (dict format)")
-                                                elif parsed_content.get("url") and not chart_image:
-                                                    chart_image = parsed_content.get("url")
+                                                elif content.get("url") and not chart_image:
+                                                    chart_image = content.get("url")
                                                     logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
-                                            else:
-                                                # Fallback: treat as query results
-                                                query_results = parsed_content
-                                        except json.JSONDecodeError:
-                                            # Not JSON, might be plain text or other format
-                                            # Check if it looks like a URL
-                                            if content.startswith("http") and not chart_image:
-                                                chart_image = content
-                                                logger.info(f"Extracted chart URL from tool result: {chart_image}")
+                                                else:
+                                                    query_results = content
                                             else:
                                                 query_results = content
-                                    else:
-                                        # Content is not a string, check if it's a dict/list with image data
-                                        if isinstance(content, list):
-                                            for item in content:
-                                                if isinstance(item, dict) and item.get("type") == "image" and item.get("data"):
-                                                    image_data = item.get("data")
-                                                    if isinstance(image_data, str):
-                                                        if image_data.startswith("data:"):
-                                                            chart_image = image_data
-                                                        elif image_data.startswith("http"):
-                                                            chart_image = image_data
-                                                        else:
-                                                            chart_image = f"data:image/png;base64,{image_data}"
-                                                    logger.info(f"Extracted chart image from MCP tool result (list format)")
-                                        elif isinstance(content, dict):
-                                            if content.get("type") == "image" and content.get("data"):
-                                                image_data = content.get("data")
-                                                if isinstance(image_data, str):
-                                                    if image_data.startswith("data:"):
-                                                        chart_image = image_data
-                                                    elif image_data.startswith("http"):
-                                                        chart_image = image_data
-                                                    else:
-                                                        chart_image = f"data:image/png;base64,{image_data}"
-                                                logger.info(f"Extracted chart image from MCP tool result (dict format)")
-                                            elif content.get("url") and not chart_image:
-                                                chart_image = content.get("url")
-                                                logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
-                                            else:
-                                                query_results = content
-                                        else:
-                                            query_results = content
-                                except (json.JSONDecodeError, TypeError) as e:
-                                    logger.warning(f"Failed to parse tool message content: {e}")
-                                    query_results = msg.content
+                                    except (json.JSONDecodeError, TypeError) as e:
+                                        logger.warning(f"Failed to parse tool message content: {e}")
+                                        query_results = msg.content
+
         except BaseException as stream_error:
             # Catch TaskGroup and other stream errors (including ExceptionGroup)
             logger.error(f"Agent stream execution failed: {stream_error}", exc_info=True)
