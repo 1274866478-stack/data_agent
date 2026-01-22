@@ -63,23 +63,21 @@
 
 'use client'
 
-import { useState } from 'react'
+import { cn } from '@/lib/utils'
+import {
+    BarChart3,
+    Bot,
+    Database,
+    FileText,
+    FlaskConical,
+    LayoutDashboard,
+    Plus,
+    Settings,
+    Users
+} from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
-import {
-  LayoutDashboard,
-  Database,
-  BarChart3,
-  Bot,
-  Settings,
-  FileText,
-  Users,
-  ChevronDown,
-  ChevronRight,
-  Plus
-} from 'lucide-react'
+import { useState } from 'react'
 
 interface SidebarProps {
   collapsed: boolean
@@ -172,92 +170,78 @@ export function Sidebar({ collapsed, onCollapse }: SidebarProps) {
       "flex flex-col h-full bg-background border-r border-border transition-all duration-300",
       collapsed ? "w-16" : "w-64"
     )}>
-      <div className="p-4 border-b border-border">
-        <div className="flex items-center justify-between">
-          {!collapsed && (
-            <div>
-              <h2 className="text-lg font-bold text-foreground">菜单</h2>
-              <p className="text-xs text-gray-600 dark:text-gray-400">导航功能</p>
+      <div className="h-16 flex items-center px-6 border-b border-slate-100 dark:border-slate-700/50">
+        {!collapsed ? (
+          <div className="flex items-center">
+            <div className="w-8 h-8 rounded-lg bg-tiffany-400 flex items-center justify-center text-slate-900 mr-3 shadow-glow">
+              <FlaskConical className="h-5 w-5" />
             </div>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onCollapse}
-            className="hidden lg:flex"
-          >
-            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </Button>
-        </div>
+            <h1 className="font-display font-bold text-lg tracking-tight">
+              Data<span className="text-tiffany-400">Lab</span> Agent
+            </h1>
+          </div>
+        ) : (
+          <div className="w-8 h-8 rounded-lg bg-tiffany-400 flex items-center justify-center text-slate-900 shadow-glow mx-auto">
+            <FlaskConical className="h-5 w-5" />
+          </div>
+        )}
       </div>
 
       <nav className="flex-1 overflow-y-auto p-4 space-y-6">
         {navSections.map((section) => (
           <div key={section.title}>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => toggleSection(section.title)}
-              className={cn(
-                "w-full justify-start font-medium text-gray-600 dark:text-gray-400 mb-2",
-                collapsed && "hidden"
-              )}
-            >
-              {expandedSections.includes(section.title) ? (
-                <ChevronDown className="h-4 w-4 mr-2" />
-              ) : (
-                <ChevronRight className="h-4 w-4 mr-2" />
-              )}
-              {section.title}
-            </Button>
-
-            {(expandedSections.includes(section.title) || collapsed) && (
-              <div className="space-y-1">
-                {section.items.map((item) => {
-                  const Icon = item.icon
-                  return (
-                    <Link key={item.href} href={item.href}>
-                      <Button
-                        variant={isActive(item.href) ? "secondary" : "ghost"}
-                        size="sm"
-                        className={cn(
-                          "w-full justify-start",
-                          collapsed ? "px-2" : "px-3"
-                        )}
-                      >
-                        <Icon className="h-4 w-4" />
-                        {!collapsed && (
-                          <>
-                            <span className="ml-3">{item.title}</span>
-                            {item.badge && (
-                              <span className="ml-auto text-xs bg-primary text-primary-foreground px-2 py-1 rounded-full">
-                                {item.badge}
-                              </span>
-                            )}
-                          </>
-                        )}
-                      </Button>
-                    </Link>
-                  )
-                })}
-              </div>
+            {!collapsed && (
+              <p className="px-2 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                {section.title}
+              </p>
             )}
+
+            <div className="space-y-1">
+              {section.items.map((item) => {
+                const Icon = item.icon
+                const active = isActive(item.href)
+                return (
+                  <Link key={item.href} href={item.href}>
+                    <div
+                      className={cn(
+                        "nav-item-datalab",
+                        active && "active",
+                        collapsed && "justify-center"
+                      )}
+                    >
+                      <Icon className={cn(
+                        "h-4 w-4 text-slate-400 group-hover:text-tiffany-400 transition-colors",
+                        active && "text-tiffany-400"
+                      )} />
+                      {!collapsed && (
+                        <>
+                          <span className="ml-3">{item.title}</span>
+                          {item.badge && (
+                            <span className="ml-auto text-[10px] bg-tiffany-400/20 text-tiffany-700 dark:text-tiffany-300 px-2 py-0.5 rounded-full border border-tiffany-400/30">
+                              {item.badge}
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </Link>
+                )
+              })}
+            </div>
           </div>
         ))}
       </nav>
 
-      <div className="p-4 border-t border-border">
-        <Button
-          variant="default"
-          size="sm"
+      <div className="p-4 border-t border-slate-100 dark:border-slate-700/50">
+        <button
           className={cn(
-            "w-full",
+            "btn-datalab w-full flex items-center justify-center gap-2",
             collapsed && "px-2"
           )}
         >
           <Plus className="h-4 w-4" />
-          {!collapsed && <span className="ml-2">新建项目</span>}
-        </Button>
+          {!collapsed && <span className="font-semibold">新建会话</span>}
+        </button>
       </div>
     </aside>
   )

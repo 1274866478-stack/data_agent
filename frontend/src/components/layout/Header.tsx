@@ -57,18 +57,16 @@
 
 'use client'
 
-import { useState } from 'react'
-import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/store'
 import {
-  Bell,
-  Search,
-  Settings,
-  User,
-  Menu,
-  Moon,
-  Sun
+    ChevronDown,
+    Database,
+    History,
+    Moon,
+    Plus,
+    Sun
 } from 'lucide-react'
+import { useState } from 'react'
 
 interface HeaderProps {
   onSidebarToggle: () => void
@@ -85,58 +83,41 @@ export function Header({ onSidebarToggle, sidebarCollapsed }: HeaderProps) {
   }
 
   return (
-    <header className="h-16 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
-      <div className="flex h-full items-center px-4 gap-4">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onSidebarToggle}
-          className="lg:hidden"
-        >
-          <Menu className="h-4 w-4" />
-        </Button>
-
-        <div className="flex-1 flex items-center justify-between">
-          <div className="hidden md:block">
-            <h1 className="text-xl font-semibold">智能数据Agent V4</h1>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
-              <Search className="h-4 w-4 text-gray-500 dark:text-gray-400" />
-              <input
-                type="text"
-                placeholder="搜索..."
-                className="bg-transparent border-none outline-none text-sm w-64 placeholder:text-muted-foreground"
-              />
-            </div>
-
-            <Button variant="ghost" size="sm">
-              <Bell className="h-4 w-4" />
-            </Button>
-
-            <Button variant="ghost" size="sm" onClick={toggleDarkMode}>
-              {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
-
-            <Button variant="ghost" size="sm">
-              <Settings className="h-4 w-4" />
-            </Button>
-
-            <div className="flex items-center gap-2 pl-2 border-l border-border">
-              <div className="hidden md:block text-right">
-                <p className="text-sm font-medium">{user?.full_name || user?.email || '用户'}</p>
-                <p className="text-xs text-gray-600 dark:text-gray-400">{user?.email}</p>
-              </div>
-              <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
-                <User className="h-4 w-4 text-primary-foreground" />
-              </div>
-              <Button variant="ghost" size="sm" onClick={logout}>
-                退出
-              </Button>
-            </div>
-          </div>
+    <header className="h-16 flex items-center justify-between px-8 bg-surface-light/80 dark:bg-surface-dark/80 backdrop-blur-sm z-10 border-b border-slate-200/50 dark:border-slate-700/50 sticky top-0">
+      <div className="flex items-center gap-4">
+        {/* 数据库选择器 - DataLab 胶囊风格 */}
+        <div className="flex items-center gap-2 bg-accent-light dark:bg-slate-800 px-4 py-2 rounded-full border-2 border-primary-400/40 dark:border-primary-500/30 shadow-sm hover:border-primary-500/60 transition-all cursor-pointer">
+          <Database className="text-primary-400 h-4 w-4" />
+          <span className="text-xs font-medium text-slate-600 dark:text-slate-300">test_database_optimized</span>
+          <span className="text-[10px] bg-white dark:bg-slate-700 px-1.5 rounded text-slate-500 border border-slate-200 dark:border-slate-600">XLSX</span>
+          <ChevronDown className="text-slate-400 h-3 w-3 cursor-pointer" />
         </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        {/* 暗色模式切换 */}
+        <button 
+          onClick={toggleDarkMode}
+          className="p-2 text-slate-400 hover:text-tiffany-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors"
+        >
+          {darkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+        </button>
+
+        {/* 分隔线 */}
+        <div className="h-6 w-px bg-slate-200 dark:bg-slate-700 mx-1"></div>
+
+        {/* 历史记录按钮 */}
+        <button className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
+          <History className="h-4 w-4" />
+          History 
+          <span className="bg-slate-200 dark:bg-slate-600 px-1.5 rounded-full text-xs">107</span>
+        </button>
+
+        {/* 新建会话按钮 - DataLab 风格 */}
+        <button className="btn-datalab flex items-center gap-2 px-5 py-2 text-sm hover:scale-105 active:scale-95 transition-transform">
+          <Plus className="h-4 w-4" />
+          New Chat
+        </button>
       </div>
     </header>
   )

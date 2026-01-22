@@ -53,13 +53,12 @@
 
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Square, Paperclip, Upload, X, FileText, AlertCircle, CheckCircle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
-import { useChatStore } from '@/store/chatStore'
-import { uploadFile, UploadProgress, fileUploadService } from '@/services/fileUploadService'
 import { cn } from '@/lib/utils'
+import { fileUploadService, uploadFile, UploadProgress } from '@/services/fileUploadService'
+import { useChatStore } from '@/store/chatStore'
+import { AlertCircle, CheckCircle, FileText, Loader2, Mic, Paperclip, Send, Square, Upload, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 interface MessageInputProps {
   placeholder?: string
@@ -305,7 +304,7 @@ export function MessageInput({
   const completedUploads = uploadedFiles.filter(f => f.status === 'completed').length
 
   return (
-    <div className="border-t bg-background p-4">
+    <div className="absolute bottom-0 left-0 w-full p-6 bg-gradient-to-t from-background-light via-background-light to-transparent dark:from-background-dark dark:via-background-dark pointer-events-none">
       {/* 隐藏的文件输入 */}
       <input
         ref={fileInputRef}
@@ -316,48 +315,43 @@ export function MessageInput({
         onChange={handleFileInputChange}
       />
 
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto pointer-events-auto">
         {/* 拖拽区域指示器 */}
         {isDragOver && (
-          <div className="mb-3 p-6 border-2 border-dashed border-primary rounded-lg bg-primary/5 text-center">
-            <Upload className="h-8 w-8 mx-auto mb-2 text-primary" />
-            <p className="text-sm text-primary font-medium">释放文件以上传</p>
+          <div className="mb-3 p-6 border-2 border-dashed border-tiffany-400 rounded-2xl bg-tiffany-400/5 text-center">
+            <Upload className="h-8 w-8 mx-auto mb-2 text-tiffany-400" />
+            <p className="text-sm text-tiffany-700 dark:text-tiffany-300 font-medium">释放文件以上传</p>
             <p className="text-xs text-muted-foreground">支持 PDF、Word 文档</p>
           </div>
         )}
 
-        <div className="flex gap-3">
-          {/* 文件上传按钮 */}
-          <div className="flex-shrink-0">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleFileSelect}
-              disabled={isLoading || disabled || uploadProgress?.status === 'uploading'}
-              className="h-10 w-10 p-0"
-              title="上传文档 (PDF, Word)"
-            >
-              {uploadProgress?.status === 'uploading' ? (
-                <div className="animate-spin">
-                  <Upload className="h-4 w-4" />
-                </div>
-              ) : (
-                <Paperclip className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
+        {/* 玻璃态输入容器 */}
+        <div className="glass rounded-2xl shadow-glow p-2.5 flex items-end gap-2 ring-1 ring-primary-200/50 dark:ring-primary-500/30 backdrop-blur-xl">
+          {/* 附件按钮 */}
+          <button
+            onClick={handleFileSelect}
+            disabled={isLoading || disabled || uploadProgress?.status === 'uploading'}
+            className="p-3 text-slate-400 hover:text-tiffany-400 transition-colors rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+            title="上传文档 (PDF, Word)"
+          >
+            {uploadProgress?.status === 'uploading' ? (
+              <Upload className="h-5 w-5 animate-spin" />
+            ) : (
+              <Paperclip className="h-5 w-5" />
+            )}
+          </button>
 
           {/* 输入区域 */}
           <div
             className={cn(
-              "flex-1 relative transition-all duration-200",
-              isDragOver && "ring-2 ring-primary ring-offset-2 rounded-md"
+              "flex-1 relative",
+              isDragOver && "ring-2 ring-tiffany-400 ring-offset-2 rounded-xl"
             )}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
-            <Textarea
+            <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -365,44 +359,44 @@ export function MessageInput({
               placeholder={completedUploads > 0 ? `已上传 ${completedUploads} 个文件，输入问题...` : placeholder}
               maxLength={maxLength}
               disabled={disabled || isLoading}
-              className="min-h-[40px] max-h-[120px] resize-none pr-12 py-3"
+              className="w-full bg-transparent border-0 focus:ring-0 text-slate-800 dark:text-slate-100 placeholder-slate-400/70 py-3 px-2 resize-none leading-relaxed outline-none font-body text-base"
               rows={1}
+              style={{ minHeight: '48px' }}
             />
-
-            {/* 字符计数 */}
-            {maxLength && (
-              <div className="absolute bottom-2 right-14 text-xs text-muted-foreground">
-                {input.length}/{maxLength}
-              </div>
-            )}
           </div>
 
-          {/* 发送/停止按钮 */}
-          <div className="flex-shrink-0 flex flex-col items-center gap-1">
+          {/* 右侧按钮组 */}
+          <div className="flex items-center gap-1">
+            {/* 麦克风按钮 */}
+            <button className="p-2 text-slate-400 hover:text-tiffany-400 transition-colors rounded-lg">
+              <Mic className="h-5 w-5" />
+            </button>
+            
+            {/* 发送按钮 */}
             {isLoading ? (
-              <Button
-                variant="outline"
-                size="sm"
+              <button
                 onClick={() => {
-                  // 这里可以添加停止API调用的逻辑
+                  // 停止生成逻辑
                 }}
-                disabled={false}
-                className="h-10 px-3"
+                className="p-3 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-opacity-90 transition-all flex items-center justify-center"
+                title="停止生成"
               >
-                <Square className="h-4 w-4" />
-                <span className="sr-only">停止生成</span>
-              </Button>
+                <Square className="h-5 w-5" />
+              </button>
             ) : (
-              <Button
-                size="sm"
+              <button
                 onClick={handleSend}
                 disabled={isSendDisabled}
-                className="h-10 px-3"
+                className={cn(
+                  "p-3 rounded-xl transition-all duration-200 flex items-center justify-center",
+                  isSendDisabled
+                    ? "bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
+                    : "btn-datalab hover:scale-105 active:scale-95 shadow-glow hover:shadow-glow-lg"
+                )}
                 title={isSendDisabled ? '输入消息后发送' : '发送消息'}
               >
-                <Send className="h-4 w-4" />
-                <span className="sr-only">发送消息</span>
-              </Button>
+                <Send className="h-5 w-5" />
+              </button>
             )}
           </div>
         </div>
@@ -523,14 +517,10 @@ export function MessageInput({
         )}
 
         {/* 提示信息 */}
-        <div className="mt-3 text-xs text-muted-foreground flex flex-wrap items-center gap-x-1">
-          <span>按</span>
-          <kbd className="px-1 py-0.5 bg-muted rounded font-mono">Enter</kbd>
-          <span>发送，</span>
-          <kbd className="px-1 py-0.5 bg-muted rounded font-mono">Shift+Enter</kbd>
-          <span>换行</span>
-          <span className="mx-1">•</span>
-          <span>拖拽 PDF/Word 文档到此处上传</span>
+        <div className="text-center mt-3">
+          <p className="text-[10px] text-slate-400 dark:text-slate-500">
+            按 <span className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">Enter</span> 发送，<span className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">Shift+Enter</span> 换行。AI 可能会出错。
+          </p>
         </div>
 
         {/* 输入状态指示 */}

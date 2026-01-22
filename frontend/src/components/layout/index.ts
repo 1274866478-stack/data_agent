@@ -1,8 +1,10 @@
+export { FloatingActionButtons } from './FloatingActionButtons'
 export { Header } from './Header'
 export { Layout } from './Layout'
 export { LeftIconBar } from './LeftIconBar'
 export { ModernLayout } from './ModernLayout'
-export { ResponsiveContainer, ResponsiveGrid, ResponsiveFlex, ShowAt, HideAt } from './ResponsiveContainer'
+export { HideAt, ResponsiveContainer, ResponsiveFlex, ResponsiveGrid, ShowAt } from './ResponsiveContainer'
 export { RightCategoryBar, RightCategoryBarToggle } from './RightCategoryBar'
 export { Sidebar } from './Sidebar'
 export { ThreeColumnLayout, ThreeColumnLayoutHeader, ThreeColumnLayoutPanel } from './ThreeColumnLayout'
+

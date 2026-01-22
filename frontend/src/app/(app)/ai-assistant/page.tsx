@@ -1,11 +1,11 @@
 'use client'
 
 import { ProcessingSteps } from '@/components/chat/ProcessingSteps'
+import { ThemeToggle } from '@/components/theme'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import { ContextCard, ContextCardList, SchemaMapDisplay } from '@/components/ui/ContextCard'
 import {
     DropdownMenu,
     DropdownMenuCheckboxItem,
@@ -19,9 +19,6 @@ import { Input } from '@/components/ui/input'
 import { Markdown } from '@/components/ui/markdown'
 import { PlainText } from '@/components/ui/plain-text'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Textarea } from '@/components/ui/textarea'
-import { ThemeToggle } from '@/components/theme'
-import { ThreeColumnLayout, ThreeColumnLayoutPanel } from '@/components/layout/ThreeColumnLayout'
 import { cn } from '@/lib/utils'
 import { fileUploadService, uploadFile, UploadProgress } from '@/services/fileUploadService'
 import { useChatStore } from '@/store/chatStore'
@@ -323,7 +320,7 @@ export default function AIAssistantPage() {
 
   return (
     <div
-      className="h-[calc(100vh-8rem)] flex bg-gradient-to-br from-tiffany-100 to-tiffany-50 -m-6 font-inter"
+      className="h-[calc(100vh-8rem)] flex bg-gradient-to-br from-background-light via-primary-50/30 to-background-light dark:from-background-dark dark:via-primary-950/10 dark:to-background-dark -m-6 font-inter"
       data-theme="tiffany"
     >
       {/* 历史对话侧边栏 */}
@@ -565,7 +562,7 @@ export default function AIAssistantPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-8 min-w-[240px] justify-between text-foreground"
+                        className="h-8 min-w-[240px] justify-between text-foreground rounded-full border-primary-300/50 hover:border-primary-400 hover:bg-primary-50/50 transition-all"
                       >
                         <div className="flex items-center gap-2 overflow-hidden">
                           <span className="truncate">{selectedDataSourceLabel}</span>
@@ -739,11 +736,12 @@ export default function AIAssistantPage() {
                       <div className={`flex-1 max-w-[75%] ${
                         message.role === 'user' ? 'text-right' : ''
                       }`}>
-                        <div className={`inline-block p-4 rounded-2xl ${
+                        <div className={cn(
+                          "inline-block p-4 rounded-2xl",
                           message.role === 'user'
-                            ? 'bg-gradient-to-br from-primary to-primary/80 text-primary-foreground'
-                            : 'bg-card border border-border shadow-sm'
-                        }`}>
+                            ? 'bg-gradient-to-br from-primary-400 to-primary-500 text-slate-900 font-medium shadow-glow message-user'
+                            : 'bg-white/95 dark:bg-slate-800/95 border border-primary-200/50 dark:border-primary-500/30 shadow-sm backdrop-blur-sm message-ai'
+                        )}>
                           {message.role === 'user' ? (
                             <p className="text-base whitespace-pre-wrap">{message.content}</p>
                           ) : (
@@ -945,14 +943,13 @@ export default function AIAssistantPage() {
                 </div>
               )}
 
-              <div className="flex gap-3 items-end">
+              {/* DataLab 玻璃态输入容器 */}
+              <div className="glass rounded-2xl shadow-2xl p-3 flex items-end gap-3 ring-1 ring-slate-200 dark:ring-slate-700">
                 {/* 文件上传按钮 */}
-                <Button
-                  variant="outline"
-                  size="icon"
+                <button
                   onClick={handleFileSelect}
                   disabled={isLoading || uploadProgress?.status === 'uploading'}
-                  className="h-12 w-12 flex-shrink-0"
+                  className="p-3 text-slate-400 hover:text-tiffany-400 transition-colors rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex-shrink-0"
                   title="上传文档 (PDF, Word)"
                 >
                   {uploadProgress?.status === 'uploading' ? (
@@ -960,47 +957,49 @@ export default function AIAssistantPage() {
                   ) : (
                     <Paperclip className="h-5 w-5" />
                   )}
-                </Button>
+                </button>
 
-                <Textarea
+                <textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      handleSend()
-                    }
-                  }}
+                  onKeyDown={handleKeyPress}
                   placeholder={completedUploads > 0 ? `已上传 ${completedUploads} 个文件，输入问题...` : "输入您的问题..."}
                   disabled={isLoading}
-                  className="flex-1 min-h-[48px] max-h-[120px] resize-none text-base"
+                  className="flex-1 bg-transparent border-0 focus:ring-0 text-slate-800 dark:text-slate-100 placeholder-slate-400 py-3 px-2 resize-none leading-relaxed outline-none text-base"
                   rows={1}
+                  style={{ minHeight: '48px', maxHeight: '120px' }}
                 />
+                
                 {isLoading ? (
-                  <Button
+                  <button
                     onClick={stopStreaming}
-                    size="lg"
-                    className="h-12 bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700"
+                    className="p-3.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-all flex items-center justify-center flex-shrink-0"
                     title="停止生成"
                   >
                     <Square className="w-5 h-5 fill-current" />
-                  </Button>
+                  </button>
                 ) : (
-                  <Button
+                  <button
                     onClick={handleSend}
                     disabled={!input.trim()}
-                    size="lg"
-                    className="h-12 bg-gradient-to-br from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
+                    className={cn(
+                      "p-3.5 rounded-xl transition-all flex items-center justify-center flex-shrink-0",
+                      !input.trim()
+                        ? "bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
+                        : "btn-datalab"
+                    )}
                   >
                     <Send className="w-5 h-5" />
-                  </Button>
+                  </button>
                 )}
               </div>
-              <div className="mt-2 text-xs text-muted-foreground">
+              <div className="mt-2 text-center">
                 {isLoading ? (
-                  <span className="text-orange-600">AI 正在生成中... 点击红色按钮可停止生成</span>
+                  <p className="text-[10px] text-orange-600">AI 正在生成中... 点击红色按钮可停止生成</p>
                 ) : (
-                  <span>按 Enter 发送，Shift+Enter 换行 • 支持上传 PDF、Word 文档</span>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                    按 <span className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">Enter</span> 发送，<span className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">Shift+Enter</span> 换行。AI 可能会出错。
+                  </p>
                 )}
               </div>
             </div>

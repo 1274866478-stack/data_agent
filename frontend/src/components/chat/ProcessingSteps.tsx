@@ -46,6 +46,7 @@
 
 import { Markdown } from '@/components/ui/markdown'
 import { PlainText } from '@/components/ui/plain-text'
+import { PulseIndicator } from '@/components/ui/PulseIndicator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { ProcessingStep, StepChartData, StepTableData } from '@/types/chat'
@@ -162,17 +163,17 @@ function getStepIcon(step: number, title: string, status: ProcessingStep['status
   return <Clock className={cn(iconClass, 'text-muted-foreground')} />
 }
 
-// 获取步骤的状态颜色
+// 获取步骤的状态颜色 - DataLab Tiffany 色系
 function getStatusColor(status: ProcessingStep['status']) {
   switch (status) {
     case 'completed':
-      return 'border-green-500/30 bg-green-500/10'
+      return 'border-tiffany-500/30 bg-tiffany-500/10'
     case 'running':
-      return 'border-primary/30 bg-primary/10'
+      return 'border-tiffany-400/50 bg-tiffany-400/20'
     case 'error':
-      return 'border-destructive/30 bg-destructive/10'
+      return 'border-red-500/30 bg-red-500/10'
     default:
-      return 'border-border bg-muted'
+      return 'border-slate-200 dark:border-slate-700 bg-slate-100/50 dark:bg-slate-800/50'
   }
 }
 
@@ -825,26 +826,26 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
     return { totalDuration, completedSteps, hasError, isRunning }
   }, [steps])
 
-  // 4. 使用 useMemo 缓存容器类名
+  // 4. 使用 useMemo 缓存容器类名 - DataLab 玻璃态风格
   const containerClassName = useMemo(
     () => cn(
-      'mt-3 rounded-lg border overflow-hidden',
-      stats.hasError ? 'border-destructive/30 bg-destructive/5' :
-      stats.isRunning ? 'border-primary/30 bg-primary/5' :
-      'border-green-500/30 bg-green-500/5',
+      'mt-4 rounded-2xl border overflow-hidden shadow-lg',
+      stats.hasError ? 'border-red-400/30 bg-red-50/50 dark:bg-red-900/10' :
+      stats.isRunning ? 'border-tiffany-400/50 bg-tiffany-50/50 dark:bg-tiffany-900/10' :
+      'border-tiffany-500/30 bg-tiffany-50/30 dark:bg-tiffany-900/10',
       className
     ),
     [stats.hasError, stats.isRunning, className]
   )
 
-  // 5. 使用 useMemo 缓存标题栏类名
+  // 5. 使用 useMemo 缓存标题栏类名 - Tiffany 色系
   const headerClassName = useMemo(
     () => cn(
-      'w-full px-3 py-2 flex items-center justify-between text-sm font-medium',
-      'hover:bg-muted transition-colors',
-      stats.hasError ? 'text-destructive' :
-      stats.isRunning ? 'text-primary' :
-      'text-green-600'
+      'w-full px-4 py-3 flex items-center justify-between text-sm font-semibold',
+      'hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors',
+      stats.hasError ? 'text-red-600 dark:text-red-400' :
+      stats.isRunning ? 'text-tiffany-600 dark:text-tiffany-400' :
+      'text-tiffany-700 dark:text-tiffany-300'
     ),
     [stats.hasError, stats.isRunning]
   )
@@ -858,7 +859,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
       >
         <div className="flex items-center gap-2">
           {stats.isRunning ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
+            <PulseIndicator variant="processing" size="md" />
           ) : stats.hasError ? (
             <XCircle className="w-4 h-4" />
           ) : (
@@ -879,22 +880,22 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
         )}
       </button>
 
-      {/* 进度条 */}
-      <div className="px-3 pb-2">
-        <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+      {/* Tiffany 渐变进度条 - 更细更精致 */}
+      <div className="px-4 pb-3">
+        <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden shadow-inner">
           <div
             className={cn(
               'h-full rounded-full transition-all duration-500 ease-out',
-              stats.isRunning ? 'bg-primary animate-pulse' :
-              stats.hasError ? 'bg-destructive' :
-              'bg-green-500'
+              stats.isRunning ? 'bg-gradient-to-r from-primary-300 via-primary-400 to-primary-500 animate-subtle-pulse shadow-glow' :
+              stats.hasError ? 'bg-gradient-to-r from-red-400 to-red-500' :
+              'bg-gradient-to-r from-primary-400 to-primary-600'
             )}
             style={{ width: `${(stats.completedSteps / steps.length) * 100}%` }}
           />
         </div>
-        <div className="flex justify-between mt-1 text-xs text-muted-foreground">
+        <div className="flex justify-between mt-1.5 text-[10px] text-slate-400 dark:text-slate-500">
           <span>{stats.completedSteps} / {steps.length} 步骤</span>
-          <span>{Math.round((stats.completedSteps / steps.length) * 100)}%</span>
+          <span className="font-mono">{Math.round((stats.completedSteps / steps.length) * 100)}%</span>
         </div>
       </div>
 
@@ -926,8 +927,9 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
                 <div
                   key={uniqueKey}
                   className={cn(
-                    'rounded-md border p-2 transition-all duration-300',
-                    getStatusColor(step.status)
+                    'rounded-lg border p-2.5 transition-all duration-200 hover:shadow-sm',
+                    getStatusColor(step.status),
+                    step.status === 'running' && 'ring-1 ring-primary-300/50 shadow-glow'
                   )}
                 >
                 <div className="flex items-start gap-2">
