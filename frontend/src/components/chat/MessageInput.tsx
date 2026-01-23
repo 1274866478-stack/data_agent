@@ -76,7 +76,7 @@ interface UploadedFile {
 }
 
 export function MessageInput({
-  placeholder = '输入您的问题...',
+  placeholder = 'Ask a follow-up question...',
   maxLength = 2000,
   disabled = false,
   onFileAttach,
@@ -318,10 +318,10 @@ export function MessageInput({
       <div className="max-w-4xl mx-auto pointer-events-auto">
         {/* 拖拽区域指示器 */}
         {isDragOver && (
-          <div className="mb-3 p-6 border-2 border-dashed border-tiffany-400 rounded-2xl bg-tiffany-400/5 text-center">
-            <Upload className="h-8 w-8 mx-auto mb-2 text-tiffany-400" />
-            <p className="text-sm text-tiffany-700 dark:text-tiffany-300 font-medium">释放文件以上传</p>
-            <p className="text-xs text-muted-foreground">支持 PDF、Word 文档</p>
+          <div className="mb-3 p-6 border-2 border-dashed border-primary rounded-2xl bg-primary/5 text-center">
+            <Upload className="h-8 w-8 mx-auto mb-2 text-primary" />
+            <p className="text-sm text-teal-700 dark:text-teal-300 font-medium">Drop files to upload</p>
+            <p className="text-xs text-muted-foreground">Supports PDF, Word documents</p>
           </div>
         )}
 
@@ -331,7 +331,7 @@ export function MessageInput({
           <button
             onClick={handleFileSelect}
             disabled={isLoading || disabled || uploadProgress?.status === 'uploading'}
-            className="p-3 text-slate-400 hover:text-tiffany-400 transition-colors rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="p-3 text-slate-400 hover:text-primary transition-colors rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
             title="上传文档 (PDF, Word)"
           >
             {uploadProgress?.status === 'uploading' ? (
@@ -345,7 +345,7 @@ export function MessageInput({
           <div
             className={cn(
               "flex-1 relative",
-              isDragOver && "ring-2 ring-tiffany-400 ring-offset-2 rounded-xl"
+              isDragOver && "ring-2 ring-primary ring-offset-2 rounded-xl"
             )}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -368,7 +368,7 @@ export function MessageInput({
           {/* 右侧按钮组 */}
           <div className="flex items-center gap-1">
             {/* 麦克风按钮 */}
-            <button className="p-2 text-slate-400 hover:text-tiffany-400 transition-colors rounded-lg">
+            <button className="p-2 text-slate-400 hover:text-primary transition-colors rounded-lg">
               <Mic className="h-5 w-5" />
             </button>
             

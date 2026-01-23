@@ -71,9 +71,7 @@ import {
     FileText,
     FlaskConical,
     LayoutDashboard,
-    Plus,
-    Settings,
-    Users
+    Settings
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -110,49 +108,49 @@ export function Sidebar({ collapsed, onCollapse }: SidebarProps) {
 
   const navSections: NavSection[] = [
     {
-      title: '主要功能',
+      title: 'OVERVIEW',
       items: [
         {
-          title: '仪表板',
+          title: 'Dashboard',
           href: '/dashboard',
           icon: LayoutDashboard
-        },
+        }
+      ]
+    },
+    {
+      title: 'DATA MANAGEMENT',
+      items: [
         {
-          title: '数据源管理',
+          title: 'Data Sources',
           href: '/data-sources',
           icon: Database,
           badge: '3'
         },
         {
-          title: '数据分析',
+          title: 'Documents',
           href: '/analytics',
-          icon: BarChart3
-        },
-        {
-          title: '智能数据助手',
-          href: '/ai-assistant',
-          icon: Bot,
-          badge: '新'
+          icon: FileText
         }
       ]
     },
     {
-      title: '管理',
+      title: 'ANALYSIS TOOLS',
       items: [
         {
-          title: '报告中心',
+          title: 'AI Assistant',
+          href: '/ai-assistant',
+          icon: Bot,
+          badge: '新'
+        },
+        {
+          title: 'Analysis',
+          href: '/analytics',
+          icon: BarChart3
+        },
+        {
+          title: 'Reports',
           href: '/reports',
           icon: FileText
-        },
-        {
-          title: '用户管理',
-          href: '/users',
-          icon: Users
-        },
-        {
-          title: '系统设置',
-          href: '/settings',
-          icon: Settings
         }
       ]
     }
@@ -167,27 +165,29 @@ export function Sidebar({ collapsed, onCollapse }: SidebarProps) {
 
   return (
     <aside className={cn(
-      "flex flex-col h-full bg-background border-r border-border transition-all duration-300",
+      "flex flex-col h-full bg-surface-light dark:bg-surface-dark border-r border-slate-200 dark:border-slate-700 transition-all duration-300",
       collapsed ? "w-16" : "w-64"
     )}>
+      {/* Logo 区域 */}
       <div className="h-16 flex items-center px-6 border-b border-slate-100 dark:border-slate-700/50">
         {!collapsed ? (
           <div className="flex items-center">
-            <div className="w-8 h-8 rounded-lg bg-tiffany-400 flex items-center justify-center text-slate-900 mr-3 shadow-glow">
+            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-slate-900 mr-3 shadow-glow">
               <FlaskConical className="h-5 w-5" />
             </div>
             <h1 className="font-display font-bold text-lg tracking-tight">
-              Data<span className="text-tiffany-400">Lab</span> Agent
+              Data<span className="text-primary">Lab</span> Agent
             </h1>
           </div>
         ) : (
-          <div className="w-8 h-8 rounded-lg bg-tiffany-400 flex items-center justify-center text-slate-900 shadow-glow mx-auto">
+          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-slate-900 shadow-glow mx-auto">
             <FlaskConical className="h-5 w-5" />
           </div>
         )}
       </div>
 
-      <nav className="flex-1 overflow-y-auto p-4 space-y-6">
+      {/* 导航区域 */}
+      <nav className="flex-1 overflow-y-auto p-4 space-y-8">
         {navSections.map((section) => (
           <div key={section.title}>
             {!collapsed && (
@@ -204,20 +204,22 @@ export function Sidebar({ collapsed, onCollapse }: SidebarProps) {
                   <Link key={item.href} href={item.href}>
                     <div
                       className={cn(
-                        "nav-item-datalab",
-                        active && "active",
+                        "flex items-center px-2 py-2.5 text-sm font-medium rounded-lg transition-colors group",
+                        active 
+                          ? "bg-secondary/30 text-primary border border-primary/20" 
+                          : "text-slate-600 dark:text-slate-400 hover:text-primary hover:bg-slate-50 dark:hover:bg-slate-700/50",
                         collapsed && "justify-center"
                       )}
                     >
                       <Icon className={cn(
-                        "h-4 w-4 text-slate-400 group-hover:text-tiffany-400 transition-colors",
-                        active && "text-tiffany-400"
+                        "h-4 w-4 transition-colors",
+                        active ? "text-primary" : "text-slate-400 group-hover:text-primary"
                       )} />
                       {!collapsed && (
                         <>
                           <span className="ml-3">{item.title}</span>
                           {item.badge && (
-                            <span className="ml-auto text-[10px] bg-tiffany-400/20 text-tiffany-700 dark:text-tiffany-300 px-2 py-0.5 rounded-full border border-tiffany-400/30">
+                            <span className="ml-auto text-[10px] bg-primary/20 text-primary-700 dark:text-primary-300 px-2 py-0.5 rounded-full border border-primary/30">
                               {item.badge}
                             </span>
                           )}
@@ -232,16 +234,27 @@ export function Sidebar({ collapsed, onCollapse }: SidebarProps) {
         ))}
       </nav>
 
+      {/* 底部用户区域 */}
       <div className="p-4 border-t border-slate-100 dark:border-slate-700/50">
-        <button
-          className={cn(
-            "btn-datalab w-full flex items-center justify-center gap-2",
-            collapsed && "px-2"
+        <div className="flex items-center w-full px-2 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded-lg transition-colors cursor-pointer">
+          {!collapsed && (
+            <>
+              <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-600 flex items-center justify-center text-xs font-bold mr-3">
+                JD
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold">John Doe</p>
+                <p className="text-xs text-slate-400">Data Scientist</p>
+              </div>
+              <Settings className="h-4 w-4 text-slate-400" />
+            </>
           )}
-        >
-          <Plus className="h-4 w-4" />
-          {!collapsed && <span className="font-semibold">新建会话</span>}
-        </button>
+          {collapsed && (
+            <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-600 flex items-center justify-center text-xs font-bold mx-auto">
+              JD
+            </div>
+          )}
+        </div>
       </div>
     </aside>
   )

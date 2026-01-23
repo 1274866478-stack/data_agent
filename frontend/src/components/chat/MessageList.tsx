@@ -60,14 +60,13 @@
 
 'use client'
 
-import { useEffect, useRef, useImperativeHandle, forwardRef, useState } from 'react'
-import { User, Bot, AlertTriangle, Square, Check, X } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
-import { Markdown } from '@/components/ui/markdown'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import { ChatMessage, useChatStore } from '@/store/chatStore'
 import { cn } from '@/lib/utils'
+import { ChatMessage, useChatStore } from '@/store/chatStore'
+import { AlertTriangle, Bot, Check, Square, User, X } from 'lucide-react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { ProcessingSteps } from './ProcessingSteps'
 
 /**
@@ -286,30 +285,31 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                   return null
                 }
 
-                // 用户消息或没有 steps 的 AI 消息，显示气泡卡片
-                if (message.role === 'user' || (!hasProcessingSteps && (hasContent || message.status === 'sending'))) {
+                // 用户消息 - DataLab 风格
+                if (message.role === 'user') {
                   return (
-                    <Card className={cn(
-                      'inline-block w-full',
-                      message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground'
-                    )}>
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="bg-primary text-slate-900 px-6 py-4 rounded-2xl rounded-tr-sm shadow-soft max-w-md">
+                        <p className="font-medium text-sm leading-relaxed">{message.content || ''}</p>
+                      </div>
+                      <span className="text-xs text-slate-400 px-2">
+                        {formatTimestamp(message.timestamp)}
+                      </span>
+                    </div>
+                  )
+                }
+
+                // AI 消息 (没有 processing_steps 的情况)
+                if (!hasProcessingSteps && (hasContent || message.status === 'sending')) {
+                  return (
+                    <Card className="inline-block w-full bg-muted text-foreground">
                       <CardContent className="p-3">
                         <div className="message-container">
-                          {/* 渲染消息内容 */}
-                          {message.role === 'user' ? (
-                            <p className="text-base whitespace-pre-wrap">{message.content || ''}</p>
-                          ) : (
-                            // AI消息：所有内容在 ProcessingSteps 中展示
-                            <>
-                              {/* 有内容时显示内容 */}
-                              {hasContent && (
-                                <p className="text-base whitespace-pre-wrap">{message.content}</p>
-                              )}
-                              {/* 生成中时显示流式光标 */}
-                              {message.status === 'sending' && !hasProcessingSteps && (
-                                <span className="inline-block w-2 h-5 ml-1 bg-gray-600 animate-pulse" />
-                              )}
-                            </>
+                          {hasContent && (
+                            <p className="text-base whitespace-pre-wrap">{message.content}</p>
+                          )}
+                          {message.status === 'sending' && !hasProcessingSteps && (
+                            <span className="inline-block w-2 h-5 ml-1 bg-gray-600 animate-pulse" />
                           )}
                         </div>
                       </CardContent>

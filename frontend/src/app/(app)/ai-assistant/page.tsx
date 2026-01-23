@@ -1,10 +1,10 @@
 'use client'
 
 import { ProcessingSteps } from '@/components/chat/ProcessingSteps'
-import { ThemeToggle } from '@/components/theme'
+import { ThemeToggle } from '@/components/theme/ThemeToggle'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
     DropdownMenu,
@@ -13,7 +13,7 @@ import {
     DropdownMenuItem,
     DropdownMenuLabel,
     DropdownMenuSeparator,
-    DropdownMenuTrigger
+    DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Markdown } from '@/components/ui/markdown'
@@ -319,15 +319,181 @@ export default function AIAssistantPage() {
   const completedUploads = uploadedFiles.filter(f => f.status === 'completed').length
 
   return (
-    <div
-      className="h-[calc(100vh-8rem)] flex bg-gradient-to-br from-background-light via-primary-50/30 to-background-light dark:from-background-dark dark:via-primary-950/10 dark:to-background-dark -m-6 font-inter"
-      data-theme="tiffany"
-    >
-      {/* 历史对话侧边栏 */}
-      <div className={cn(
-        "h-full bg-card border-r shadow-lg transition-all duration-300 flex flex-col",
-        showHistory ? "w-80" : "w-0 overflow-hidden"
-      )}>
+    <div className="h-screen flex flex-col bg-gradient-to-br from-slate-50 via-primary-50/20 to-slate-100 -m-6 font-inter">
+      {/* 顶部菜单栏 */}
+      <div className="h-14 border-b border-slate-200/60 bg-white/80 backdrop-blur-sm shadow-sm flex-shrink-0">
+        <div className="h-full max-w-7xl mx-auto px-6 flex items-center justify-between">
+          {/* Logo */}
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-semibold text-slate-800 flex items-center gap-1.5">
+              Insight <span className="text-primary">⚡</span> Agent
+            </h1>
+          </div>
+          
+          {/* 中间区域 - 数据源选择器 */}
+          <div className="flex items-center gap-2">
+            <Database className="w-4 h-4 text-slate-500" />
+            <DropdownMenu
+              open={dataSourceMenuOpen}
+              onOpenChange={(open) => {
+                setDataSourceMenuOpen(open)
+                if (open) {
+                  setPendingDataSourceIds(selectedDataSourceIds)
+                }
+              }}
+            >
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[200px] justify-between text-slate-700 border-slate-300/50 hover:border-primary-400 hover:bg-primary-50/50"
+                >
+                  <div className="flex items-center gap-2 overflow-hidden">
+                    <span className="truncate text-sm">{selectedDataSourceLabel}</span>
+                    {selectedDataSources.length > 0 && (
+                      <div className="flex items-center gap-1">
+                        {selectedDataSources.slice(0, 2).map(ds => (
+                          <Badge key={ds.id} variant="outline" className="text-[10px] px-1 py-0">
+                            {ds.db_type.toUpperCase()}
+                          </Badge>
+                        ))}
+                        {selectedDataSources.length > 2 && (
+                          <Badge variant="outline" className="text-[10px] px-1 py-0">
+                            +{selectedDataSources.length - 2}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <ChevronDown className="w-4 h-4 shrink-0" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-72" sideOffset={6} align="center">
+                <DropdownMenuLabel>选择数据源</DropdownMenuLabel>
+                <DropdownMenuCheckboxItem
+                  checked={pendingDataSourceIds.length === 0}
+                  onCheckedChange={() => setPendingDataSourceIds([])}
+                  className="pl-2"
+                  onSelect={(e) => e.preventDefault()}
+                >
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={pendingDataSourceIds.length === 0}
+                      className="pointer-events-none h-3.5 w-3.5"
+                    />
+                    <span>所有数据源（自动）</span>
+                  </div>
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator />
+                {isLoadingDataSources ? (
+                  <DropdownMenuItem disabled className="flex items-center gap-2">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    加载中...
+                  </DropdownMenuItem>
+                ) : activeDataSources.length === 0 ? (
+                  <DropdownMenuItem disabled className="text-muted-foreground">
+                    暂无可用数据源
+                  </DropdownMenuItem>
+                ) : (
+                  activeDataSources.map((ds) => (
+                    <DropdownMenuCheckboxItem
+                      key={ds.id}
+                      checked={pendingDataSourceIds.includes(ds.id)}
+                      onCheckedChange={(checked) => {
+                        const isChecked = Boolean(checked)
+                        setPendingDataSourceIds((prev) => {
+                          const next = new Set(prev)
+                          if (isChecked) {
+                            next.add(ds.id)
+                          } else {
+                            next.delete(ds.id)
+                          }
+                          return Array.from(next)
+                        })
+                      }}
+                      onSelect={(e) => e.preventDefault()}
+                    >
+                      <div className="flex items-center justify-between gap-2 w-full">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Checkbox
+                            checked={pendingDataSourceIds.includes(ds.id)}
+                            className="pointer-events-none h-3.5 w-3.5"
+                          />
+                          <span className="truncate">{ds.name}</span>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] px-1 py-0">
+                          {ds.db_type.toUpperCase()}
+                        </Badge>
+                      </div>
+                    </DropdownMenuCheckboxItem>
+                  ))
+                )}
+                <DropdownMenuSeparator />
+                <div className="flex items-center justify-end gap-2 px-2 pb-2 pt-1">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-7 text-xs"
+                    onClick={() => {
+                      setPendingDataSourceIds(selectedDataSourceIds)
+                      setDataSourceMenuOpen(false)
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => {
+                      setSelectedDataSourceIds(pendingDataSourceIds)
+                      setDataSourceMenuOpen(false)
+                    }}
+                  >
+                    确认
+                  </Button>
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          
+          {/* 右侧按钮 */}
+          <div className="flex items-center gap-2">
+            {/* 主题切换 */}
+            <ThemeToggle />
+            
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowHistory(!showHistory)}
+              className="gap-2 text-slate-700 hover:text-primary hover:bg-primary-50/50"
+            >
+              <History className="w-4 h-4" />
+              History
+              {sessions.length > 0 && (
+                <span className="bg-primary/20 text-primary text-xs px-1.5 py-0.5 rounded-full font-medium">
+                  {sessions.length}
+                </span>
+              )}
+            </Button>
+            <Button
+              onClick={handleStartNewConversation}
+              size="sm"
+              className="gap-2 bg-primary text-slate-900 hover:opacity-90 shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              New Chat
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* 主容器 */}
+      <div className="flex-1 flex min-h-0">
+        {/* 历史对话侧边栏 */}
+        <div className={cn(
+          "h-full bg-white/60 backdrop-blur-sm border-r border-slate-200/60 shadow-lg transition-all duration-300 flex flex-col",
+          showHistory ? "w-80" : "w-0 overflow-hidden"
+        )}>
         {showHistory && (
           <>
             {/* 侧边栏头部 */}
@@ -475,212 +641,12 @@ export default function AIAssistantPage() {
         )}
       </div>
 
-      {/* 主内容区 */}
-      <div className="flex-1 flex flex-col p-6 min-h-0">
-        <div className="flex-1 max-w-6xl mx-auto w-full flex flex-col min-h-0 overflow-hidden">
-          {/* Header */}
-          <Card className="mb-6 border border-tiffany-200/60 dark:border-tiffany-500/30 bg-gradient-to-br from-tiffany-50/50 to-tiffany-100/50 dark:from-tiffany-500/10 dark:to-tiffany-600/10 shadow-lg hover:shadow-xl transition-all duration-200 flex-shrink-0">
-            <CardHeader className="pb-4">
-              <div className="flex items-center justify-between">
-                <CardTitle className="flex items-center gap-3 text-2xl">
-                  <div className="p-2 bg-gradient-to-r from-tiffany-500 to-tiffany-600 rounded-lg">
-                    <Sparkles className="w-6 h-6 text-white" />
-                  </div>
-                  智能数据助手
-                </CardTitle>
-                <div className="flex items-center gap-2">
-                  {/* 主题切换按钮 */}
-                  <ThemeToggle />
-                  {/* 格式切换按钮 */}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      const newFormat = outputFormat === 'markdown' ? 'plain' : 'markdown'
-                      setOutputFormat(newFormat)
-                    }}
-                    className="gap-2 text-foreground"
-                    title={outputFormat === 'markdown' ? '切换到纯文本格式' : '切换到Markdown格式'}
-                  >
-                    {outputFormat === 'markdown' ? (
-                      <>
-                        <MessageSquare className="w-4 h-4" />
-                        富文本
-                      </>
-                    ) : (
-                      <>
-                        <FileText className="w-4 h-4" />
-                        纯文本
-                      </>
-                    )}
-                  </Button>
-                  {/* 历史对话按钮 */}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowHistory(!showHistory)}
-                    className="gap-2 text-foreground"
-                  >
-                    <History className="w-4 h-4" />
-                    历史对话
-                    {sessions.length > 0 && (
-                      <span className="bg-primary/20 text-primary text-xs px-1.5 py-0.5 rounded-full">
-                        {sessions.length}
-                      </span>
-                    )}
-                  </Button>
-                  {/* 新建对话按钮 */}
-                  <Button
-                    onClick={handleStartNewConversation}
-                    size="sm"
-                    className="gap-2 bg-gradient-to-r from-tiffany-500 to-tiffany-600 text-white hover:opacity-90 transition-opacity"
-                  >
-                    <Plus className="w-4 h-4" />
-                    新建对话
-                  </Button>
-                </div>
-              </div>
-              <div className="flex items-center justify-between mt-3">
-                <p className="text-sm text-muted-foreground">
-                  基于 DeepSeek 的智能数据分析助手，支持多轮对话和上下文理解
-                </p>
-                {/* 数据源选择器 */}
-                <div className="flex items-center gap-2">
-                  <Database className="w-4 h-4 text-muted-foreground" />
-                  <DropdownMenu
-                    open={dataSourceMenuOpen}
-                    onOpenChange={(open) => {
-                      setDataSourceMenuOpen(open)
-                      if (open) {
-                        setPendingDataSourceIds(selectedDataSourceIds)
-                      } else {
-                        setPendingDataSourceIds(selectedDataSourceIds)
-                      }
-                    }}
-                  >
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 min-w-[240px] justify-between text-foreground rounded-full border-primary-300/50 hover:border-primary-400 hover:bg-primary-50/50 transition-all"
-                      >
-                        <div className="flex items-center gap-2 overflow-hidden">
-                          <span className="truncate">{selectedDataSourceLabel}</span>
-                          {selectedDataSources.length > 0 && (
-                            <div className="flex items-center gap-1">
-                              {selectedDataSources.slice(0, 2).map(ds => (
-                                <Badge key={ds.id} variant="outline" className="text-[10px] px-1 py-0">
-                                  {ds.db_type.toUpperCase()}
-                                </Badge>
-                              ))}
-                              {selectedDataSources.length > 2 && (
-                                <Badge variant="outline" className="text-[10px] px-1 py-0">
-                                  +{selectedDataSources.length - 2}
-                                </Badge>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                        <ChevronDown className="w-4 h-4 shrink-0" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      className="w-72"
-                      sideOffset={6}
-                      align="end"
-                    >
-                      <DropdownMenuLabel>选择数据源</DropdownMenuLabel>
-                      <DropdownMenuCheckboxItem
-                        checked={pendingDataSourceIds.length === 0}
-                        onCheckedChange={() => setPendingDataSourceIds([])}
-                        className="pl-2"
-                        onSelect={(e) => e.preventDefault()}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Checkbox
-                            checked={pendingDataSourceIds.length === 0}
-                            className="pointer-events-none h-3.5 w-3.5"
-                          />
-                          <span>所有数据源（自动）</span>
-                        </div>
-                      </DropdownMenuCheckboxItem>
-                      <DropdownMenuSeparator />
-                      {isLoadingDataSources ? (
-                        <DropdownMenuItem disabled className="flex items-center gap-2">
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                          加载中...
-                        </DropdownMenuItem>
-                      ) : activeDataSources.length === 0 ? (
-                        <DropdownMenuItem disabled className="text-muted-foreground">
-                          暂无可用数据源
-                        </DropdownMenuItem>
-                      ) : (
-                        activeDataSources.map((ds) => (
-                          <DropdownMenuCheckboxItem
-                            key={ds.id}
-                            checked={pendingDataSourceIds.includes(ds.id)}
-                            onCheckedChange={(checked) => {
-                              const isChecked = Boolean(checked)
-                              setPendingDataSourceIds((prev) => {
-                                const next = new Set(prev)
-                                if (isChecked) {
-                                  next.add(ds.id)
-                                } else {
-                                  next.delete(ds.id)
-                                }
-                                return Array.from(next)
-                              })
-                            }}
-                            onSelect={(e) => e.preventDefault()}
-                          >
-                            <div className="flex items-center justify-between gap-2 w-full">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <Checkbox
-                                  checked={pendingDataSourceIds.includes(ds.id)}
-                                  className="pointer-events-none h-3.5 w-3.5"
-                                />
-                                <span className="truncate">{ds.name}</span>
-                              </div>
-                              <Badge variant="outline" className="text-[10px] px-1 py-0">
-                                {ds.db_type.toUpperCase()}
-                              </Badge>
-                            </div>
-                          </DropdownMenuCheckboxItem>
-                        ))
-                      )}
-                      <DropdownMenuSeparator />
-                      <div className="flex items-center justify-end gap-2 px-2 pb-2 pt-1">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="h-8"
-                          onClick={() => {
-                            setPendingDataSourceIds(selectedDataSourceIds)
-                            setDataSourceMenuOpen(false)
-                          }}
-                        >
-                          取消
-                        </Button>
-                        <Button
-                          size="sm"
-                          className="h-8"
-                          onClick={() => {
-                            setSelectedDataSourceIds(pendingDataSourceIds)
-                            setDataSourceMenuOpen(false)
-                          }}
-                        >
-                          确认
-                        </Button>
-                      </div>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              </div>
-            </CardHeader>
-          </Card>
+        {/* 主内容区 */}
+        <div className="flex-1 flex flex-col p-6 min-h-0">
+          <div className="flex-1 max-w-6xl mx-auto w-full flex flex-col min-h-0 overflow-hidden">
 
           {/* Chat Area */}
-          <Card className="flex-1 flex flex-col shadow-lg min-h-0 overflow-hidden">
+          <Card className="flex-1 flex flex-col glass shadow-2xl border-slate-200/40 min-h-0 overflow-hidden">
             <CardContent className="flex-1 flex flex-col p-6 min-h-0">
               {/* Messages */}
               <div className="flex-1 overflow-y-auto mb-4 space-y-4 min-h-0">
@@ -689,7 +655,7 @@ export default function AIAssistantPage() {
                   <div className="p-4 bg-gradient-to-br from-primary/10 to-primary/20 rounded-full mb-4">
                     <Bot className="w-16 h-16 text-primary" />
                   </div>
-                  <h3 className="text-xl font-semibold mb-2">欢迎使用 智能数据助手</h3>
+                  <h3 className="text-xl font-semibold mb-2">欢迎使用 Insight Agent</h3>
                   <p className="text-muted-foreground mb-6 max-w-md">
                     我可以帮助您分析数据、回答问题、生成报告。请输入您的问题开始对话。
                   </p>
@@ -1006,6 +972,8 @@ export default function AIAssistantPage() {
           </CardContent>
         </Card>
         </div>
+      </div>
+      {/* Close main container */}
       </div>
     </div>
   )

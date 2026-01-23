@@ -5,22 +5,22 @@
 /* Data Agent V4 - Fira 字体引入 */
 @import url('https://fonts.googleapis.com/css2?family=Fira+Sans:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap');
 
-/* Tiffany UI - Inter 和 JetBrains Mono 字体引入 */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* DataLab UI - Inter, JetBrains Mono, Plus Jakarta Sans 字体引入 */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap');
 
 @layer base {
   :root {
-    /* Data Agent V4 主题色彩 - 蓝橙配色 */
-    --background: 210 40% 98%;
+    /* DataLab 主色调 */
+    --background: 174 35% 94%;
+    /* 淡青绿色背景 */
     --foreground: 222 47% 11%;
 
-    /* 字体变量 - 保留原有字体 */
+    /* 字体变量 */
     --font-fira-sans: 'Fira Sans', system-ui, sans-serif;
     --font-fira-code: 'Fira Code', monospace;
-
-    /* 新增字体变量 - 用于AI助手页面 */
     --font-inter: 'Inter', system-ui, sans-serif;
     --font-jetbrains: 'JetBrains Mono', monospace;
+    --font-display: 'Plus Jakarta Sans', sans-serif;
 
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
@@ -28,24 +28,25 @@
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
 
-    --primary: 217 91% 60%;
-    --primary-foreground: 0 0% 100%;
+    /* 主色调设为 Tiffany Blue */
+    --primary: 174 52% 68%;
+    --primary-foreground: 222 47% 11%;
 
-    --secondary: 215 16% 47%;
-    --secondary-foreground: 0 0% 100%;
+    --secondary: 174 50% 90%;
+    --secondary-foreground: 222 47% 11%;
 
     --muted: 210 40% 96%;
     --muted-foreground: 215 16% 47%;
 
-    --accent: 25 95% 53%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 174 60% 85%;
+    --accent-foreground: 222 47% 11%;
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
 
     --border: 214 32% 91%;
     --input: 210 40% 98%;
-    --ring: 217 91% 60%;
+    --ring: 174 52% 68%;
 
     --radius: 0.5rem;
   }
@@ -54,30 +55,31 @@
     --background: 222 47% 11%;
     --foreground: 210 40% 98%;
 
-    --card: 222 47% 11%;
+    --card: 217 33% 17%;
     --card-foreground: 210 40% 98%;
 
-    --popover: 222 47% 11%;
+    --popover: 217 33% 17%;
     --popover-foreground: 210 40% 98%;
 
-    --primary: 217 91% 60%;
-    --primary-foreground: 0 0% 100%;
+    /* 暗色模式下的 Tiffany Blue */
+    --primary: 174 52% 58%;
+    --primary-foreground: 222 47% 11%;
 
-    --secondary: 215 16% 47%;
-    --secondary-foreground: 0 0% 100%;
+    --secondary: 174 45% 75%;
+    --secondary-foreground: 222 47% 11%;
 
-    --muted: 222 47% 11%;
+    --muted: 217 33% 17%;
     --muted-foreground: 215 20% 65%;
 
-    --accent: 25 95% 53%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 174 60% 65%;
+    --accent-foreground: 222 47% 11%;
 
     --destructive: 0 62% 30%;
     --destructive-foreground: 0 0% 100%;
 
     --border: 215 28% 25%;
-    --input: 222 47% 11%;
-    --ring: 217 91% 60%;
+    --input: 217 33% 17%;
+    --ring: 174 52% 58%;
   }
 }
 
@@ -104,17 +106,22 @@
     @apply text-base;
   }
 
-  /* 改善滚动条样式 */
+  /* 改善滚动条样式 - DataLab 风格 */
   ::-webkit-scrollbar {
-    @apply w-2 h-2;
+    width: 6px;
+    height: 6px;
   }
 
   ::-webkit-scrollbar-track {
-    @apply bg-muted;
+    background: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-muted-foreground/30 rounded-full hover:bg-muted-foreground/50;
+    @apply bg-slate-300 rounded-[3px];
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    @apply bg-slate-600;
   }
 
   /* 屏幕阅读器专用样式 */
@@ -138,19 +145,43 @@
   }
 
   /* 标题样式 */
-  h1, h2, h3, h4, h5, h6 {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
     @apply font-semibold;
     line-height: 1.4;
   }
-  h1 { @apply text-3xl lg:text-4xl; }
-  h2 { @apply text-2xl lg:text-3xl; }
-  h3 { @apply text-xl lg:text-2xl; }
-  h4 { @apply text-lg lg:text-xl; }
-  h5 { @apply text-base lg:text-lg; }
-  h6 { @apply text-sm lg:text-base; }
+
+  h1 {
+    @apply text-3xl lg:text-4xl;
+  }
+
+  h2 {
+    @apply text-2xl lg:text-3xl;
+  }
+
+  h3 {
+    @apply text-xl lg:text-2xl;
+  }
+
+  h4 {
+    @apply text-lg lg:text-xl;
+  }
+
+  h5 {
+    @apply text-base lg:text-lg;
+  }
+
+  h6 {
+    @apply text-sm lg:text-base;
+  }
 }
 
 @layer components {
+
   /* Data Agent V4 按钮样式 */
   .btn-primary {
     @apply bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80;
@@ -158,7 +189,8 @@
     @apply transition-all duration-200;
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
     @apply disabled:pointer-events-none disabled:opacity-50 cursor-pointer select-none;
-    @apply h-10 px-4 py-2 min-h-[44px]; /* 最小触摸目标 */
+    @apply h-10 px-4 py-2 min-h-[44px];
+    /* 最小触摸目标 */
   }
 
   .btn-secondary {
@@ -242,6 +274,7 @@
   .hover-lift {
     @apply transition-all duration-200 cursor-pointer;
   }
+
   .hover-lift:hover {
     @apply -translate-y-0.5 shadow-lg;
   }
@@ -250,6 +283,7 @@
   .hover-interactive {
     @apply transition-all duration-200 cursor-pointer;
   }
+
   .hover-interactive:hover {
     @apply opacity-80;
   }
@@ -263,25 +297,29 @@
     @apply rounded-xl border bg-card text-card-foreground shadow-sm;
     @apply transition-all duration-200 cursor-pointer;
   }
+
   .card-interactive:hover {
     @apply shadow-md border-primary/50;
   }
 
   /* 骨架屏 shimmer 效果 */
   .shimmer {
-    background: linear-gradient(
-      90deg,
-      hsl(var(--muted)) 0%,
-      hsl(var(--muted-foreground) / 0.1) 50%,
-      hsl(var(--muted)) 100%
-    );
+    background: linear-gradient(90deg,
+        hsl(var(--muted)) 0%,
+        hsl(var(--muted-foreground) / 0.1) 50%,
+        hsl(var(--muted)) 100%);
     background-size: 200% 100%;
     animation: shimmer 2s linear infinite;
   }
 
   @keyframes shimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
+    0% {
+      background-position: -200% 0;
+    }
+
+    100% {
+      background-position: 200% 0;
+    }
   }
 
   /* 响应式容器 */
@@ -325,6 +363,7 @@
 
   /* 尊重用户动画偏好 */
   @media (prefers-reduced-motion: reduce) {
+
     *,
     *::before,
     *::after {
@@ -336,26 +375,48 @@
 }
 
 /* ============================================================
-   Tiffany UI 主题 - 页面级样式隔离
-   仅影响带有 data-theme="tiffany" 属性的元素（AI助手页面）
+   DataLab UI 设计系统
    ============================================================ */
 
-[data-theme="tiffany"] {
-  /* 覆盖主色调为 Tiffany Blue */
-  --tiffany-primary: 174 62% 67%;
-  --tiffany-secondary: 174 50% 85%;
-  --tiffany-accent: 174 70% 75%;
-
-  /* 使用 Inter 字体 */
-  --font-ui: var(--font-inter);
-  --font-mono: var(--font-jetbrains);
+/* Glassmorphism 毛玻璃效果 */
+.glass {
+  background: rgba(129, 216, 207, 0.2);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(129, 216, 207, 0.3);
 }
 
-[data-theme="tiffany"].dark {
-  /* 暗色模式下的 Tiffany Blue */
-  --tiffany-primary: 174 65% 55%;
-  --tiffany-secondary: 174 45% 75%;
-  --tiffany-accent: 174 60% 65%;
+.dark .glass {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* DataLab 主按钮 - Tiffany Blue 风格 */
+.btn-datalab {
+  @apply bg-primary text-primary-foreground font-bold;
+  @apply inline-flex items-center justify-center gap-2 rounded-lg text-sm;
+  @apply transition-all duration-200 shadow-glow;
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+  @apply disabled:pointer-events-none disabled:opacity-50 cursor-pointer select-none;
+  @apply h-10 px-4 py-2;
+}
+
+.btn-datalab:hover {
+  @apply opacity-90;
+}
+
+/* DataLab 导航项 */
+.nav-item-datalab {
+  @apply flex items-center px-2 py-2.5 text-sm font-medium;
+  @apply text-slate-600 dark:text-slate-400;
+  @apply hover:text-primary dark:hover:text-primary;
+  @apply hover:bg-slate-50 dark:hover:bg-slate-700/50;
+  @apply rounded-lg transition-colors;
+}
+
+.nav-item-datalab.active {
+  @apply bg-secondary/30 text-teal-700 dark:text-teal-200;
+  @apply rounded-lg border border-primary/20;
 }
 
 /* Tiffany UI 特有的工具类 */

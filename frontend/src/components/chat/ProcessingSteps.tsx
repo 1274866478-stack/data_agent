@@ -203,16 +203,16 @@ const SQLCodeRenderer = React.memo(function SQLCodeRenderer({ sql, defaultExpand
   const charCount = sql.length
 
   return (
-    <div className="mt-2 rounded-md bg-slate-100 overflow-hidden border border-slate-200">
+    <div className="mt-2 rounded-md bg-slate-900 overflow-hidden border border-slate-700">
       <button
         onClick={handleToggle}
-        className="w-full flex items-center justify-between px-3 py-1.5 bg-slate-200 border-b border-slate-300 hover:bg-slate-300 transition-colors"
+        className="w-full flex items-center justify-between px-3 py-1.5 bg-slate-800 border-b border-slate-700 hover:bg-slate-700 transition-colors"
       >
-        <span className="text-xs font-medium text-slate-700 flex items-center gap-2">
-          <Code2 className="w-3.5 h-3.5 text-indigo-600" />
+        <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
+          <Code2 className="w-3.5 h-3.5 text-primary" />
           SQL
           <span className="text-slate-500 font-normal">
-            ({lineCount} 行, {charCount} 字符)
+            ({lineCount} lines, {charCount} chars)
           </span>
         </span>
         {isExpanded ? (
@@ -222,26 +222,26 @@ const SQLCodeRenderer = React.memo(function SQLCodeRenderer({ sql, defaultExpand
         )}
       </button>
       {isExpanded && (
-        <pre className="p-3 overflow-x-auto max-h-64 overflow-y-auto bg-card">
-          <code className="text-xs text-foreground font-mono">{sql}</code>
+        <pre className="p-3 overflow-x-auto max-h-64 overflow-y-auto bg-slate-900">
+          <code className="text-xs text-secondary font-mono">{sql}</code>
         </pre>
       )}
     </div>
   )
 })
 
-// 渲染SQL代码块（简单版本，用于非步骤4）
+// 渲染SQL代码块（简单版本，用于非步骤4）- DataLab 深色风格
 function renderSQLCode(sql: string) {
   return (
-    <div className="mt-2 rounded-md bg-slate-100 overflow-hidden border border-slate-200">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-200 border-b border-slate-300">
-        <span className="text-xs font-medium text-slate-700 flex items-center gap-2">
-          <Code2 className="w-3.5 h-3.5 text-indigo-600" />
+    <div className="mt-2 rounded-md bg-slate-900 overflow-hidden border border-slate-700">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-800 border-b border-slate-700">
+        <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
+          <Code2 className="w-3.5 h-3.5 text-primary" />
           SQL
         </span>
       </div>
-      <pre className="p-3 overflow-x-auto bg-card">
-        <code className="text-xs text-foreground font-mono">{sql}</code>
+      <pre className="p-3 overflow-x-auto bg-slate-900">
+        <code className="text-xs text-secondary font-mono">{sql}</code>
       </pre>
     </div>
   )
@@ -866,10 +866,10 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
             <CheckCircle2 className="w-4 h-4" />
           )}
           <span>
-            AI 推理过程 
-            <span className="ml-2 text-xs font-normal opacity-75">
-              ({stats.completedSteps}/{steps.length} 步骤完成
-              {stats.totalDuration > 0 && ` · ${formatDuration(stats.totalDuration)}`})
+            Reasoning Process 
+            <span className="ml-2 text-xs font-normal opacity-75 font-mono">
+              ({stats.completedSteps}/{steps.length} steps
+              {stats.totalDuration > 0 && ` • ${formatDuration(stats.totalDuration)}`})
             </span>
           </span>
         </div>

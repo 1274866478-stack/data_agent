@@ -136,7 +136,7 @@ export default function DashboardPage() {
                 <div className="p-2 bg-violet-100 dark:bg-violet-500/20 rounded-lg">
                   <Bot className="h-5 w-5 text-violet-600 dark:text-violet-400" />
                 </div>
-                智能数据助手
+                Insight Agent
               </GradientCardTitle>
             </GradientCardHeader>
             <GradientCardContent>

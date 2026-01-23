@@ -49,7 +49,7 @@ const navGroups = [
   {
     label: '分析工具',
     items: [
-      { href: '/ai-assistant', icon: Bot, label: '智能数据助手' },
+      { href: '/ai-assistant', icon: Bot, label: 'Insight Agent' },
       { href: '/analytics', icon: BarChart3, label: '数据分析' },
       { href: '/reports', icon: FileBarChart, label: '报告' },
     ],
@@ -75,7 +75,7 @@ export function RightCategoryBar({ collapsed, onToggle }: RightCategoryBarProps)
     >
       {/* 标题栏 */}
       <div className="h-14 flex items-center justify-between px-4 border-b border-border">
-        <span className="font-semibold text-foreground">智能数据Agent</span>
+        <span className="font-semibold text-foreground">Insight Agent</span>
         <button
           onClick={onToggle}
           className="w-6 h-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -123,7 +123,7 @@ export function RightCategoryBar({ collapsed, onToggle }: RightCategoryBarProps)
       {/* 底部版本信息 */}
       <div className="p-4 border-t border-border">
         <p className="text-xs text-muted-foreground text-center">
-          智能数据Agent V4
+          Insight Agent V4
         </p>
       </div>
     </div>

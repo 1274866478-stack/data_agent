@@ -86,8 +86,8 @@ export function Header({ onSidebarToggle, sidebarCollapsed }: HeaderProps) {
     <header className="h-16 flex items-center justify-between px-8 bg-surface-light/80 dark:bg-surface-dark/80 backdrop-blur-sm z-10 border-b border-slate-200/50 dark:border-slate-700/50 sticky top-0">
       <div className="flex items-center gap-4">
         {/* 数据库选择器 - DataLab 胶囊风格 */}
-        <div className="flex items-center gap-2 bg-accent-light dark:bg-slate-800 px-4 py-2 rounded-full border-2 border-primary-400/40 dark:border-primary-500/30 shadow-sm hover:border-primary-500/60 transition-all cursor-pointer">
-          <Database className="text-primary-400 h-4 w-4" />
+        <div className="flex items-center gap-2 bg-accent-light dark:bg-slate-800 px-4 py-2 rounded-full border-2 border-primary/40 dark:border-primary/30 shadow-sm hover:border-primary/60 transition-all cursor-pointer">
+          <Database className="text-primary h-4 w-4" />
           <span className="text-xs font-medium text-slate-600 dark:text-slate-300">test_database_optimized</span>
           <span className="text-[10px] bg-white dark:bg-slate-700 px-1.5 rounded text-slate-500 border border-slate-200 dark:border-slate-600">XLSX</span>
           <ChevronDown className="text-slate-400 h-3 w-3 cursor-pointer" />
@@ -98,7 +98,7 @@ export function Header({ onSidebarToggle, sidebarCollapsed }: HeaderProps) {
         {/* 暗色模式切换 */}
         <button 
           onClick={toggleDarkMode}
-          className="p-2 text-slate-400 hover:text-tiffany-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors"
+          className="p-2 text-slate-400 hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors"
         >
           {darkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </button>
@@ -114,7 +114,7 @@ export function Header({ onSidebarToggle, sidebarCollapsed }: HeaderProps) {
         </button>
 
         {/* 新建会话按钮 - DataLab 风格 */}
-        <button className="btn-datalab flex items-center gap-2 px-5 py-2 text-sm hover:scale-105 active:scale-95 transition-transform">
+        <button className="flex items-center gap-2 px-5 py-2 text-sm font-bold text-slate-900 bg-primary hover:bg-primary/90 rounded-lg transition-all shadow-glow hover:scale-105 active:scale-95">
           <Plus className="h-4 w-4" />
           New Chat
         </button>
