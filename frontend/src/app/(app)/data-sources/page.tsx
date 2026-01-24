@@ -62,6 +62,7 @@ import DocumentUpload from '@/components/documents/DocumentUpload'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { GradientCard, GradientCardContent, GradientCardHeader, GradientCardTitle } from '@/components/ui/gradient-card'
 import { ErrorMessage } from '@/components/ui/error-message'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import { useTenantId } from '@/store/authStore'
@@ -168,90 +169,91 @@ export default function DataSourcesPage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 space-y-6">
-      {/* 页面标题和操作 */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">数据源管理</h1>
-          <p className="text-muted-foreground">
-            管理您的数据库连接和文档，进行数据分析和处理
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowOverview(!showOverview)}
-            className="hidden sm:flex"
-          >
-            {showOverview ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
-            {showOverview ? '隐藏概览' : '显示概览'}
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={isLoading}
-          >
-            {isLoading ? <LoadingSpinner className="h-4 w-4 mr-2" /> : null}
-            刷新
-          </Button>
-
-          <Button onClick={() => setIsCreateMode(true)} className="bg-gradient-modern-primary hover:opacity-90 transition-opacity">
-            <Plus className="h-4 w-4 mr-2" />
-            添加数据源
-          </Button>
-        </div>
-      </div>
-
-      {/* 错误信息 */}
-      {error && <ErrorMessage message={error} />}
-
-      {/* 概览仪表板 */}
-      {showOverview && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">数据源概览</CardTitle>
-              <Badge variant="outline" className="text-xs">
-                实时数据
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <DataSourceOverview />
-          </CardContent>
-        </Card>
-      )}
-
-      {/* 搜索和筛选 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">搜索和筛选</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <SearchAndFilter />
-        </CardContent>
-      </Card>
-
-      {/* 数据源标签页和内容 */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base">
-              {activeTab === 'databases' ? '数据库连接' : '文档管理'}
-            </CardTitle>
-            {selectedItems.length > 0 && (
-              <Badge variant="secondary">
-                已选择 {selectedItems.length} 项
-              </Badge>
-            )}
+    <div className="bg-page-gradient min-h-screen">
+      <div className="container mx-auto px-4 py-8 space-y-6">
+        {/* 页面标题和操作 */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-foreground">数据源管理</h1>
+            <p className="text-muted-foreground">
+              管理您的数据库连接和文档，进行数据分析和处理
+            </p>
           </div>
-        </CardHeader>
-        <CardContent>
-          <DataSourceTabs
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowOverview(!showOverview)}
+              className="hidden sm:flex"
+            >
+              {showOverview ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+              {showOverview ? '隐藏概览' : '显示概览'}
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={isLoading}
+            >
+              {isLoading ? <LoadingSpinner className="h-4 w-4 mr-2" /> : null}
+              刷新
+            </Button>
+
+            <Button onClick={() => setIsCreateMode(true)} className="bg-gradient-modern-primary hover:opacity-90 transition-opacity">
+              <Plus className="h-4 w-4 mr-2" />
+              添加数据源
+            </Button>
+          </div>
+        </div>
+
+        {/* 错误信息 */}
+        {error && <ErrorMessage message={error} />}
+
+        {/* 概览仪表板 */}
+        {showOverview && (
+          <GradientCard gradient="primary" className="glass shadow-2xl ring-1 ring-slate-200/40">
+            <GradientCardHeader>
+              <div className="flex items-center justify-between">
+                <GradientCardTitle className="text-lg">数据源概览</GradientCardTitle>
+                <Badge variant="outline" className="text-xs">
+                  实时数据
+                </Badge>
+              </div>
+            </GradientCardHeader>
+            <GradientCardContent>
+              <DataSourceOverview />
+            </GradientCardContent>
+          </GradientCard>
+        )}
+
+        {/* 搜索和筛选 */}
+        <GradientCard gradient="secondary">
+          <GradientCardHeader>
+            <GradientCardTitle className="text-base">搜索和筛选</GradientCardTitle>
+          </GradientCardHeader>
+          <GradientCardContent>
+            <SearchAndFilter />
+          </GradientCardContent>
+        </GradientCard>
+
+        {/* 数据源标签页和内容 */}
+        <GradientCard gradient="accent" className="glass shadow-2xl">
+          <GradientCardHeader>
+            <div className="flex items-center justify-between">
+              <GradientCardTitle className="text-base">
+                {activeTab === 'databases' ? '数据库连接' : '文档管理'}
+              </GradientCardTitle>
+              {selectedItems.length > 0 && (
+                <Badge variant="secondary">
+                  已选择 {selectedItems.length} 项
+                </Badge>
+              )}
+            </div>
+          </GradientCardHeader>
+          <GradientCardContent>
+            <DataSourceTabs
             databasesContent={
               <div className="space-y-4">
                 {selectedItems.length > 0 ? (
@@ -284,18 +286,19 @@ export default function DataSourcesPage() {
               </div>
             }
           />
-        </CardContent>
-      </Card>
+        </GradientCardContent>
+      </GradientCard>
 
-      {/* 响应式设计：移动端概览切换按钮 */}
-      <div className="sm:hidden fixed bottom-4 right-4 z-10">
-        <Button
-          size="sm"
-          onClick={() => setShowOverview(!showOverview)}
-          className="rounded-full shadow-lg"
-        >
-          {showOverview ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-        </Button>
+        {/* 响应式设计：移动端概览切换按钮 */}
+        <div className="sm:hidden fixed bottom-4 right-4 z-10">
+          <Button
+            size="sm"
+            onClick={() => setShowOverview(!showOverview)}
+            className="rounded-full shadow-lg"
+          >
+            {showOverview ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </Button>
+        </div>
       </div>
     </div>
   )

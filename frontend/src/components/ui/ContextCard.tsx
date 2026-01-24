@@ -62,7 +62,7 @@ export function ContextCard({
   onDelete,
   status = 'active',
 }: ContextCardProps) {
-  const IconComponent = icon || typeIcons[type]
+  const TypeIconComponent = typeIcons[type]
 
   return (
     <Card
@@ -81,8 +81,10 @@ export function ContextCard({
       {/* 头部：标题和类型标签 */}
       <div className="flex justify-between items-start mb-2">
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          {IconComponent && (
-            <IconComponent className="w-4 h-4 text-tiffany-600 dark:text-tiffany-400 flex-shrink-0" />
+          {icon ? (
+            <div className="w-4 h-4 text-tiffany-600 dark:text-tiffany-400 flex-shrink-0">{icon}</div>
+          ) : (
+            <TypeIconComponent className="w-4 h-4 text-tiffany-600 dark:text-tiffany-400 flex-shrink-0" />
           )}
           <span className="font-medium text-sm truncate">{title}</span>
         </div>

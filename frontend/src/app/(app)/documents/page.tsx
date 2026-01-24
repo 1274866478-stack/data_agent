@@ -1,66 +1,39 @@
 /**
- * # DocumentsPage 文档管理页面
+ * # DocumentsPage 文档管理页面 - UI 一比一复刻版
  *
  * ## [MODULE]
  * **文件名**: app/(app)/documents/page.tsx
- * **职责**: 提供文档的完整管理界面，包括文档列表、上传、预览和统计信息
+ * **职责**: 提供文档的完整管理界面，采用新设计风格
  * **作者**: Data Agent Team
- * **版本**: 1.0.0
- * **备注**: Story 2.4规范实现
+ * **版本**: 3.0.0 (UI 一比一复刻)
  *
  * ## [INPUT]
  * - 无直接 Props（页面组件）
  *
  * ## [OUTPUT]
- * - **返回值**: JSX.Element - 文档管理页面，包含统计卡片、文档列表、上传和预览功能
+ * - **返回值**: JSX.Element - 文档管理页面，包含搜索栏、筛选按钮、空状态和文档列表
  *
  * ## [LINK]
  * **上游依赖**:
  * - [@/store/documentStore](../../../store/documentStore.ts) - 提供文档状态管理
  * - [DocumentList](../../components/documents/DocumentList.tsx) - 文档列表组件
- * - [DocumentUpload](../../components/documents/DocumentUpload.tsx) - 文档上传组件
  * - [DocumentPreview](../../components/documents/DocumentPreview.tsx) - 文档预览组件
- * - [@/components/ui/button](../../components/ui/button.tsx) - 按钮组件
- * - [@/components/ui/alert](../../components/ui/alert.tsx) - 提示组件
- *
- * **下游依赖**:
- * - 无（页面是用户交互入口点）
- *
- * ## [STATE]
- * - **documents: Document[]** - 文档列表（从 documentStore 获取）
- * - **isLoading: boolean** - 加载状态
- * - **error: string | null** - 错误信息
- * - **showUploadModal: boolean** - 是否显示上传模态框
- * - **showPreviewModal: boolean** - 是否显示预览模态框
- * - **previewDocument: Document | null** - 预览的文档对象
- * - **selectedDocuments: string[]** - 已选中的文档ID列表
- * - **stats: DocumentStats | null** - 文档统计信息
- *
- * ## [SIDE-EFFECTS]
- * - **数据获取**: 组件挂载时自动调用 fetchDocuments() 获取文档列表
- * - **统计展示**: 计算并展示文档统计信息（总数、已完成、处理中、存储使用）
- * - **上传处理**: 处理文档上传成功和错误回调，成功后刷新列表
- * - **模态框管理**: 控制上传和预览模态框的显示/隐藏
- * - **错误处理**: 显示和清除错误信息
- */
-/**
- * 文档管理页面 - Story 2.4规范实现
- * 整合所有文档管理组件，提供完整的用户界面
+ * - [DocumentUpload](../../components/documents/DocumentUpload.tsx) - 文档上传组件
+ * - [Alert](../../components/ui/alert.tsx) - 提示组件
  */
 
 'use client'
 
-import DocumentList from '@/components/documents/DocumentList'
 import DocumentPreview from '@/components/documents/DocumentPreview'
 import DocumentUpload from '@/components/documents/DocumentUpload'
 import { Alert } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
 import { useDocumentStore } from '@/store/documentStore'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 export default function DocumentsPage() {
   const {
     documents,
+    stats,
     isLoading,
     error,
     showUploadModal,
@@ -70,153 +43,178 @@ export default function DocumentsPage() {
     openUploadModal,
     closeUploadModal,
     closePreviewModal,
-    clearError,
-    selectedDocuments,
-    stats
+    clearError
   } = useDocumentStore()
 
-  // 初始化数据
+  // 搜索和筛选状态
+  const [searchQuery, setSearchQuery] = useState('')
+
   useEffect(() => {
     fetchDocuments()
   }, [fetchDocuments])
 
-  // 处理上传成功
   const handleUploadSuccess = (files: File[]) => {
-    // 成功后刷新列表
     fetchDocuments()
   }
 
-  // 处理上传错误
   const handleUploadError = (errorMessage: string) => {
     console.error('Upload error:', errorMessage)
   }
 
-  // 获取统计信息
-  const getQuickStats = () => {
-    if (!stats) return null
-
-    const readyCount = stats.by_status?.READY || 0
-    const processingCount = stats.by_status?.INDEXING || 0
-    const errorCount = stats.by_status?.ERROR || 0
-
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-200 dark:border-slate-700 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">总文档</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-slate-100">{stats.total_documents}</p>
-            </div>
-            <div className="text-3xl">📁</div>
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-200 dark:border-slate-700 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">已完成</p>
-              <p className="text-2xl font-bold text-green-600">{readyCount}</p>
-            </div>
-            <div className="text-3xl">✅</div>
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-200 dark:border-slate-700 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">处理中</p>
-              <p className="text-2xl font-bold text-blue-600">{processingCount}</p>
-            </div>
-            <div className="text-3xl">🔄</div>
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-200 dark:border-slate-700 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">存储使用</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-slate-100">{stats.total_size_mb.toFixed(1)} MB</p>
-            </div>
-            <div className="text-3xl">💾</div>
-          </div>
-        </div>
-      </div>
-    )
+  const handleRefresh = () => {
+    fetchDocuments()
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-800">
-      <div className="container mx-auto px-4 py-8">
-        {/* 页面标题 */}
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-slate-100">文档管理</h1>
-            <p className="text-gray-600 mt-1">上传、管理和预览您的文档</p>
+    <div className="doc-page-bg min-h-screen">
+      <div className="container mx-auto px-4 py-6 max-w-[1200px]">
+
+        {/* 1. 顶部工具栏 - 标题 + 统计卡片 + 上传按钮 */}
+        <header className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold text-[#1f2937] dark:text-slate-200">文档管理</h1>
+          <div className="flex items-center gap-3">
+            {/* 统计卡片 - 总计 */}
+            <div className="doc-header-stat">
+              <span className="doc-header-stat-label">总计</span>
+              <span className="doc-header-stat-value">{stats?.total_documents ?? documents.length ?? 0}</span>
+            </div>
+            {/* 统计卡片 - 已处理 */}
+            <div className="doc-header-stat">
+              <span className="doc-header-stat-label">已处理</span>
+              <span className="doc-header-stat-value">{stats?.by_status?.ready ?? 0}</span>
+            </div>
+            {/* 统计卡片 - 存储 */}
+            <div className="doc-header-stat">
+              <span className="doc-header-stat-label">存储</span>
+              <span className="doc-header-stat-value">{stats?.total_size_mb?.toFixed(1) ?? '0.0'} MB</span>
+            </div>
+            {/* 上传按钮 */}
+            <button
+              className="doc-primary-btn"
+              onClick={openUploadModal}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className="inline-block">
+                <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+              </svg>
+              上传文件
+            </button>
           </div>
-          <div className="flex space-x-3">
-            {selectedDocuments.length > 0 && (
-              <div className="flex items-center space-x-2 bg-blue-50 dark:bg-blue-900/20 px-3 py-2 rounded-lg">
-                <span className="text-sm text-blue-700">
-                  已选择 {selectedDocuments.length} 个文档
-                </span>
-              </div>
-            )}
-            <Button onClick={openUploadModal} className="bg-gradient-modern-primary hover:opacity-90 transition-opacity">
-              📤 上传文档
-            </Button>
-          </div>
+        </header>
+
+        {/* 2. 搜索筛选区域 */}
+        <div className="doc-search-bar mb-6">
+          {/* 搜索图标 */}
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#64748b" className="flex-shrink-0">
+            <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+          </svg>
+          {/* 搜索输入框 */}
+          <input
+            type="text"
+            placeholder="搜索文档（按名称或内容）..."
+            className="doc-search-input-new"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          {/* 状态筛选按钮 */}
+          <button className="doc-filter-btn">
+            所有状态
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="inline-block">
+              <path d="M7 10l5 5 5-5z"/>
+            </svg>
+          </button>
+          {/* 类型筛选按钮 */}
+          <button className="doc-filter-btn">
+            所有类型
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="inline-block">
+              <path d="M7 10l5 5 5-5z"/>
+            </svg>
+          </button>
+          {/* 刷新按钮 */}
+          <button
+            className="p-2 text-[#64748b] dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+            onClick={handleRefresh}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="inline-block">
+              <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+            </svg>
+          </button>
         </div>
 
-        {/* 错误提示 */}
-        {error && (
-          <Alert variant="destructive" className="mb-6 flex justify-between items-center">
-            <span>{error}</span>
-            <Button size="sm" variant="ghost" onClick={clearError}>
-              ✕
-            </Button>
-          </Alert>
-        )}
-
-        {/* 统计信息 */}
-        {getQuickStats()}
-
-        {/* 使用说明 */}
+        {/* 3. 空状态区域 - 初始化数据源 */}
         {documents.length === 0 && !isLoading && (
-          <div className="bg-white p-8 rounded-lg border border-gray-200 text-center mb-8">
-            <div className="text-6xl mb-4">📂</div>
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-slate-100 mb-2">开始使用文档管理</h2>
-            <p className="text-gray-600 mb-6 max-w-2xl mx-auto">
-              上传您的 PDF 和 Word 文档，系统将自动处理并为您提供预览、搜索和管理功能。
-              所有文档都安全存储在您的专属空间中。
+          <div className="doc-empty-init mb-6">
+            {/* 图标容器 */}
+            <div className="w-16 h-16 bg-gradient-to-br from-[#00BFB3]/10 to-[#00E5D5]/10 rounded-2xl flex items-center justify-center mb-4">
+              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="#00BFB3" className="inline-block">
+                <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+              </svg>
+            </div>
+            {/* 标题 */}
+            <h2 className="text-lg font-bold text-[#374151] dark:text-slate-200 mb-2">初始化数据源</h2>
+            {/* 描述 */}
+            <p className="text-sm text-[#6b7280] dark:text-slate-400 mb-6 max-w-md">
+              拖拽您的 PDF、Word 或 Excel 文档到此处，开始智能数据处理。单个文件最大 50MB。
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-3xl mx-auto text-left">
-              <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
-                <div className="text-2xl mb-2">📄</div>
-                <h3 className="font-medium text-gray-900 dark:text-slate-100 mb-1">支持多种格式</h3>
-                <p className="text-sm text-gray-600">PDF 和 Word 文档，最大 50MB</p>
-              </div>
-              <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
-                <div className="text-2xl mb-2">🔍</div>
-                <h3 className="font-medium text-gray-900 dark:text-slate-100 mb-1">智能处理</h3>
-                <p className="text-sm text-gray-600">自动提取内容和元数据</p>
-              </div>
-              <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
-                <div className="text-2xl mb-2">👁️</div>
-                <h3 className="font-medium text-gray-900 dark:text-slate-100 mb-1">在线预览</h3>
-                <p className="text-sm text-gray-600">无需下载即可查看文档</p>
-              </div>
+            {/* 操作按钮 */}
+            <div className="flex items-center gap-3">
+              <button
+                className="doc-primary-btn"
+                onClick={openUploadModal}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className="inline-block">
+                  <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+                </svg>
+                选择文档
+              </button>
+              <span className="text-[#6b7280] dark:text-slate-400">或</span>
+              <button className="doc-secondary-btn">
+                从云端导入
+              </button>
             </div>
           </div>
         )}
 
-        {/* 文档列表 */}
-        <DocumentList />
+        {/* 3. 空状态区域 - 等待智能分析 */}
+        {documents.length === 0 && !isLoading && (
+          <div className="doc-empty-analyzing mb-6">
+            {/* 图标容器 */}
+            <div className="w-16 h-16 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-slate-700 dark:to-slate-600 rounded-2xl flex items-center justify-center mb-4">
+              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="#6b7280" className="inline-block dark:fill-slate-400">
+                <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-2.3l-.85-.6C7.8 12.16 7 10.63 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.63-.8 3.16-2.15 4.1z"/>
+              </svg>
+            </div>
+            {/* 标题 */}
+            <h2 className="text-lg font-bold text-[#374151] dark:text-slate-200 mb-2">等待智能分析</h2>
+            {/* 描述 */}
+            <p className="text-sm text-[#6b7280] dark:text-slate-400 mb-6 max-w-md">
+              未检测到文档。请向系统输入数据以开始实时分析和洞察提取。
+            </p>
+            {/* 标签 */}
+            <div className="flex gap-2">
+              <span className="doc-tag-accent">
+                <span className="w-2 h-2 rounded-full inline-block"></span>
+                支持多格式
+              </span>
+              <span className="doc-tag-accent">
+                <span className="w-2 h-2 rounded-full inline-block"></span>
+                安全存储
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* 错误提示 */}
+        {error && (
+          <Alert variant="destructive" className="mb-6">
+            {error}
+          </Alert>
+        )}
       </div>
 
-      {/* 上传模态框 */}
+      {/* 模态框 */}
       {showUploadModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-auto">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-auto shadow-2xl">
             <DocumentUpload
               onClose={closeUploadModal}
               onSuccess={handleUploadSuccess}
@@ -226,7 +224,6 @@ export default function DocumentsPage() {
         </div>
       )}
 
-      {/* 预览模态框 */}
       {showPreviewModal && previewDocument && (
         <DocumentPreview
           document={previewDocument}

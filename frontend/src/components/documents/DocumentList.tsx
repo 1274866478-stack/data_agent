@@ -1,19 +1,18 @@
 /**
- * # DocumentList 文档列表组件
+ * # DocumentList 文档列表组件 - 简化版
  *
  * ## [MODULE]
  * **文件名**: DocumentList.tsx
- * **职责**: 显示文档列表，提供搜索、过滤、分页、批量操作和统计功能
+ * **职责**: 显示文档列表，提供分页和批量操作功能（工具栏已移至页面级）
  * **作者**: Data Agent Team
- * **版本**: 1.0.0
+ * **版本**: 2.0.0 (UI 一比一复刻)
  *
  * ## [INPUT]
  * - **showSelection**: boolean (可选) - 是否显示选择框，默认false
  * - **onSelectionChange**: (selectedIds: string[]) => void (可选) - 选中状态变化回调
  *
  * ## [OUTPUT]
- * - **返回值**: JSX.Element - 完整的文档列表界面（工具栏+统计+卡片列表+分页）
- * - **副作用**: 调用documentStore的各种方法和修改状态
+ * - **返回值**: JSX.Element - 文档列表界面（批量操作+卡片列表+分页）
  *
  * ## [LINK]
  * **上游依赖**:
@@ -27,24 +26,6 @@
  *
  * **调用方**:
  * - [../../app/(app)/documents/page.tsx](../../app/(app)/documents/page.tsx) - 文档页面
- *
- * ## [STATE]
- * - **localSearchQuery**: string - 本地搜索查询文本（防抖）
- * - 从documentStore获取：documents, isLoading, error, selectedDocuments, total, currentPage, pageSize, statusFilter, fileTypeFilter, searchQuery, stats
- *
- * ## [SIDE-EFFECTS]
- * - 初始化时调用fetchDocuments()
- * - 搜索防抖300ms后调用setFilter()
- * - 状态过滤时调用setFilter()
- * - 分页时调用setPage()
- * - 批量删除时调用deleteSelectedDocuments()
- * - 刷新时调用refreshDocuments()
- * - 通知父组件选中变化（onSelectionChange回调）
- * - 删除确认弹窗（window.confirm）
- */
-/**
- * 文档列表组件 - Story 2.4规范实现
- * 文档列表显示、搜索过滤、批量操作、状态显示
  */
 
 import React, { useEffect, useState } from 'react'
@@ -73,7 +54,6 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     statusFilter,
     fileTypeFilter,
     searchQuery,
-    stats,
     fetchDocuments,
     setSelectedDocuments,
     toggleDocumentSelection,
@@ -92,7 +72,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     fetchDocuments()
   }, [fetchDocuments])
 
-  // 处理搜索
+  // 处理搜索（从页面级传递过来的搜索）
   useEffect(() => {
     const timeoutId = setTimeout(() => {
       setFilter(statusFilter, fileTypeFilter, localSearchQuery)
@@ -139,45 +119,10 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     }
   }
 
-  // 处理刷新
-  const handleRefresh = async () => {
-    await refreshDocuments()
-  }
-
   // 计算分页信息
   const totalPages = Math.ceil(total / pageSize)
   const hasNextPage = currentPage < totalPages
   const hasPrevPage = currentPage > 1
-
-  // 获取统计信息
-  const getStatsDisplay = () => {
-    if (!stats) return null
-
-    return (
-      <div className="flex space-x-6 text-sm">
-        <div>
-          <span className="text-muted-foreground">总计:</span>
-          <span className="ml-1 font-medium">{stats.total_documents}</span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">已完成:</span>
-          <span className="ml-1 font-medium text-green-600">
-            {stats.by_status[DocumentStatus.READY] || 0}
-          </span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">处理中:</span>
-          <span className="ml-1 font-medium text-primary">
-            {stats.by_status[DocumentStatus.INDEXING] || 0}
-          </span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">存储:</span>
-          <span className="ml-1 font-medium">{parseFloat(String(stats.total_size_mb)).toFixed(1)} MB</span>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div className="space-y-6">
@@ -191,87 +136,29 @@ export const DocumentList: React.FC<DocumentListProps> = ({
         </Alert>
       )}
 
-      {/* 工具栏 */}
-      <div className="bg-card p-4 rounded-lg border border-border">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-          {/* 搜索框 */}
-          <div className="flex-1 max-w-md">
-            <input
-              type="text"
-              placeholder="搜索文档名称..."
-              value={localSearchQuery}
-              onChange={(e) => handleSearch(e.target.value)}
-              className="w-full px-3 py-2 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent bg-background"
-            />
-          </div>
-
-          {/* 过滤器 */}
-          <div className="flex flex-wrap gap-2">
-            {/* 状态过滤 */}
-            <select
-              value={statusFilter || ''}
-              onChange={(e) => handleStatusFilter(e.target.value ? e.target.value as DocumentStatus : null)}
-              className="px-3 py-2 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent bg-background"
-            >
-              <option value="">所有状态</option>
-              <option value={DocumentStatus.PENDING}>等待处理</option>
-              <option value={DocumentStatus.INDEXING}>正在处理</option>
-              <option value={DocumentStatus.READY}>处理完成</option>
-              <option value={DocumentStatus.ERROR}>处理失败</option>
-            </select>
-
-            {/* 文件类型过滤 */}
-            <select
-              value={fileTypeFilter || ''}
-              onChange={(e) => handleFileTypeFilter(e.target.value || null)}
-              className="px-3 py-2 border border-input rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent bg-background"
-            >
-              <option value="">所有类型</option>
-              <option value="pdf">PDF</option>
-              <option value="docx">Word</option>
-            </select>
-
-            {/* 刷新按钮 */}
+      {/* 批量操作 */}
+      {showSelection && selectedDocuments.length > 0 && (
+        <div className="flex items-center justify-between p-4 bg-white dark:bg-slate-800 rounded-xl border border-[#E0E0E0] dark:border-slate-700">
+          <span className="text-sm text-[#212121] dark:text-slate-200">
+            已选择 {selectedDocuments.length} 个文档
+          </span>
+          <div className="flex space-x-2">
             <Button
+              size="sm"
               variant="outline"
-              onClick={handleRefresh}
-              disabled={isLoading}
+              onClick={clearSelection}
+              className="border-[#E0E0E0] dark:border-slate-600"
             >
-              🔄 刷新
+              取消选择
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={handleBatchDelete}
+            >
+              删除选中
             </Button>
           </div>
-        </div>
-
-        {/* 批量操作 */}
-        {showSelection && selectedDocuments.length > 0 && (
-          <div className="mt-4 flex items-center justify-between p-3 bg-primary/10 border border-primary/30 rounded-lg">
-            <span className="text-sm text-primary">
-              已选择 {selectedDocuments.length} 个文档
-            </span>
-            <div className="flex space-x-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={clearSelection}
-              >
-                取消选择
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={handleBatchDelete}
-              >
-                删除选中
-              </Button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* 统计信息 */}
-      {getStatsDisplay() && (
-        <div className="bg-card p-4 rounded-lg border border-border">
-          {getStatsDisplay()}
         </div>
       )}
 
@@ -279,13 +166,13 @@ export const DocumentList: React.FC<DocumentListProps> = ({
       <div className="space-y-4">
         {isLoading ? (
           <div className="flex justify-center items-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#2196F3] dark:border-sky-400"></div>
           </div>
         ) : documents.length === 0 ? (
-          <div className="text-center py-12 bg-card rounded-lg border border-border">
+          <div className="text-center py-12 bg-white dark:bg-slate-800 rounded-xl border border-[#E0E0E0] dark:border-slate-700">
             <div className="text-6xl mb-4">📂</div>
-            <h3 className="text-lg font-medium text-foreground mb-2">暂无文档</h3>
-            <p className="text-gray-500">
+            <h3 className="text-lg font-medium text-[#212121] dark:text-slate-200 mb-2">暂无文档</h3>
+            <p className="text-[#757575] dark:text-slate-400">
               {searchQuery || statusFilter || fileTypeFilter
                 ? '没有找到符合条件的文档'
                 : '还没有上传任何文档，点击上传按钮开始'
@@ -316,6 +203,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                   size="sm"
                   onClick={() => handlePageChange(currentPage - 1)}
                   disabled={!hasPrevPage || isLoading}
+                  className="border-[#E0E0E0] dark:border-slate-600"
                 >
                   上一页
                 </Button>
@@ -340,6 +228,10 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                         size="sm"
                         onClick={() => handlePageChange(pageNum)}
                         disabled={isLoading}
+                        className={pageNum === currentPage
+                          ? "bg-[#2196F3] text-white hover:bg-[#1976D2]"
+                          : "border-[#E0E0E0] dark:border-slate-600"
+                        }
                       >
                         {pageNum}
                       </Button>
@@ -352,6 +244,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                   size="sm"
                   onClick={() => handlePageChange(currentPage + 1)}
                   disabled={!hasNextPage || isLoading}
+                  className="border-[#E0E0E0] dark:border-slate-600"
                 >
                   下一页
                 </Button>
@@ -359,7 +252,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             )}
 
             {/* 页面信息 */}
-            <div className="text-center text-sm text-muted-foreground">
+            <div className="text-center text-sm text-[#757575] dark:text-slate-400">
               显示第 {(currentPage - 1) * pageSize + 1} -{' '}
               {Math.min(currentPage * pageSize, total)} 条，共 {total} 条
             </div>

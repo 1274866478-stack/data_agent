@@ -68,6 +68,9 @@ const firaCode = Fira_Code({
 export const metadata = {
   title: 'Insight Agent V4 - Multi-tenant SaaS Platform',
   description: 'Intelligent data analysis platform for modern businesses',
+  icons: {
+    icon: '/favicon.ico',
+  },
 }
 
 export default function RootLayout({
@@ -82,6 +85,12 @@ export default function RootLayout({
 
   return (
     <html lang="zh-CN" suppressHydrationWarning className={`${firaSans.variable} ${firaCode.variable}`}>
+      <head>
+        <link
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body className="font-sans antialiased">
         <ThemeProvider>
           {clerkPublishableKey ? (

@@ -1,47 +1,21 @@
 /**
- * # DataSourceOverview 数据源概览组件
+ * # DataSourceOverview 数据源概览组件 - Glassmorphism Console 版本
  *
  * ## [MODULE]
  * **文件名**: DataSourceOverview.tsx
- * **职责**: 展示数据源和文档的统计概览，包括连接状态、存储使用、健康指标和最近活动
+ * **职责**: 展示数据源和文档的统计概览（Glassmorphism 设计风格）
  * **作者**: Data Agent Team
- * **版本**: 1.0.0
+ * **版本**: 2.0.0 - Glassmorphism Console
  *
- * ## [INPUT]
- * - 无直接 Props（通过 store 获取数据）
- *
- * ## [OUTPUT]
- * - **返回值**: JSX.Element - 数据源概览仪表板，包含统计卡片、健康状态、存储使用和活动记录
- *
- * ## [LINK]
- * **上游依赖**:
- * - [@/store/dashboardStore](../../store/dashboardStore.ts) - 提供概览数据和状态管理
- * - [@/components/ui/card](../ui/card.tsx) - 卡片容器组件
- * - [@/components/ui/badge](../ui/badge.tsx) - 状态徽章组件
- * - [@/components/ui/progress](../ui/progress.tsx) - 进度条组件
- * - [lucide-react](https://lucide.dev) - 图标库
- *
- * **下游依赖**:
- * - [../../app/(app)/page.tsx](../../app/(app)/page.tsx) - 在仪表板页面中使用
- * - [DataSourceTabs.tsx](./DataSourceTabs.tsx) - 作为标签页的内容展示
- *
- * ## [STATE]
- * - **overview: DashboardOverview | null** - 从 store 获取的概览数据，包含数据库、文档、存储和活动统计
- * - **isLoading: boolean** - 加载状态
- * - **error: string | null** - 错误信息
- *
- * ## [SIDE-EFFECTS]
- * - **数据获取**: 组件挂载时自动调用 fetchOverview() 获取概览数据
- * - **自动刷新**: 没有数据时自动触发数据获取
- * - **响应式布局**: 根据屏幕尺寸调整网格列数
+ * ## [STYLE]
+ * 采用玻璃态毛玻璃效果、彩色发光进度条、圆形图标容器等现代设计元素
  */
 'use client'
 
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Progress } from '@/components/ui/progress'
-import { StatCard } from '@/components/ui/stat-card'
 import { DashboardOverview, useDashboardStore } from '@/store/dashboardStore'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Progress } from '@/components/ui/progress'
 import {
     AlertCircle,
     CheckCircle,
@@ -51,6 +25,52 @@ import {
     HardDrive
 } from 'lucide-react'
 
+
+interface StatCardProps {
+  title: string
+  value: string | number
+  icon: React.ComponentType<{ className?: string }>
+  gradient: 'primary' | 'success' | 'warning' | 'accent'
+  trend?: 'up' | 'down' | 'neutral'
+  trendValue?: string
+  variant?: 'default' | 'filled'
+}
+
+const StatCard: React.FC<StatCardProps> = ({
+  title,
+  value,
+  icon: Icon,
+  gradient,
+  trend = 'neutral',
+  trendValue,
+  variant = 'default'
+}) => {
+  const gradientClasses = {
+    primary: 'from-violet-500/20 to-blue-500/20 border-violet-500/30',
+    success: 'from-emerald-500/20 to-green-500/20 border-emerald-500/30',
+    warning: 'from-amber-500/20 to-orange-500/20 border-amber-500/30',
+    accent: 'from-cyan-500/20 to-blue-500/20 border-cyan-500/30'
+  }
+
+  return (
+    <Card className={`glass-panel bg-gradient-to-br ${gradientClasses[gradient]} backdrop-blur-xl`}>
+      <CardContent className="p-6">
+        <div className="flex items-center justify-between">
+          <div className="flex-1">
+            <p className="text-sm text-muted-foreground mb-1">{title}</p>
+            <p className="text-2xl font-bold text-foreground">{value}</p>
+            {trendValue && (
+              <p className="text-xs text-muted-foreground mt-1">{trendValue}</p>
+            )}
+          </div>
+          <div className={`p-3 rounded-full bg-gradient-to-br ${gradientClasses[gradient]}`}>
+            <Icon className="h-6 w-6" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 interface ActivityItemProps {
   activity: DashboardOverview['recent_activity'][0]
@@ -122,7 +142,7 @@ export const DataSourceOverview: React.FC = () => {
       <div className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {[...Array(4)].map((_, i) => (
-            <Card key={i} className="animate-pulse">
+            <Card key={i} className="animate-pulse glass-panel">
               <CardHeader className="pb-2">
                 <div className="h-4 bg-muted rounded w-3/4"></div>
               </CardHeader>
@@ -138,7 +158,7 @@ export const DataSourceOverview: React.FC = () => {
 
   if (error) {
     return (
-      <Card className="border-destructive/30 bg-destructive/10">
+      <Card className="border-destructive/30 bg-destructive/10 glass-panel">
         <CardContent className="pt-6">
           <div className="flex items-center space-x-2 text-destructive">
             <AlertCircle className="h-5 w-5" />
@@ -201,7 +221,7 @@ export const DataSourceOverview: React.FC = () => {
       {/* 详细统计 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 数据库状态 */}
-        <Card>
+        <Card className="glass-panel">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Database className="h-5 w-5" />
@@ -234,7 +254,7 @@ export const DataSourceOverview: React.FC = () => {
         </Card>
 
         {/* 文档处理状态 */}
-        <Card>
+        <Card className="glass-panel">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5" />
@@ -271,7 +291,7 @@ export const DataSourceOverview: React.FC = () => {
         </Card>
 
         {/* 存储使用情况 */}
-        <Card>
+        <Card className="glass-panel">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <HardDrive className="h-5 w-5" />
@@ -316,7 +336,7 @@ export const DataSourceOverview: React.FC = () => {
         </Card>
 
         {/* 最近活动 */}
-        <Card>
+        <Card className="glass-panel">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Clock className="h-5 w-5" />

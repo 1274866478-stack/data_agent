@@ -1,12 +1,12 @@
 /**
  * [HEADER]
- * 用户管理页面 - Data Agent V4 User Management
+ * 用户管理页面 - Data Agent V4 User Management (Tiffany 玻璃态风格)
  * 提供租户内用户的查看、搜索、邀请和管理功能
  *
  * [MODULE]
  * 模块类型: Next.js 14 App Router Page Component
  * 所属功能: 用户与权限管理
- * 技术栈: React, TypeScript, Lucide Icons
+ * 技术栈: React, TypeScript, Material Symbols Outlined
  *
  * [INPUT]
  * - 无路由参数
@@ -20,10 +20,12 @@
  *
  * [OUTPUT]
  * - 渲染内容:
- *   - 统计卡片 (总用户数、管理员数量)
- *   - 搜索栏 (实时搜索过滤)
- *   - 用户列表 (头像、姓名、邮箱、角色、操作按钮)
- *   - 邀请用户按钮
+ *   - 网格背景 + 径向光晕
+ *   - 标题区域 (text-4xl + 发光按钮)
+ *   - 统计卡片 (2列, font-mono 大数字)
+ *   - 搜索栏 (固定宽度 w-72)
+ *   - 用户列表 (玻璃态卡片)
+ *   - 空状态卡片 (虚线边框)
  * - 用户交互:
  *   - 搜索用户 (按邮箱、姓名搜索)
  *   - 邀请新用户 (功能待实现)
@@ -33,16 +35,13 @@
  *
  * [LINK]
  * - 依赖组件:
- *   - @/components/ui/card - Card组件族
  *   - @/components/ui/button - Button组件
- *   - @/components/ui/input - Input组件 (搜索框)
  * - 图标库:
- *   - lucide-react - Users, UserPlus, Search, Mail, Shield, AlertCircle
+ *   - Material Symbols Outlined - groups, admin_panel_settings, search, person_add
  * - 路由:
  *   - /users - 当前页面路由
  * - 后端API (规划中):
  *   - /api/v1/users - 用户管理端点
- *   - /api/v1/tenants/{id}/users - 租户用户管理
  *
  * [POS]
  * - 文件路径: frontend/src/app/(app)/users/page.tsx
@@ -86,22 +85,26 @@
  *   - 编辑用户: 按钮存在但功能待实现
  *   - 邀请用户: 按钮存在但功能待实现
  * - 角色显示:
- *   - admin: 紫色标签 "管理员"
- *   - user: 灰色标签 "普通用户"
+ *   - admin: Tiffany 绿色标签 "ADMIN"
+ *   - user: 灰色标签 "USER"
  * - 空状态处理:
  *   - 无用户时显示空列表
  * - 响应式布局:
- *   - 统计卡片: 移动端1列, 桌面端3列
+ *   - 统计卡片: 移动端1列, 桌面端2列
  *   - 用户列表: 单列卡片布局
+ *
+ * [STYLE]
+ * - UI风格: Tiffany 玻璃态设计系统
+ * - 背景效果: 24px 网格线 + 中心径向光晕
+ * - 卡片样式: 毛玻璃效果 (backdrop-filter: blur)
+ * - 字体系统: JetBrains Mono (数字), Inter (文本)
+ * - 颜色主题: Tiffany Blue (#81d8cf)
  */
 
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { AlertCircle, Mail, Search, Shield, UserPlus, Users } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState, useEffect } from 'react'
 
 interface User {
   id: string
@@ -127,11 +130,11 @@ export default function UsersPage() {
     try {
       setLoading(true)
       setError(null)
-      
+
       // TODO: 调用后端API获取用户列表
       // const response = await fetch('/api/v1/users')
       // const data = await response.json()
-      
+
       // 模拟数据
       const mockUsers: User[] = [
         {
@@ -151,9 +154,18 @@ export default function UsersPage() {
           role: 'user',
           is_active: true,
           created_at: new Date(Date.now() - 86400000).toISOString()
+        },
+        {
+          id: '3',
+          email: 'developer@example.com',
+          first_name: '开发',
+          last_name: '人员',
+          role: 'user',
+          is_active: true,
+          created_at: new Date(Date.now() - 172800000).toISOString()
         }
       ]
-      
+
       setUsers(mockUsers)
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载用户失败')
@@ -168,12 +180,21 @@ export default function UsersPage() {
     user.last_name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString)
+    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+  }
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">加载用户列表中...</p>
+      <div className="users-bg-grid min-h-screen p-6">
+        <div className="container mx-auto">
+          <div className="flex items-center justify-center h-[60vh]">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+              <p className="text-slate-500">加载用户列表中...</p>
+            </div>
+          </div>
         </div>
       </div>
     )
@@ -181,116 +202,159 @@ export default function UsersPage() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-destructive">
-              <AlertCircle className="h-5 w-5" />
-              加载失败
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground mb-4">{error}</p>
-            <Button onClick={loadUsers}>重试</Button>
-          </CardContent>
-        </Card>
+      <div className="users-bg-grid min-h-screen p-6">
+        <div className="container mx-auto">
+          <div className="flex items-center justify-center h-[60vh]">
+            <div className="users-glass-card rounded-2xl p-8 w-full max-w-md">
+              <div className="text-center">
+                <span className="material-symbols-outlined text-red-500 text-5xl mb-4">error</span>
+                <h3 className="text-xl font-bold text-slate-900 mb-2">加载失败</h3>
+                <p className="text-slate-500 mb-6">{error}</p>
+                <Button onClick={loadUsers} className="users-glow-button">
+                  <span className="material-symbols-outlined text-xl mr-2">refresh</span>
+                  重试
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">用户管理</h1>
-          <p className="text-muted-foreground mt-2">管理租户下的所有用户</p>
+    <div className="users-bg-grid users-radial-glow min-h-screen p-6">
+      <div className="container mx-auto relative z-10">
+        {/* 标题区域 */}
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-4xl font-bold tracking-tight text-slate-900">
+              用户管理
+            </h1>
+            <p className="text-slate-500 mt-2">管理租户下的所有用户</p>
+          </div>
+          <Button className="users-glow-button">
+            <span className="material-symbols-outlined text-xl mr-2">person_add</span>
+            邀请用户
+          </Button>
         </div>
-        <Button>
-          <UserPlus className="h-4 w-4 mr-2" />
-          邀请用户
-        </Button>
-      </div>
 
-      {/* 统计卡片 */}
-      <div className="grid gap-6 md:grid-cols-3">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">总用户数</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{users.length}</div>
-            <p className="text-xs text-muted-foreground">活跃用户</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">管理员</CardTitle>
-            <Shield className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {users.filter(u => u.role === 'admin').length}
+        {/* 统计卡片 */}
+        <div className="grid gap-6 md:grid-cols-2 mb-8">
+          {/* 总用户数卡片 */}
+          <div className="users-stat-card rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col">
+                <span className="users-info-label">总用户数</span>
+                <span className="text-5xl users-number-display tracking-tighter text-slate-900">
+                  {users.length}
+                </span>
+              </div>
+              <span className="material-symbols-outlined text-5xl text-primary/30">groups</span>
             </div>
-            <p className="text-xs text-muted-foreground">具有管理权限</p>
-          </CardContent>
-        </Card>
-      </div>
+            <p className="text-sm font-medium text-slate-500">活跃用户</p>
+          </div>
 
-      {/* 搜索栏 */}
-      <div className="flex items-center gap-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="搜索用户..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
-          />
+          {/* 管理员数量卡片 */}
+          <div className="users-stat-card rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col">
+                <span className="users-info-label">管理员</span>
+                <span className="text-5xl users-number-display tracking-tighter text-slate-900">
+                  {users.filter(u => u.role === 'admin').length}
+                </span>
+              </div>
+              <span className="material-symbols-outlined text-5xl text-primary/30">admin_panel_settings</span>
+            </div>
+            <p className="text-sm font-medium text-slate-500">具有管理权限</p>
+          </div>
         </div>
-      </div>
 
-      {/* 用户列表 */}
-      <Card>
-        <CardHeader>
-          <CardTitle>用户列表</CardTitle>
-          <CardDescription>共 {filteredUsers.length} 个用户</CardDescription>
-        </CardHeader>
-        <CardContent>
+        {/* 搜索栏 */}
+        <div className="mb-8">
+          <div className="relative w-72">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400">
+              search
+            </span>
+            <input
+              type="text"
+              placeholder="搜索用户..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="users-search-bar w-full pl-12 pr-4 py-2.5 rounded-xl text-sm text-slate-900 placeholder:text-slate-400"
+            />
+          </div>
+        </div>
+
+        {/* 用户列表 */}
+        {filteredUsers.length === 0 ? (
+          /* 空状态卡片 */
+          <div className="users-empty-card">
+            <span className="material-symbols-outlined text-6xl text-primary/40 mb-4">
+              group_off
+            </span>
+            <h3 className="text-xl font-bold text-slate-900 mb-2">
+              {searchQuery ? '未找到匹配的用户' : '暂无用户'}
+            </h3>
+            <p className="text-slate-500 max-w-md">
+              {searchQuery
+                ? '尝试使用其他关键词搜索'
+                : '邀请团队成员加入租户，开始协作'
+              }
+            </p>
+            {!searchQuery && (
+              <Button className="users-glow-button mt-4">
+                <span className="material-symbols-outlined text-xl mr-2">person_add</span>
+                邀请第一个用户
+              </Button>
+            )}
+          </div>
+        ) : (
+          /* 用户列表卡片 */
           <div className="space-y-4">
             {filteredUsers.map((user) => (
-              <div key={user.id} className="flex items-center justify-between p-4 border rounded-lg">
-                <div className="flex items-center gap-4">
-                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                    <span className="text-sm font-medium">
-                      {user.first_name[0]}{user.last_name[0]}
-                    </span>
+              <div key={user.id} className="users-list-item-card rounded-2xl p-5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4 flex-1">
+                    {/* 头像区域 */}
+                    <div className="users-avatar-container">
+                      <span className="text-sm font-bold text-slate-700">
+                        {user.first_name[0]}{user.last_name[0]}
+                      </span>
+                    </div>
+
+                    {/* 用户信息 */}
+                    <div className="flex flex-col gap-1 flex-1">
+                      <div className="flex items-center gap-3">
+                        <h3 className="text-base font-semibold text-slate-900">
+                          {user.first_name} {user.last_name}
+                        </h3>
+                        <span className={`users-role-tag ${user.role}`}>
+                          {user.role === 'admin' ? 'ADMIN' : 'USER'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <span className="text-sm text-slate-500">{user.email}</span>
+                        <span className="users-date-display">
+                          {formatDate(user.created_at)}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium">{user.first_name} {user.last_name}</p>
-                    <p className="text-sm text-muted-foreground flex items-center gap-1">
-                      <Mail className="h-3 w-3" />
-                      {user.email}
-                    </p>
+
+                  {/* 操作按钮 */}
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" className="border-slate-200 hover:bg-slate-50">
+                      <span className="material-symbols-outlined text-lg mr-1">edit</span>
+                      编辑
+                    </Button>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`px-2 py-1 text-xs rounded-full ${
-                    user.role === 'admin' 
-                      ? 'bg-primary/10 text-primary' 
-                      : 'bg-secondary text-secondary-foreground'
-                  }`}>
-                    {user.role === 'admin' ? '管理员' : '普通用户'}
-                  </span>
-                  <Button variant="outline" size="sm">编辑</Button>
                 </div>
               </div>
             ))}
           </div>
-        </CardContent>
-      </Card>
+        )}
+      </div>
     </div>
   )
 }
-
