@@ -84,12 +84,11 @@ function removeChartMarkers(content: string, hasProcessingSteps: boolean): strin
 
   let cleaned = content
 
-  // 移除 [CHART_START]...[CHART_END] 标记
-  cleaned = cleaned.replace(/\[CHART_START\].*?\[CHART_END\]/gs, '')
+  // 🔧 修复：改进 [CHART_START]...[CHART_END] 标记移除逻辑
+  // 使用非贪婪匹配 + 跨行匹配，确保捕获所有变体
+  cleaned = cleaned.replace(/\[CHART_START\][\s\S]*?\[CHART_END\]/gi, '')
 
-  // 移除 Markdown 表格（避免与 ProcessingSteps 步骤6重复）
-  // 匹配以 | 开头的行，包含分隔符行 |---| 和数据行
-  // 策略：找到表格开始（包含 | 的行），然后连续的 | 行都是表格的一部分
+  // 🔧 新增：改进的逐行处理，移除可能的源码泄露和表格
   const lines = cleaned.split('\n')
   const filteredLines: string[] = []
   let inTable = false
@@ -97,7 +96,21 @@ function removeChartMarkers(content: string, hasProcessingSteps: boolean): strin
 
   for (const line of lines) {
     const trimmed = line.trim()
-    // 检查是否是表格行（包含 | 且不是代码块）
+
+    // 🔧 增强的源码泄露检测模式
+    const LEAK_PATTERNS = [
+      /^#{2,}\s+\w+.*#{2,}\s*[📊📈📉💼🔍]/,  // 多级标题 + emoji
+      /^#{2,}\s+202[0-9]年.*#{2,}/,             // 年份标题组合
+      /^#{2,}.*###.*$/,                        // 任意 ##...### 模式
+      /^(##|###)\s+.*\1\s+/,                   // 重复标题标记
+      /^(##|###)\s.*(数据概览|趋势分析|📊)/,   // 特征词汇组合
+    ]
+
+    if (LEAK_PATTERNS.some(pattern => pattern.test(trimmed))) {
+      continue // 跳过源码泄露行
+    }
+
+    // 检查是否是表格行
     const isTableRow = trimmed.startsWith('|') && trimmed.endsWith('|')
     const isSeparator = /^\|[\s\-:|]+\|$/.test(trimmed)
 
@@ -107,11 +120,9 @@ function removeChartMarkers(content: string, hasProcessingSteps: boolean): strin
         tableLineCount = 0
       }
       tableLineCount++
-      // 跳过表格行，不添加到输出
       continue
     } else {
       if (inTable && tableLineCount > 0) {
-        // 表格结束
         inTable = false
         tableLineCount = 0
       }
@@ -121,10 +132,11 @@ function removeChartMarkers(content: string, hasProcessingSteps: boolean): strin
 
   cleaned = filteredLines.join('\n')
 
-  // 清理多余的空行
+  // 清理多余的空行和残留标记
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
+  cleaned = cleaned.replace(/\[CHART_START\]|\[CHART_END\]/gi, '')
 
-  return cleaned
+  return cleaned.trim()
 }
 
 interface MessageListProps {

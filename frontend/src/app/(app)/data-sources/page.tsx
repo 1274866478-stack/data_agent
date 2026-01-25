@@ -54,20 +54,18 @@
 
 import { BulkOperations } from '@/components/data-sources/BulkOperations'
 import { DataSourceList } from '@/components/data-sources/DataSourceList'
-import { DataSourceOverview } from '@/components/data-sources/DataSourceOverview'
 import { DataSourceTabs } from '@/components/data-sources/DataSourceTabs'
 import { SearchAndFilter } from '@/components/data-sources/SearchAndFilter'
 import { DocumentList } from '@/components/documents/DocumentList'
 import DocumentUpload from '@/components/documents/DocumentUpload'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { GradientCard, GradientCardContent, GradientCardHeader, GradientCardTitle } from '@/components/ui/gradient-card'
 import { ErrorMessage } from '@/components/ui/error-message'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import { useTenantId } from '@/store/authStore'
 import { useDashboardStore } from '@/store/dashboardStore'
-import { Eye, EyeOff, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 export default function DataSourcesPage() {
@@ -84,7 +82,6 @@ export default function DataSourcesPage() {
     clearError,
   } = useDashboardStore()
 
-  const [showOverview, setShowOverview] = useState(true)
   const [isCreateMode, setIsCreateMode] = useState(false)
 
   // 获取初始数据
@@ -184,16 +181,6 @@ export default function DataSourcesPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setShowOverview(!showOverview)}
-              className="hidden sm:flex"
-            >
-              {showOverview ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
-              {showOverview ? '隐藏概览' : '显示概览'}
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
               onClick={handleRefresh}
               disabled={isLoading}
             >
@@ -210,23 +197,6 @@ export default function DataSourcesPage() {
 
         {/* 错误信息 */}
         {error && <ErrorMessage message={error} />}
-
-        {/* 概览仪表板 */}
-        {showOverview && (
-          <GradientCard gradient="primary" className="glass shadow-2xl ring-1 ring-slate-200/40">
-            <GradientCardHeader>
-              <div className="flex items-center justify-between">
-                <GradientCardTitle className="text-lg">数据源概览</GradientCardTitle>
-                <Badge variant="outline" className="text-xs">
-                  实时数据
-                </Badge>
-              </div>
-            </GradientCardHeader>
-            <GradientCardContent>
-              <DataSourceOverview />
-            </GradientCardContent>
-          </GradientCard>
-        )}
 
         {/* 搜索和筛选 */}
         <GradientCard gradient="secondary">
@@ -288,17 +258,6 @@ export default function DataSourcesPage() {
           />
         </GradientCardContent>
       </GradientCard>
-
-        {/* 响应式设计：移动端概览切换按钮 */}
-        <div className="sm:hidden fixed bottom-4 right-4 z-10">
-          <Button
-            size="sm"
-            onClick={() => setShowOverview(!showOverview)}
-            className="rounded-full shadow-lg"
-          >
-            {showOverview ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          </Button>
-        </div>
       </div>
     </div>
   )

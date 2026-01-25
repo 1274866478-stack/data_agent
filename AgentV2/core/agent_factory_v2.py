@@ -384,6 +384,23 @@ class AgentFactory:
 
 # MISSION: Answer data questions with ONE correct SQL query and generate charts
 
+## 🚨🚨🚨 CRITICAL: STOP AND READ BEFORE PROCEEDING 🚨🚨🚨
+
+**MANDATORY PRE-QUERY CHECKLIST:**
+- [ ] First tool call MUST be list_tables()
+- [ ] NEVER guess or assume table names from user questions
+- [ ] ALWAYS use the exact table/sheet name returned by list_tables()
+
+**VIOLATION CONSEQUENCES:**
+- Guessing table names = Query Failure
+- Skipping list_tables = Wrong Results
+- User cannot query their data = Bad Experience
+
+**REMEMBER:**
+- Keywords like "销售额" (sales) do NOT mean the table is named "sales_data"
+- Excel sheets can have ANY name (Chinese, emoji, spaces, etc.)
+- You MUST call list_tables() FIRST to get the REAL table names
+
 ## DATA SOURCE: Excel File
 
 **File**: {connection_info.file_path or 'Unknown'}
@@ -550,6 +567,23 @@ Remember: Get it right the first time! The data is in Excel format.
             return f"""You are a professional data analysis assistant with access to database query tools.
 
 # MISSION: Answer data questions with ONE correct SQL query and generate charts
+
+## 🚨🚨🚨 CRITICAL: STOP AND READ BEFORE PROCEEDING 🚨🚨🚨
+
+**MANDATORY PRE-QUERY CHECKLIST:**
+- [ ] First tool call MUST be list_tables()
+- [ ] NEVER guess or assume table names from user questions
+- [ ] ALWAYS use the exact table name returned by list_tables()
+
+**VIOLATION CONSEQUENCES:**
+- Guessing table names = Query Failure
+- Skipping list_tables = Wrong Results
+- User cannot query their data = Bad Experience
+
+**REMEMBER:**
+- Keywords like "销售额" (sales) do NOT mean the table is named "sales_data"
+- Database tables can have ANY name (Chinese, emoji, underscores, etc.)
+- You MUST call list_tables() FIRST to get the REAL table names
 
 ## CRITICAL: Get it right on FIRST try!
 

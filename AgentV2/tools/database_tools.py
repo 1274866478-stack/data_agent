@@ -41,6 +41,9 @@ _connection_id_ctx: ContextVar[Optional[str]] = ContextVar("connection_id", defa
 _db_session_ctx: ContextVar[Optional[Any]] = ContextVar("db_session", default=None)
 _tenant_id_ctx: ContextVar[Optional[str]] = ContextVar("tenant_id", default=None)
 
+# 🔧 新增：跟踪 list_tables 是否被调用
+_list_tables_called_ctx: ContextVar[bool] = ContextVar("list_tables_called", default=False)
+
 def _set_connection_context(
     connection_id: Optional[str] = None,
     db_session: Optional[Any] = None,
@@ -68,6 +71,24 @@ def _clear_connection_context() -> None:
     _db_session_ctx.set(None)
     _tenant_id_ctx.set(None)
     logger.info("[CONTEXT_CLEAR] Connection context cleared")
+
+
+# 🔧 新增：list_tables 调用标志管理函数
+def _set_list_tables_called(value: bool = True) -> None:
+    """设置 list_tables 已调用标志"""
+    _list_tables_called_ctx.set(value)
+    logger.info(f"[LIST_TABLES_FLAG] Set to {value}")
+
+
+def _get_list_tables_called() -> bool:
+    """获取 list_tables 已调用标志"""
+    return _list_tables_called_ctx.get()
+
+
+def _reset_list_tables_flag() -> None:
+    """重置 list_tables 调用标志"""
+    _list_tables_called_ctx.set(False)
+    logger.info("[LIST_TABLES_FLAG] Reset to False")
 
 # ============================================================================
 # 缓存管理
@@ -707,6 +728,25 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
             "error_type": "invalid_query_type"
         }, ensure_ascii=False)
 
+    # 🚨 强制检查：确保 list_tables 已被调用
+    if not _get_list_tables_called():
+        logger.warning("execute_query called before list_tables! This may cause errors.")
+
+        # 尝试从查询中提取表名进行验证
+        extracted_table = _extract_table_name_from_query(query)
+
+        # 返回友好的错误提示，而不是直接失败
+        return json.dumps({
+            "error": (
+                "⚠️ Query skipped: You must call list_tables() first to discover available tables. "
+                f"Your query references table '{extracted_table or 'unknown'}', but we need to verify "
+                "it exists first. Please call list_tables() before execute_query()."
+            ),
+            "error_type": "list_tables_required_first",
+            "suggestion": "Call list_tables() to get available table/sheet names",
+            "query_skipped": query[:100] + "..." if len(query) > 100 else query
+        }, ensure_ascii=False)
+
     # 清理和修复 SQL
     cleaned_query = clean_and_validate_sql(query)
     if cleaned_query != query:
@@ -1059,6 +1099,9 @@ def list_tables(connection_id: Optional[str] = None) -> str:
             _schema_cache.set(cache_key, result_str)
             logger.info(f"list_tables: Excel 文件，{len(sheets)} 个工作表: {sheets}")
 
+            # 🔧 设置标志，表示 list_tables 已被调用
+            _set_list_tables_called(True)
+
             return result_str
 
         except Exception as e:
@@ -1098,6 +1141,9 @@ def list_tables(connection_id: Optional[str] = None) -> str:
         # 存入缓存
         _schema_cache.set(cache_key, result_str)
         logger.info(f"list_tables: 查询成功，缓存结果 ({len(tables)} 个表)")
+
+        # 🔧 设置标志，表示 list_tables 已被调用
+        _set_list_tables_called(True)
 
         return result_str
 
@@ -1316,17 +1362,30 @@ def get_database_tools(
         StructuredTool.from_function(
             func=bound_execute_query,
             name="execute_query",
-            description=execute_query.__doc__
+            description=(
+                "Execute a SQL SELECT query on the database or Excel file. "
+                "🚨🚨🚨 CRITICAL: You MUST call list_tables() FIRST before using this tool! "
+                "Do NOT guess table names - use the exact names returned by list_tables(). "
+                "Args: query (str): The SQL SELECT query to execute"
+            )
         ),
         StructuredTool.from_function(
             func=bound_list_tables,
             name="list_tables",
-            description=list_tables.__doc__
+            description=(
+                "List all available tables in the database or sheets in the Excel file. "
+                "🚨🚨🚨 CRITICAL: You MUST call this tool FIRST before execute_query()! "
+                "This returns the actual table/sheet names that exist in the data source. "
+                "Args: None"
+            )
         ),
         StructuredTool.from_function(
             func=bound_get_schema,
             name="get_schema",
-            description=get_schema.__doc__
+            description=(
+                "Get the schema (column information) for a specific table or sheet. "
+                "Args: table_name (str): The exact table/sheet name from list_tables()"
+            )
         )
     ]
 

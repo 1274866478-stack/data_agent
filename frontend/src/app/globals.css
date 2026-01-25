@@ -2063,3 +2063,229 @@
   transition: width 0.3s ease;
   border-radius: 9999px;
 }
+
+/* ============================================================
+   数据源页面专用样式 - Tiffany 玻璃态风格
+   ============================================================ */
+
+/* 模块边框效果 */
+.datasource-module-border {
+  border: 1px solid transparent;
+  background-image: linear-gradient(rgba(255,255,255,0), rgba(255,255,255,0)),
+                      linear-gradient(135deg, rgba(129,216,207,0.5) 0%, rgba(129,216,207,0) 50%);
+  background-origin: border-box;
+  background-clip: content-box, border-box;
+}
+
+.dark .datasource-module-border {
+  background-image: linear-gradient(rgba(30,41,59,0), rgba(30,41,59,0)),
+                      linear-gradient(135deg, rgba(129,216,207,0.3) 0%, rgba(129,216,207,0) 50%);
+}
+
+/* 技术标签字体 */
+.datasource-tech-label {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  letter-spacing: 0.05em;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.dark .datasource-tech-label {
+  color: #94a3b8;
+}
+
+/* 发光按钮 */
+.datasource-glow-button {
+  box-shadow: 0 0 15px rgba(129, 216, 207, 0.4);
+  transition: all 0.3s ease;
+}
+
+.datasource-glow-button:hover {
+  box-shadow: 0 0 25px rgba(129, 216, 207, 0.6);
+  transform: translateY(-1px);
+}
+
+/* 数据源卡片 */
+.datasource-card {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(129, 216, 207, 0.2);
+  border-radius: 12px;
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.dark .datasource-card {
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(129, 216, 207, 0.15);
+}
+
+.datasource-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(129, 216, 207, 0.2);
+}
+
+.dark .datasource-card:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* 状态指示器 */
+.datasource-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  animation: pulse-glow-dot 2s ease-in-out infinite;
+}
+
+.datasource-status-dot.active { background: #10b981; }
+.datasource-status-dot.error { background: #ef4444; }
+.datasource-status-dot.inactive { background: #94a3b8; }
+
+@keyframes pulse-glow-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* 数据库类型徽章 */
+.datasource-db-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  background: rgba(129, 216, 207, 0.15);
+  color: #0d9488;
+}
+
+.dark .datasource-db-badge {
+  background: rgba(129, 216, 207, 0.2);
+  color: #81d8cf;
+}
+
+/* 信息标签 */
+.datasource-info-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.datasource-info-value {
+  font-size: 0.875rem;
+  color: #334155;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.dark .datasource-info-value {
+  color: #cbd5e1;
+}
+
+/* 操作按钮网格 */
+.datasource-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+}
+
+/* 延迟徽章 */
+.datasource-latency-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+}
+
+.datasource-latency-badge.warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: #d97706;
+}
+
+.datasource-latency-badge.error {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+/* 右下角统计面板 */
+.datasource-stats-panel {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 2rem;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(129, 216, 207, 0.25);
+  border-radius: 9999px;
+  box-shadow: 0 4px 20px rgba(129, 216, 207, 0.15);
+}
+
+.dark .datasource-stats-panel {
+  background: rgba(30, 41, 59, 0.85);
+  border-color: rgba(129, 216, 207, 0.2);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.datasource-stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.125rem;
+}
+
+.datasource-stat-label {
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.datasource-stat-value {
+  font-size: 0.875rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  color: #334155;
+}
+
+.dark .datasource-stat-value {
+  color: #f1f5f9;
+}
+
+.datasource-stat-divider {
+  width: 1px;
+  height: 1.5rem;
+  background: rgba(129, 216, 207, 0.2);
+}
+
+.datasource-pipeline-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.375rem 0.75rem;
+  border-radius: 9999px;
+  background: rgba(16, 185, 129, 0.15);
+  color: #059669;
+}
+
+@media (max-width: 640px) {
+  .datasource-stats-panel {
+    left: 1rem;
+    right: 1rem;
+    justify-content: space-around;
+  }
+  .datasource-stat-divider {
+    display: none;
+  }
+}

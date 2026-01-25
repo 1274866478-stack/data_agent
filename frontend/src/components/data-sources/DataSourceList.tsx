@@ -424,112 +424,112 @@ export function DataSourceList({ tenantId, onDataSourceSelect }: DataSourceListP
       {!isLoading && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredDataSources.map((dataSource) => (
-            <Card key={dataSource.id} className="relative">
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      checked={selectedIds.includes(dataSource.id)}
-                      onCheckedChange={() => handleToggleSelect(dataSource.id)}
-                    />
-                    <CardTitle className="text-lg truncate" title={dataSource.name}>
-                      {dataSource.name}
-                    </CardTitle>
-                  </div>
-                  <div className={`w-3 h-3 rounded-full ${
-                    dataSource.status === 'active' ? 'bg-green-500' :
-                    dataSource.status === 'error' ? 'bg-red-500' :
-                    dataSource.status === 'testing' ? 'bg-yellow-500' :
-                    'bg-gray-400'
+            <div key={dataSource.id} className="datasource-card relative p-5">
+              {/* 头部区域 */}
+              <div className="flex items-start justify-between gap-3 mb-4">
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <Checkbox
+                    checked={selectedIds.includes(dataSource.id)}
+                    onCheckedChange={() => handleToggleSelect(dataSource.id)}
+                    className="shrink-0"
+                  />
+                  <h3 className="text-lg font-semibold truncate" title={dataSource.name}>
+                    {dataSource.name}
+                  </h3>
+                </div>
+                {/* 状态指示器 */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`datasource-status-dot ${
+                    dataSource.status === 'active' ? 'active' :
+                    dataSource.status === 'error' ? 'error' : 'inactive'
                   }`} />
+                  <span className="datasource-tech-label">{getStatusText(dataSource.status)}</span>
                 </div>
-                <CardDescription className="flex items-center gap-2">
-                  <Badge variant="outline">
-                    {getDatabaseTypeDisplay(dataSource.db_type)}
-                  </Badge>
-                  <Badge variant={getStatusColor(dataSource.status)}>
-                    {getStatusText(dataSource.status)}
-                  </Badge>
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {/* 连接信息 */}
-                <div className="space-y-2 text-sm text-muted-foreground mb-4">
-                  {dataSource.host && (
-                    <div>主机：{dataSource.host}</div>
-                  )}
-                  {dataSource.port && (
-                    <div>端口：{dataSource.port}</div>
-                  )}
-                  {dataSource.database_name && (
-                    <div>数据库：{dataSource.database_name}</div>
-                  )}
-                  {dataSource.last_tested_at && (
-                    <div>最后测试：{new Date(dataSource.last_tested_at).toLocaleString()}</div>
-                  )}
-                </div>
+              </div>
 
-                {/* 测试结果预览 */}
-                {dataSource.test_result && (
-                  <div className="mb-4 p-2 bg-muted rounded text-xs">
-                    <div className="flex items-center gap-2">
-                      <span>最后测试：</span>
-                      <Badge variant={dataSource.test_result.success ? 'default' : 'destructive'}>
-                        {dataSource.test_result.success ? '成功' : '失败'}
-                      </Badge>
-                      <span>({dataSource.test_result.response_time_ms}ms)</span>
-                    </div>
-                    {!dataSource.test_result.success && (
-                      <div className="text-red-600 mt-1 truncate">
-                        {dataSource.test_result.message}
-                      </div>
-                    )}
+              {/* 数据库类型徽章 */}
+              <div className="mb-4">
+                <span className="datasource-db-badge">
+                  {getDatabaseTypeDisplay(dataSource.db_type)}
+                </span>
+              </div>
+
+              {/* 连接信息 */}
+              <div className="space-y-3 mb-4">
+                {dataSource.host && (
+                  <div>
+                    <div className="datasource-info-label">Host Addr</div>
+                    <div className="datasource-info-value">{dataSource.host}:{dataSource.port}</div>
                   </div>
                 )}
+                {dataSource.database_name && (
+                  <div>
+                    <div className="datasource-info-label">Database</div>
+                    <div className="datasource-info-value">{dataSource.database_name}</div>
+                  </div>
+                )}
+                {dataSource.last_tested_at && (
+                  <div>
+                    <div className="datasource-info-label">Last Tested</div>
+                    <div className="datasource-info-value">{new Date(dataSource.last_tested_at).toLocaleString()}</div>
+                  </div>
+                )}
+              </div>
 
-                {/* 操作按钮 */}
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => handleTestConnection(dataSource)}
-                    disabled={testingDataSource === dataSource.id}
-                  >
-                    {testingDataSource === dataSource.id ? (
-                      <>
-                        <LoadingSpinner className="mr-1 h-3 w-3" />
-                        测试中
-                      </>
-                    ) : (
-                      '测试连接'
-                    )}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleEdit(dataSource)}
-                  >
-                    编辑
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onDataSourceSelect?.(dataSource)}
-                  >
-                    选择
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleDelete(dataSource)}
-                    className="text-red-600 hover:text-red-700"
-                  >
-                    删除
-                  </Button>
+              {/* 测试结果延迟徽章 */}
+              {dataSource.test_result && (
+                <div className="mb-4">
+                  <span className={`datasource-latency-badge ${
+                    dataSource.test_result.response_time_ms > 500 ? 'warning' :
+                    dataSource.test_result.response_time_ms > 1000 ? 'error' : ''
+                  }`}>
+                    {dataSource.test_result.response_time_ms}ms
+                  </span>
                 </div>
-              </CardContent>
-            </Card>
+              )}
+
+              {/* 操作按钮网格 */}
+              <div className="datasource-actions-grid">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="datasource-glow-button"
+                  onClick={() => handleTestConnection(dataSource)}
+                  disabled={testingDataSource === dataSource.id}
+                >
+                  {testingDataSource === dataSource.id ? (
+                    <>
+                      <LoadingSpinner className="mr-1 h-3 w-3" />
+                      测试中
+                    </>
+                  ) : (
+                    '测试连接'
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleEdit(dataSource)}
+                >
+                  编辑
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onDataSourceSelect?.(dataSource)}
+                >
+                  选择
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleDelete(dataSource)}
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                >
+                  删除
+                </Button>
+              </div>
+            </div>
           ))}
         </div>
       )}

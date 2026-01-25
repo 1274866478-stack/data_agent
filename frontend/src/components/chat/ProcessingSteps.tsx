@@ -664,6 +664,63 @@ function renderVisualization(
   )
 }
 
+/**
+ * 过滤硬编码的示例内容（通过特征指纹识别）
+ * 只过滤包含特定硬编码数值的段落
+ */
+function filterExampleContent(text: string): string {
+  // 硬编码示例内容的特征指纹（这些数值不会出现在真实数据中）
+  const EXAMPLE_FINGERPRINTS = [
+    '11.53亿元',      // 硬编码的年度销售额
+    '9,610万元',      // 硬编码的月均销售额
+    '约1.10亿元',     // 硬编码的峰值
+  ]
+
+  // 按段落分割
+  const paragraphs = text.split(/\n\n+/)
+
+  // 只过滤包含特征指纹的段落，其他段落保留
+  const filtered = paragraphs
+    .filter(para => {
+      return !EXAMPLE_FINGERPRINTS.some(fingerprint =>
+        para.includes(fingerprint)
+      )
+    })
+    .join('\n\n')
+
+  return filtered.trim()
+}
+
+/**
+ * 🔧 过滤 Markdown 源码泄露内容
+ * 移除 AI 输出中可能泄露的 Markdown 源码标记
+ */
+function filterMarkdownLeaks(text: string): string {
+  if (!text) return text
+
+  const lines = text.split('\n')
+  const filteredLines: string[] = []
+
+  // 源码泄露检测模式
+  const LEAK_PATTERNS = [
+    /^#{2,}\s+\w+.*#{2,}\s*[📊📈📉💼🔍]/,  // 多级标题 + emoji
+    /^#{2,}\s+202[0-9]年.*#{2,}/,             // 年份标题组合
+    /^##\s+.*###\s*$/,                        // 任意 ##...### 模式
+    /^(##|###)\s+.*\1\s+/,                   // 重复标题标记
+    /^(##|###)\s.*(数据概览|趋势分析|📊)/,   // 特征词汇组合
+  ]
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    const isLeak = LEAK_PATTERNS.some(pattern => pattern.test(trimmed))
+    if (!isLeak) {
+      filteredLines.push(line)
+    }
+  }
+
+  return filteredLines.join('\n')
+}
+
 // 渲染步骤内容
 function renderStepContent(step: ProcessingStep, outputFormat: 'markdown' | 'plain' = 'markdown') {
   if (!step.content_type || !step.content_data) return null
@@ -699,11 +756,13 @@ function renderStepContent(step: ProcessingStep, outputFormat: 'markdown' | 'pla
       break
     case 'text':
       if (step.content_data.text) {
+        // 🔧 应用 Markdown 源码泄露过滤
+        const filteredText = filterMarkdownLeaks(step.content_data.text)
         return (
           <div className="mt-2 p-3 rounded-md bg-primary/5 border border-primary/20">
             <div className="text-xs font-medium text-primary mb-1">数据分析</div>
             <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-              {step.content_data.text}
+              {filteredText}
             </p>
           </div>
         )
@@ -711,15 +770,12 @@ function renderStepContent(step: ProcessingStep, outputFormat: 'markdown' | 'pla
       break
     case 'answer':
       if (step.content_data.text) {
-        return (
-          <div className="mt-2 p-3 rounded-md bg-emerald-50 border border-emerald-200">
-            <div className="text-xs font-medium text-emerald-700 mb-1">AI 回答</div>
-            {outputFormat === 'plain' ? (
-              <PlainText content={step.content_data.text} className="text-sm leading-relaxed" />
-            ) : (
-              <Markdown content={step.content_data.text} className="text-sm prose-base" />
-            )}
-          </div>
+        // 过滤硬编码示例内容
+        const filteredText = filterExampleContent(step.content_data.text)
+        return outputFormat === 'plain' ? (
+          <PlainText content={filteredText} className="text-sm leading-relaxed" />
+        ) : (
+          <Markdown content={filteredText} className="text-sm prose-base" />
         )
       }
       break
@@ -941,13 +997,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
                   {/* 步骤内容 */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
-                      <span className={cn(
-                        'text-xs font-medium',
-                        step.status === 'completed' ? 'text-green-600' :
-                        step.status === 'running' ? 'text-primary' :
-                        step.status === 'error' ? 'text-destructive' :
-                        'text-muted-foreground'
-                      )}>
+                      <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
                         {step.step}. {step.title}
                       </span>
                       {step.duration && step.status === 'completed' && (
