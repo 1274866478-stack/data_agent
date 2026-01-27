@@ -63,7 +63,7 @@ def set_mcp_client(wrapper):
 
 
 def sanitize_sql(sql: str) -> str:
-    """清理 SQL 语句，移除 HTML、Markdown 等污染"""
+    """清理 SQL 语句，移除 HTML、Markdown 等污染以及 LLM 错误添加的 tenant_id"""
     if not sql:
         return ""
     # 移除代码块标记
@@ -71,6 +71,30 @@ def sanitize_sql(sql: str) -> str:
     # 移除 HTML 标签
     import re
     sql = re.sub(r'<[^>]+>', '', sql)
+
+    # 🔥 移除 LLM 手动添加的 tenant_id 条件（避免位置错误）
+    # 系统会由租户隔离中间件自动注入正确的 tenant_id
+    # 移除 WHERE tenant_id = 'xxx'
+    pattern1 = r'\bWHERE\s+tenant_id\s*=\s*\'[^\']*\'(\s*(?:GROUP BY|ORDER BY|LIMIT|HAVING|;|$))?'
+    if re.search(pattern1, sql, re.IGNORECASE):
+        sql = re.sub(
+            r'\bWHERE\s+tenant_id\s*=\s*\'[^\']*\'(\s*(?:GROUP BY|ORDER BY|LIMIT|HAVING|;|$))?',
+            lambda m: '' if not m.group(1) or m.group(1).strip() in ('GROUP BY', 'ORDER BY', 'LIMIT', 'HAVING', ';') else ' AND ',
+            sql,
+            flags=re.IGNORECASE
+        )
+        # 清理可能残留的 AND
+        sql = re.sub(r'\bAND\s+(GROUP BY|ORDER BY|LIMIT|HAVING)', r'\1', sql, flags=re.IGNORECASE)
+
+    # 移除 AND tenant_id = 'xxx'
+    sql = re.sub(r'\bAND\s+tenant_id\s*=\s*\'[^\']*\'(\s+|$)', '', sql, flags=re.IGNORECASE)
+    # 移除 OR tenant_id = 'xxx'
+    sql = re.sub(r'\bOR\s+tenant_id\s*=\s*\'[^\']*\'(\s+|$)', '', sql, flags=re.IGNORECASE)
+    # 处理 WHERE tenant_id = 'xxx' AND ... 的情况
+    sql = re.sub(r"\bWHERE\s+tenant_id\s*=\s*'[^']*'\s+AND\s+", 'WHERE ', sql, flags=re.IGNORECASE)
+
+    # 清理多余空格
+    sql = ' '.join(sql.split())
     return sql.strip()
 
 
@@ -636,7 +660,7 @@ def analyze_dataframe_func(input_data: Dict[str, Any] = None, query: str = None,
                     
                     if sheet_name not in available_sheets:
                         logger.error(f"❌ [第一道防线] 工作表 '{sheet_name}' 不存在！可用工作表: {available_sheets}")
-                        return f'SYSTEM ERROR: Data Access Failed. Sheet "{sheet_name}" not found. Available sheets: {", ".join(available_sheets)}. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法找到指定的工作表，请检查工作表名称"。'
+                        return f'SYSTEM ERROR: Data Access Failed. 工作表 "{sheet_name}" 不存在。\n\n可用工作表: {", ".join(available_sheets)}\n\n解决方案：请先调用 inspect_file 工具查看实际的工作表名称，不要使用英文名或语义层文档中的表名。Excel 文件使用中文工作表名，必须使用 inspect_file 返回的实际名称。'
                     
                     logger.info(f"📋 读取Excel工作表: {sheet_name}")
                 except Exception as e:

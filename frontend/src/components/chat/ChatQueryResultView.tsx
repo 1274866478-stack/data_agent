@@ -5,7 +5,7 @@
  * **文件名**: ChatQueryResultView.tsx
  * **职责**: 展示AI聊天查询的结果数据，包括图表可视化和数据表格
  * **作者**: Data Agent Team
- * **版本**: 1.0.0
+ * **版本**: 1.1.0
  *
  * ## [INPUT]
  * - **table?: ChatQueryResultTable** - 查询结果表格数据，包含列名、行数据和总行数
@@ -28,19 +28,20 @@
  * ## [STATE]
  * - **MAX_ROWS: 20** - 表格最大显示行数
  * - **MAX_COLUMNS: 8** - 表格最大显示列数
- * - **limitedColumns: string[]** - 限制后的列名数组
+ * - **relevantColumns: string[]** - 与图表相关的列名数组（仅展示图表使用字段）
  * - **limitedRows: Record<string, any>[]** - 限制后的行数据数组
  * - **chartType: string** - 图表类型（小写）
  *
  * ## [SIDE-EFFECTS]
  * - **数据限制**: 自动截断过大的表格数据（最多20行×8列）
+ * - **字段过滤**: 如果有图表配置，只展示图表使用的字段（x_field, y_field）
  * - **样式适配**: 根据是否有图表调整表格卡片样式
  * - **响应式展示**: 图表图片自适应宽度，表格支持滚动查看
  * - **空状态处理**: 无数据时显示"查询未返回数据"提示
  */
 'use client'
 
-import React from 'react'
+import React, { useMemo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ChatQueryChart, ChatQueryResultTable, ChartType } from '@/lib/api-client'
@@ -58,9 +59,40 @@ const MAX_COLUMNS = 8
 export function ChatQueryResultView({ table, chart }: ChatQueryResultViewProps) {
   if (!table && !chart) return null
 
-  const limitedColumns = table?.columns.slice(0, MAX_COLUMNS) || []
-  const limitedRows = table?.rows.slice(0, MAX_ROWS) || []
+  // ========================================================================
+  // 🔥 修复：只展示与图表相关的字段（防止展示不相关的幻觉字段）
+  // ========================================================================
+  // 如果有图表配置，只展示图表使用的字段
+  // 否则展示所有字段（明细表格视图）
+  const relevantColumns = useMemo(() => {
+    const allColumns = table?.columns || []
 
+    // 如果有图表配置，优先使用图表相关字段
+    if (chart && allColumns.length > 0) {
+      const chartFields: string[] = []
+
+      // 添加 X 轴字段
+      if (chart.x_field && allColumns.includes(chart.x_field)) {
+        chartFields.push(chart.x_field)
+      }
+
+      // 添加 Y 轴字段
+      if (chart.y_field && allColumns.includes(chart.y_field) && !chartFields.includes(chart.y_field)) {
+        chartFields.push(chart.y_field)
+      }
+
+      // 如果找到了图表相关字段，只返回这些字段
+      if (chartFields.length > 0) {
+        console.log(`📊 [前端组件] 使用图表相关字段: ${chartFields.join(', ')}`)
+        return chartFields
+      }
+    }
+
+    // 默认返回所有列（限制数量）
+    return allColumns.slice(0, MAX_COLUMNS)
+  }, [table, chart])
+
+  const limitedRows = table?.rows.slice(0, MAX_ROWS) || []
   const chartType = (chart?.chart_type as ChartType | string | undefined)?.toLowerCase()
 
   return (
@@ -101,11 +133,13 @@ export function ChatQueryResultView({ table, chart }: ChatQueryResultViewProps) 
         </Card>
       )}
 
-      {table && limitedColumns.length > 0 && (
+      {table && relevantColumns.length > 0 && (
         <Card className={cn('border-gray-100', !chart && 'bg-gray-50 dark:bg-slate-800/60')}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold text-gray-900">
-              查询结果表（前 {limitedRows.length} 行）
+              {chart && chart.x_field && chart.y_field
+                ? `查询结果表（相关字段: ${relevantColumns.join(', ')}）`
+                : `查询结果表（前 ${limitedRows.length} 行）`}
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
@@ -113,7 +147,7 @@ export function ChatQueryResultView({ table, chart }: ChatQueryResultViewProps) 
               <table className="w-full text-xs border-collapse">
                 <thead className="bg-gray-50 dark:bg-slate-800">
                   <tr>
-                    {limitedColumns.map(col => (
+                    {relevantColumns.map(col => (
                       <th
                         key={col}
                         className="px-3 py-2 border-b text-left font-medium text-gray-700 whitespace-nowrap"
@@ -126,7 +160,7 @@ export function ChatQueryResultView({ table, chart }: ChatQueryResultViewProps) 
                 <tbody>
                   {limitedRows.map((row, rowIndex) => (
                     <tr key={rowIndex} className="odd:bg-white dark:bg-slate-800 even:bg-gray-50 dark:bg-slate-800/60">
-                      {limitedColumns.map(col => (
+                      {relevantColumns.map(col => (
                         <td
                           key={col}
                           className="px-3 py-1.5 border-b text-gray-800 align-top max-w-xs"
@@ -143,7 +177,7 @@ export function ChatQueryResultView({ table, chart }: ChatQueryResultViewProps) 
                   {limitedRows.length === 0 && (
                     <tr>
                       <td
-                        colSpan={limitedColumns.length}
+                        colSpan={relevantColumns.length}
                         className="px-3 py-4 text-center text-gray-500"
                       >
                         查询未返回数据

@@ -361,6 +361,148 @@ async def create_query_v2(
         else:
             messages = []
 
+        # ========== [数据验证模块] 从消息中提取 SQL 和数据 ==========
+        extracted_sql = None
+        extracted_data = None
+        chart_config = None
+
+        # 导入数据验证模块
+        DATA_VALIDATION_AVAILABLE = False
+        try:
+            # 尝试多种导入路径以支持不同环境
+            try:
+                from backend.src.app.services.agent.data_validator import (
+                    validate_sql_data_consistency,
+                    smart_field_mapping,
+                    recommend_chart,
+                )
+            except ImportError:
+                from src.app.services.agent.data_validator import (
+                    validate_sql_data_consistency,
+                    smart_field_mapping,
+                    recommend_chart,
+                )
+            DATA_VALIDATION_AVAILABLE = True
+            logger.info("[V2] 数据验证模块已加载")
+        except ImportError as e:
+            DATA_VALIDATION_AVAILABLE = False
+            logger.warning(f"[V2] 数据验证模块不可用: {e}")
+
+        # 🔍 调试：打印消息结构
+        logger.info(f"[V2] 消息数量: {len(messages)}")
+        for i, msg in enumerate(messages):
+            msg_type = type(msg).__name__
+            msg_class_str = str(msg.__class__) if hasattr(msg, '__class__') else 'N/A'
+            logger.info(f"[V2] 消息 {i}: type={msg_type}, class={msg_class_str}")
+            if hasattr(msg, 'tool_calls'):
+                logger.info(f"[V2]   - tool_calls: {msg.tool_calls}")
+            if hasattr(msg, 'content'):
+                content_preview = str(msg.content)[:200] if msg.content else None
+                logger.info(f"[V2]   - content: {content_preview}")
+
+        # 从消息中提取 SQL 和数据
+        for msg in messages:
+            # 提取 SQL（从 AIMessage 的 tool_calls 中）
+            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    tc_name = tc.get('name') if isinstance(tc, dict) else getattr(tc, 'name', None)
+                    logger.info(f"[V2] 检查工具调用: {tc_name}")
+                    # AgentV2 使用 execute_query 工具，参数名是 'query'
+                    if tc_name in ('execute_query', 'query', 'mcp_postgres_query'):
+                        tc_args = tc.get('args') if isinstance(tc, dict) else getattr(tc, 'args', {})
+                        # 尝试多种参数名
+                        if tc_args:
+                            extracted_sql = (
+                                tc_args.get('query') or
+                                tc_args.get('sql') or
+                                tc_args.get('q')
+                            )
+                        if extracted_sql:
+                            logger.info(f"[V2] 提取到 SQL: {extracted_sql[:100] if extracted_sql else None}...")
+                            break  # 找到 SQL 后跳出
+
+            # 提取数据（从 ToolMessage 中）
+            msg_class_name = str(msg.__class__) if hasattr(msg, '__class__') else ''
+            if 'ToolMessage' in msg_class_name or 'Tool' in msg_class_name:
+                try:
+                    import json
+                    content = msg.content
+                    logger.info(f"[V2] ToolMessage content 类型: {type(content)}")
+                    if isinstance(content, str):
+                        # 尝试解析 JSON 数据
+                        data = json.loads(content)
+
+                        # 检查是否是标准的查询结果格式 {"columns": [...], "rows": [...], ...}
+                        if isinstance(data, dict) and 'columns' in data and 'rows' in data:
+                            # 转换为字典列表格式 [{"col1": val1, "col2": val2}, ...]
+                            columns = data.get('columns', [])
+                            rows = data.get('rows', [])
+                            if rows and columns:
+                                extracted_data = [
+                                    {col: val for col, val in zip(columns, row)}
+                                    for row in rows
+                                ]
+                                logger.info(f"[V2] 提取到数据: {len(extracted_data)} 行, 列: {columns}")
+                            break
+
+                        # 检查是否是直接的字典列表
+                        elif isinstance(data, list) and len(data) > 0:
+                            if all(isinstance(row, dict) for row in data):
+                                extracted_data = data
+                                logger.info(f"[V2] 提取到数据: {len(data)} 行, 列: {list(data[0].keys())}")
+                                break
+                        elif isinstance(data, dict) and 'error' in data:
+                            # 错误响应，跳过
+                            logger.debug(f"[V2] 跳过错误响应: {data.get('error', 'Unknown error')}")
+                        elif isinstance(data, dict) and 'tables' in data:
+                            # list_tables 响应，跳过
+                            logger.debug(f"[V2] 跳过 list_tables 响应")
+                    elif isinstance(content, list):
+                        if all(isinstance(row, dict) for row in content):
+                            extracted_data = content
+                            logger.info(f"[V2] 提取到数据: {len(content)} 行")
+                            break
+                except (ValueError, TypeError, AttributeError, json.JSONDecodeError) as e:
+                    logger.debug(f"[V2] 数据提取跳过: {e}")
+
+        # 应用数据验证
+        if DATA_VALIDATION_AVAILABLE and extracted_data and len(extracted_data) > 0:
+            try:
+                logger.info("[V2] 应用数据一致性验证...")
+
+                # 1. 验证数据一致性
+                validation_result = validate_sql_data_consistency(
+                    executed_sql=extracted_sql or "SELECT * FROM unknown",
+                    query_results=extracted_data
+                )
+                logger.info(f"[V2] 验证结果: is_valid={validation_result.is_valid}, actual_columns={validation_result.actual_columns}")
+
+                # 2. 智能字段映射
+                field_mapping = smart_field_mapping(extracted_data, extracted_sql)
+                logger.info(f"[V2] 字段映射: x_field={field_mapping.x_field}, y_field={field_mapping.y_field}, confidence={field_mapping.confidence}")
+
+                # 3. 图表推荐
+                chart_rec = recommend_chart(extracted_data, extracted_sql, request.query)
+                logger.info(f"[V2] 图表推荐: chart_type={chart_rec.chart_type}")
+
+                # 4. 构建图表配置
+                if field_mapping.x_field and field_mapping.y_field:
+                    chart_config = {
+                        "chart_type": chart_rec.chart_type,
+                        "x_field": field_mapping.x_field,
+                        "y_field": field_mapping.y_field,
+                        "title": chart_rec.title,
+                        "reasoning": chart_rec.reasoning
+                    }
+                    logger.info(f"[V2] 图表配置已生成: {chart_config}")
+
+            except Exception as e:
+                logger.error(f"[V2] 数据验证失败: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
+
+        # ========== [数据验证模块结束] ==========
+
         # 提取最后一条消息作为回答
         if messages:
             last_message = messages[-1]
@@ -377,26 +519,40 @@ async def create_query_v2(
             "租户隔离验证",
             "AgentV2 处理",
             "DeepSeek LLM 调用",
-            "返回结果"
         ]
 
+        # 如果启用了数据验证，添加相应步骤
+        if DATA_VALIDATION_AVAILABLE and extracted_data:
+            processing_steps.extend([
+                "数据一致性验证",
+                "智能字段映射",
+                "图表配置生成",
+            ])
+
+        processing_steps.append("返回结果")
+
         logger.info(f"[V2] 回答长度: {len(answer)} 字符")
+
+        # 计算行数
+        row_count = len(extracted_data) if extracted_data else 0
 
         # 构建响应对象
         response_obj = QueryResponseV2(
             success=True,
             answer=answer,
-            sql=None,  # V2 暂不返回 SQL（可后续添加）
-            data=None,  # V2 暂不返回数据（可后续添加）
-            row_count=0,
+            sql=extracted_sql,  # 返回提取的 SQL
+            data=extracted_data,  # 返回提取的数据
+            row_count=row_count,
             processing_steps=processing_steps,
             subagent_calls=subagent_calls,
             reasoning_log={
                 "timestamp": start_time,
                 "steps": len(processing_steps),
                 "query": request.query,
-                "answer_length": len(answer)
+                "answer_length": len(answer),
+                "data_validation_enabled": DATA_VALIDATION_AVAILABLE,
             },
+            chart_config=chart_config,  # 返回图表配置
             tenant_id=tenant_id,
             processing_time_ms=processing_time
         )

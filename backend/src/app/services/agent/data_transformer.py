@@ -264,7 +264,7 @@ def prepare_mcp_chart_request(
 ) -> Tuple[List[Dict[str, Any]], ChartConfig, Optional[Dict[str, Any]]]:
     """
     准备 ECharts MCP 的请求参数，并返回 ChartConfig 和 ECharts 选项
-    
+
     Args:
         sql_result: SQL 查询结果
         sql: SQL 语句
@@ -273,13 +273,41 @@ def prepare_mcp_chart_request(
         y_field: Y轴字段（可选）
         chart_type: 图表类型（可选，不传则自动推断）
         question: 用户原始问题（可选，用于更准确的图表类型推断）
-    
+
     Returns:
         (mcp_data, chart_config, echarts_option) 元组
         - mcp_data: mcp-echarts 格式的数据
         - chart_config: ChartConfig 对象
         - echarts_option: ECharts 配置选项（可选）
     """
+    # ========================================================================
+    # 🔥 字段验证：确保传入的字段存在于查询结果中
+    # ========================================================================
+    # 获取实际存在的列名
+    actual_columns = []
+    if sql_result and len(sql_result) > 0:
+        actual_columns = list(sql_result[0].keys())
+
+    # 验证 x_field 是否存在
+    if x_field and x_field not in actual_columns:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"⚠️ [字段验证] X轴字段 '{x_field}' 不存在于查询结果中。"
+            f"实际字段: {actual_columns}。将使用智能映射。"
+        )
+        x_field = None  # 清除无效字段，让 sql_result_to_mcp_echarts_data 自动选择
+
+    # 验证 y_field 是否存在
+    if y_field and y_field not in actual_columns:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"⚠️ [字段验证] Y轴字段 '{y_field}' 不存在于查询结果中。"
+            f"实际字段: {actual_columns}。将使用智能映射。"
+        )
+        y_field = None  # 清除无效字段，让 sql_result_to_mcp_echarts_data 自动选择
+
     # 推断图表类型（如果未指定）
     if not chart_type or chart_type in ("table", "none"):
         chart_type = infer_chart_type(sql, sql_result, question or "")

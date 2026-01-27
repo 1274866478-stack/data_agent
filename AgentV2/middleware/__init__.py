@@ -11,9 +11,14 @@ Includes:
     - XAILoggerMiddleware: 可解释性日志中间件
     - ErrorTrackerMiddleware: 错误追踪中间件
     - ChartGuidanceMiddleware: 图表生成指南中间件
+    - LoopDetectionMiddleware: 循环检测中间件
 """
 
 from .sql_security import SQLSecurityMiddleware
+from .loop_detection import (
+    LoopDetectionMiddleware,
+    create_loop_detection_middleware
+)
 from .chart_guidance import (
     ChartGuidanceMiddleware,
     create_chart_guidance_middleware,
@@ -62,5 +67,7 @@ __all__ = [
     "create_error_tracker",
     "ChartGuidanceMiddleware",
     "create_chart_guidance_middleware",
-    "CHART_GUIDANCE_TEMPLATE"
+    "CHART_GUIDANCE_TEMPLATE",
+    "LoopDetectionMiddleware",
+    "create_loop_detection_middleware"
 ]

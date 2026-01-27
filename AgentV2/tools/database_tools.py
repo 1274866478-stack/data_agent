@@ -11,13 +11,20 @@ Database Query Tools - 数据库查询工具 (带缓存优化 + Excel支持)
     - get_schema: 获取表结构或 Excel 列信息
 
 优化特性:
+    - list_schema_files: 列出语义层文档
+    - read_schema_file: 读取语义层文档内容
+    - search_schema: 搜索语义层文档
+    - SchemaFSValidator: 文件系统安全验证
+
+优化特性:
     - Schema 缓存：避免重复查询表结构
     - 查询结果缓存：相同查询直接返回缓存
     - TTL 机制：缓存过期自动刷新
     - 多数据源支持：PostgreSQL, MySQL, Excel 文件
+    - 文件系统安全访问：严格限制路径遍历
 
 作者: BMad Master
-版本: 3.0.0
+版本: 3.1.0
 """
 
 import os
@@ -89,6 +96,81 @@ def _reset_list_tables_flag() -> None:
     """重置 list_tables 调用标志"""
     _list_tables_called_ctx.set(False)
     logger.info("[LIST_TABLES_FLAG] Reset to False")
+
+# ============================================================================
+# 数据类型序列化工具
+# ============================================================================
+
+def _serialize_value(value: Any) -> Any:
+    """
+    将数据库值转换为 JSON 可序列化的格式
+
+    处理 PostgreSQL 复杂数据类型:
+    - Decimal -> float
+    - datetime/date -> ISO 格式字符串
+    - UUID -> 字符串
+    - NaN/None -> null
+
+    Args:
+        value: 数据库返回的原始值
+
+    Returns:
+        JSON 可序列化的值
+    """
+    import decimal
+    import uuid
+    from datetime import date, datetime, time
+    import pandas as pd
+
+    if value is None:
+        return None
+    elif isinstance(value, decimal.Decimal):
+        # 保留精度，转换为 float
+        return float(value)
+    elif isinstance(value, (datetime, date, time)):
+        # 转换为 ISO 格式字符串
+        return value.isoformat()
+    elif isinstance(value, uuid.UUID):
+        # UUID 转字符串
+        return str(value)
+    elif isinstance(value, bytes):
+        # 字节数组转 base64 字符串
+        import base64
+        return base64.b64encode(value).decode('utf-8')
+    elif pd.isna(value):
+        # pandas NaN 转为 None
+        return None
+    # 其他类型直接返回
+    return value
+
+
+def _serialize_row(row: tuple, columns: list = None) -> list:
+    """
+    序列化单行数据
+
+    Args:
+        row: 数据库行数据（元组）
+        columns: 列名列表（可选）
+
+    Returns:
+        序列化后的列表
+    """
+    return [_serialize_value(v) for v in row]
+
+
+def _serialize_rows(rows: list, columns: list = None) -> list:
+    """
+    序列化多行数据
+
+    Args:
+        rows: 数据库行数据列表
+        columns: 列名列表（可选）
+
+    Returns:
+        序列化后的二维列表
+    """
+    return [_serialize_row(row, columns) for row in rows]
+
 
 # ============================================================================
 # 缓存管理
@@ -474,8 +556,8 @@ def execute_excel_query(
         columns = result_df.columns.tolist()
         rows = result_df.values.tolist()
 
-        # 处理 NaN 值
-        rows = [[None if pd.isna(v) else v for v in row] for row in rows]
+        # 🔧 使用序列化函数处理所有数据类型
+        rows = _serialize_rows(rows, columns)
 
         result = {
             "columns": columns,
@@ -728,29 +810,25 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
             "error_type": "invalid_query_type"
         }, ensure_ascii=False)
 
-    # 🚨 强制检查：确保 list_tables 已被调用
+    # 🟡 改为警告级别：不强制检查 list_tables 是否被调用
+    # 原因：ContextVar 在异步环境中可能导致检查失效，且 LLM 已通过提示词了解正确流程
+    # 仅记录日志，不阻止执行
     if not _get_list_tables_called():
-        logger.warning("execute_query called before list_tables! This may cause errors.")
+        logger.info(f"execute_query called without prior list_tables call (query: {query[:50]}...)")
+        # 注意：不再返回错误，允许执行继续
+        # 依赖提示词指导 LLM 按正确顺序调用工具
 
-        # 尝试从查询中提取表名进行验证
-        extracted_table = _extract_table_name_from_query(query)
-
-        # 返回友好的错误提示，而不是直接失败
-        return json.dumps({
-            "error": (
-                "⚠️ Query skipped: You must call list_tables() first to discover available tables. "
-                f"Your query references table '{extracted_table or 'unknown'}', but we need to verify "
-                "it exists first. Please call list_tables() before execute_query()."
-            ),
-            "error_type": "list_tables_required_first",
-            "suggestion": "Call list_tables() to get available table/sheet names",
-            "query_skipped": query[:100] + "..." if len(query) > 100 else query
-        }, ensure_ascii=False)
+    # 🔥 重要：移除 LLM 手动添加的 tenant_id 条件
+    # LLM 有时会在 SQL 中手动添加 tenant_id，但位置可能不正确
+    # 系统会由租户隔离中间件自动注入正确的 tenant_id 过滤条件
+    query_with_tenant_removed = _remove_llm_added_tenant_id(query)
+    if query_with_tenant_removed != query:
+        logger.info(f"Removed LLM-added tenant_id: {query[:50]}... -> {query_with_tenant_removed[:50]}...")
 
     # 清理和修复 SQL
-    cleaned_query = clean_and_validate_sql(query)
-    if cleaned_query != query:
-        logger.info(f"SQL cleaned: {query[:50]}... -> {cleaned_query[:50]}...")
+    cleaned_query = clean_and_validate_sql(query_with_tenant_removed)
+    if cleaned_query != query_with_tenant_removed:
+        logger.info(f"SQL cleaned: {query_with_tenant_removed[:50]}... -> {cleaned_query[:50]}...")
 
     # 从 thread-local 获取 connection_id（如果未通过参数传递）
     # Agent 调用工具时不会传递 connection_id，需要从连接上下文获取
@@ -814,7 +892,10 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
 
             # 获取结果
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
-            rows = cursor.fetchall()
+            raw_rows = cursor.fetchall()
+
+            # 🔧 使用序列化函数处理所有数据类型（PostgreSQL Decimal, UUID, datetime 等）
+            rows = _serialize_rows(raw_rows, columns)
 
             # 关闭连接
             cursor.close()
@@ -876,6 +957,90 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
     }, ensure_ascii=False)
 
 
+def _remove_llm_added_tenant_id(query: str) -> str:
+    """
+    移除 LLM 手动添加的 tenant_id 条件
+
+    LLM 有时会在 SQL 中手动添加 tenant_id 过滤条件，但位置可能不正确
+    （如在 GROUP BY/ORDER BY 之后）。这个函数会移除所有 LLM 手动添加的
+    tenant_id 条件，让租户隔离中间件在正确的位置重新注入。
+
+    Args:
+        query: 原始 SQL 查询
+
+    Returns:
+        移除 LLM 添加的 tenant_id 后的 SQL
+    """
+    import re
+
+    sql = query.strip()
+    original_sql = sql
+
+    # 模式 1: 移除 WHERE tenant_id = 'xxx' （作为独立 WHERE 条件）
+    # 匹配: WHERE tenant_id = 'xxx' 后面跟着其他内容或结束
+    pattern1 = r'\bWHERE\s+tenant_id\s*=\s*\'[^\']*\'(\s+|$)'
+    if re.search(pattern1, sql, re.IGNORECASE):
+        # 如果 WHERE 子句只有 tenant_id，直接移除整个 WHERE
+        sql = re.sub(
+            r'\bWHERE\s+tenant_id\s*=\s*\'[^\']*\'(\s*(?:GROUP BY|ORDER BY|LIMIT|HAVING|;|$))?',
+            lambda m: '' if not m.group(1) or m.group(1).strip() in ('GROUP BY', 'ORDER BY', 'LIMIT', 'HAVING', ';') else ' AND ',
+            sql,
+            flags=re.IGNORECASE
+        )
+        # 清理可能残留的 AND
+        sql = re.sub(r'\bAND\s+(GROUP BY|ORDER BY|LIMIT|HAVING)', r'\1', sql, flags=re.IGNORECASE)
+
+    # 模式 2: 移除 AND tenant_id = 'xxx' （作为 AND 条件）
+    sql = re.sub(
+        r'\bAND\s+tenant_id\s*=\s*\'[^\']*\'(\s+|$)',
+        '',
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # 模式 3: 移除 OR tenant_id = 'xxx' （作为 OR 条件）
+    sql = re.sub(
+        r'\bOR\s+tenant_id\s*=\s*\'[^\']*\'(\s+|$)',
+        '',
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # 模式 4: 移除 WHERE 子句中间的 tenant_id 条件
+    # 例如: WHERE status = 'active' AND tenant_id = 'xxx' AND other = 'value'
+    # 变成: WHERE status = 'active' AND other = 'value'
+    sql = re.sub(
+        r'\bAND\s+tenant_id\s*=\s*\'[^\']*\'(\s+(AND|OR))?',
+        r'\1',
+        sql,
+        flags=re.IGNORECASE
+    )
+    sql = re.sub(
+        r'\bAND\s+tenant_id\s*=\s*\'[^\']*\'\s*,',
+        ',',
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # 模式 5: 处理 WHERE 开头就是 tenant_id 的情况
+    # 例如: WHERE tenant_id = 'xxx' AND status = 'active'
+    # 变成: WHERE status = 'active'
+    sql = re.sub(
+        r"\bWHERE\s+tenant_id\s*=\s*'[^']*'\s+AND\s+",
+        'WHERE ',
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # 清理多余的空格
+    sql = ' '.join(sql.split())
+
+    if sql != original_sql and 'tenant_id' in original_sql.lower():
+        logger.info(f"Removed LLM-added tenant_id conditions")
+
+    return sql
+
+
 def clean_and_validate_sql(query: str) -> str:
     """
     清理和验证 SQL 查询
@@ -883,8 +1048,12 @@ def clean_and_validate_sql(query: str) -> str:
     修复常见的 LLM 生成错误：
     - LIMIT 子句后的错误内容（WHERE, AND, OR 等）
     - tenants 表的 tenant_id 列错误（应使用 id）
+    - ORDER BY/GROUP BY 后面错误跟 AND/OR 条件
+    - WHERE 子句位置错误（在 GROUP BY/ORDER BY 之后）
     - 多余的分号
     - 不完整的查询
+
+    v4.3.0 优化：添加详细日志记录，方便调试 SQL 清理过程
 
     Args:
         query: 原始 SQL 查询
@@ -896,6 +1065,10 @@ def clean_and_validate_sql(query: str) -> str:
 
     # 移除前后空格
     sql = query.strip()
+    original_sql = sql  # 保存原始 SQL 用于日志比较
+
+    # 📊 详细日志：记录输入的 SQL
+    logger.debug(f"[SQL_CLEAN] Input SQL: {sql[:200]}...")
 
     # 修复 0: tenants 表的 tenant_id → id 自动替换（常见错误）
     # 匹配 FROM tenants ... WHERE tenant_id 或 JOIN tenants ... WHERE tenant_id
@@ -909,10 +1082,98 @@ def clean_and_validate_sql(query: str) -> str:
             flags=re.IGNORECASE
         )
         # 如果修改了 SQL，记录日志
-        if 'tenant_id' in query.lower() and 'tenant_id' not in sql.lower():
+        if 'tenant_id' in original_sql.lower() and 'tenant_id' not in sql.lower():
             logger.info("Auto-fixed: tenants.tenant_id → tenants.id")
 
-    # 修复 1: 移除 LIMIT 后面的任何内容（LLM 常见错误）
+    # 修复 1: 移除 ORDER BY/GROUP BY 后面错误跟的 AND/OR/WHERE 条件
+    # 错误示例: SELECT ... ORDER BY year AND tenant_id = '...'
+    # 错误示例: SELECT ... ORDER BY year WHERE tenant_id = '...'
+    # 错误示例: SELECT ... GROUP BY year OR tenant_id = '...'
+    # 错误示例: SELECT ... GROUP BY col WHERE tenant_id = '...'
+    for keyword in ['ORDER BY', 'GROUP BY']:
+        # 匹配: keyword + 字段名 (+ 可选 ASC/DESC) + 空白 + (AND|OR|WHERE)
+        # 模式: 关键字 + 空白 + 字段名 (+ 可选 ASC/DESC) + 空白 + (AND|OR|WHERE)
+        pattern = rf'\b{keyword}\s+([^\s]+(?:\s+(?:ASC|DESC))?)\s+(AND|OR|WHERE)\b'
+        match = re.search(pattern, sql, re.IGNORECASE)
+        if match:
+            # 找到 AND/OR/WHERE 的位置
+            clause_start = match.start(2)
+            # 截断到 AND/OR/WHERE 之前
+            before_clause = sql[:clause_start].rstrip()
+            remaining = sql[clause_start:]
+            # 移除错误条件到下一个关键字或结尾
+            # 找到 AND/OR/WHERE 后面的下一个子句（LIMIT, HAVING, ;）
+            next_clause_match = re.search(r'\b(LIMIT|HAVING|;)\b', remaining, re.IGNORECASE)
+            if next_clause_match:
+                # 保留 LIMIT 等子句
+                after_clause = remaining[next_clause_match.start():]
+                sql = before_clause + after_clause
+            else:
+                # 没有其他子句，直接截断
+                sql = before_clause
+            logger.info(f"Removed incorrect {match.group(2)} clause after {keyword}: {match.group(0)[:50]}...")
+
+    # 修复 2: 检测并修复 WHERE 子句位置错误
+    # 错误示例: SELECT ... GROUP BY year ORDER BY year WHERE tenant_id = '...'
+    # WHERE 必须在 GROUP BY/ORDER BY 之前
+    #
+    # 使用基于位置的解析方法：
+    # 1. 找到所有关键字位置
+    # 2. 检查 WHERE 是否在 GROUP BY/ORDER BY 之后
+    # 3. 如果是，重新排列 SQL
+    keywords_found = {}
+    for kw in ['SELECT', 'FROM', 'WHERE', 'GROUP BY', 'ORDER BY', 'LIMIT', 'HAVING']:
+        match = re.search(rf'\b{kw}\b', sql, re.IGNORECASE)
+        if match:
+            keywords_found[kw] = {'start': match.start(), 'end': match.end()}
+
+    # 如果存在 WHERE 和 (GROUP BY 或 ORDER BY)
+    if 'WHERE' in keywords_found and ('GROUP BY' in keywords_found or 'ORDER BY' in keywords_found):
+        where_pos = keywords_found['WHERE']['start']
+        group_pos = keywords_found.get('GROUP BY', {'start': float('inf')})['start']
+        order_pos = keywords_found.get('ORDER BY', {'start': float('inf')})['start']
+
+        # 检查 WHERE 是否在 GROUP BY 或 ORDER BY 之后
+        if where_pos > group_pos or where_pos > order_pos:
+            logger.info("Detected WHERE after GROUP BY/ORDER BY, fixing...")
+
+            # 使用基于位置的子句提取（更可靠）
+            # 找出所有子句的起始和结束位置
+            clauses = {}
+            for kw in ['SELECT', 'FROM', 'WHERE', 'GROUP BY', 'ORDER BY', 'LIMIT']:
+                if kw in keywords_found:
+                    start = keywords_found[kw]['start']
+                    kw_end = keywords_found[kw]['end']
+                    # 找到下一个关键字的起始位置作为当前子句的结束位置
+                    next_start = float('inf')
+                    for other_kw in ['SELECT', 'FROM', 'WHERE', 'GROUP BY', 'ORDER BY', 'LIMIT', 'HAVING']:
+                        if other_kw in keywords_found and keywords_found[other_kw]['start'] > kw_end:
+                            next_start = min(next_start, keywords_found[other_kw]['start'])
+                    # 如果没有下一个关键字，使用分号位置或字符串结尾
+                    if next_start == float('inf'):
+                        semicolon_pos = sql.rfind(';')
+                        if semicolon_pos > kw_end:
+                            next_start = semicolon_pos
+                        else:
+                            next_start = len(sql)
+                    clauses[kw] = sql[start:next_start].strip()
+
+            # 重新构建 SQL（正确顺序）
+            new_sql_parts = []
+            order = ['SELECT', 'FROM', 'WHERE', 'GROUP BY', 'ORDER BY', 'LIMIT']
+            for kw in order:
+                if kw in clauses:
+                    new_sql_parts.append(clauses[kw])
+
+            # 组合成新的 SQL
+            if new_sql_parts:
+                sql = ' '.join(new_sql_parts)
+                # 确保以分号结尾
+                if not sql.endswith(';'):
+                    sql += ';'
+                logger.info(f"Rebuilt SQL with correct clause order: {sql[:80]}...")
+
+    # 修复 3: 移除 LIMIT 后面的任何内容（LLM 常见错误）
     # 匹配 LIMIT 子句，然后截断，移除后面的 WHERE, AND, OR 等
     # 这个正则匹配 LIMIT 数字，然后后面不能有 WHERE/AND/OR/GROUP/ORDER/HAVING
     limit_pattern = r'\bLIMIT\s+(\d+)'
@@ -930,20 +1191,20 @@ def clean_and_validate_sql(query: str) -> str:
             sql = sql[:limit_end].rstrip()
             logger.info(f"Removed content after LIMIT: {remaining_sql[:50]}...")
 
-    # 修复 2: 移除末尾的分号（如果有多个）
+    # 修复 4: 移除末尾的分号（如果有多个）
     sql = re.sub(r';+$', '', sql)
 
-    # 修复 3: 确保查询以分号结尾（对于单条查询）
+    # 修复 5: 确保查询以分号结尾（对于单条查询）
     if not sql.endswith(';'):
         sql += ';'
 
-    # 修复 4: 移除注释后的危险命令（额外安全检查）
+    # 修复 6: 移除注释后的危险命令（额外安全检查）
     # 移除 -- 后面的内容到行尾
     sql = re.sub(r'--.*$', '', sql, flags=re.MULTILINE)
     # 移除 /* */ 块注释
     sql = re.sub(r'/\*.*?\*/', '', sql, flags=re.DOTALL)
 
-    # 修复 5: 清理多余的空格
+    # 修复 7: 清理多余的空格
     sql = ' '.join(sql.split())
 
     return sql
@@ -1297,6 +1558,225 @@ def get_schema(table_name: str, connection_id: Optional[str] = None) -> str:
 
 
 # ============================================================================
+# 语义层文件系统工具 (Schema FS Tools)
+# ============================================================================
+
+from pathlib import Path
+
+class SchemaFSValidator:
+    """cube_schema 文件系统访问验证器"""
+    
+    # 指向 c:\data_agent\cube_schema
+    # 计算方式：当前文件 (c:\data_agent\AgentV2\tools\database_tools.py) 的上级(tools)的上级(AgentV2)的上级(data_agent) / "cube_schema"
+    ALLOWED_BASE_PATH = Path(__file__).parent.parent.parent / "cube_schema"
+
+    @classmethod
+    def validate_path(cls, path: Path) -> bool:
+        """严格验证路径，防止路径遍历攻击"""
+        try:
+            resolved = path.resolve()
+            base = cls.ALLOWED_BASE_PATH.resolve()
+            # 检查 resolved 是否以 base 开头
+            return str(resolved).startswith(str(base))
+        except (ValueError, RuntimeError, Exception) as e:
+            logger.warning(f"Path validation failed: {e}")
+            return False
+
+    @classmethod
+    def sanitize_content(cls, content: str, max_length: int = 5000) -> str:
+        """限制返回内容大小，避免 Token 爆炸"""
+        if len(content) > max_length:
+            return content[:max_length] + "\n... (内容过长，已截断)"
+        return content
+
+def list_schema_files() -> str:
+    """
+    列出 cube_schema 目录下可用的语义层文档
+
+    返回格式：JSON 数组，包含 filename, description, measures, dimensions
+
+    使用场景：
+    - 回答"数据库有哪些表？"
+    - 了解数据结构概览
+    """
+    base_path = SchemaFSValidator.ALLOWED_BASE_PATH
+
+    if not base_path.exists():
+        logger.warning(f"Schema directory not found: {base_path}")
+        return json.dumps({"error": "Schema directory not found"}, ensure_ascii=False)
+
+    files_info = []
+    try:
+        # 查找 yaml 文件
+        for yaml_file in sorted(base_path.glob("*.yaml")):
+            files_info.append({
+                "filename": yaml_file.name,
+                "size": yaml_file.stat().st_size,
+                "modified": time.ctime(yaml_file.stat().st_mtime)
+            })
+        
+        # 查找 markdown 文档
+        for md_file in sorted(base_path.glob("*.md")):
+            files_info.append({
+                "filename": md_file.name,
+                "size": md_file.stat().st_size,
+                "modified": time.ctime(md_file.stat().st_mtime)
+            })
+            
+    except Exception as e:
+        logger.error(f"Error listing schema files: {e}")
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    return json.dumps(files_info, ensure_ascii=False, indent=2)
+
+
+def read_schema_file(filename: str, section: Optional[str] = None) -> str:
+    """
+    读取 cube_schema 中指定文件的内容
+
+    参数：
+    - filename: 文件名（如 "Orders.yaml"）
+    - section: 可选，只读取特定部分（measures/dimensions/description/sql_table）
+
+    返回：文件内容（可被截断以控制 Token）
+
+    使用场景：
+    - 查看 Orders 表有哪些度量
+    - 查看某个字段的数据类型
+    - 了解表之间的关联关系
+    """
+    base_path = SchemaFSValidator.ALLOWED_BASE_PATH
+    file_path = base_path / filename
+
+    # 安全验证
+    if not SchemaFSValidator.validate_path(file_path):
+        return "错误：不允许访问该文件（路径非法）"
+
+    if not file_path.exists():
+        return f"错误：文件 {filename} 不存在"
+
+    try:
+        # 读取内容
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # 可选：只返回特定部分 (针对 YAML 文件)
+        if section and filename.endswith('.yaml'):
+            lines = content.split('\n')
+            in_section = False
+            filtered_lines = []
+            
+            # 简单的文本分块逻辑 (根据缩进和冒号判断)
+            found_section = False
+            
+            # 找到顶级键的缩进模式
+            for line in lines:
+                stripped = line.strip()
+                
+                # 检查是否是主要部分标题 (如 "measures:", "dimensions:")
+                if stripped.startswith(f"{section}:"):
+                    in_section = True
+                    found_section = True
+                    filtered_lines.append(line)
+                    continue
+                
+                # 如果遇到下一个主要部分（顶级键），则停止
+                # 假设顶级键可能没有缩进或缩进很少，这里使用简单的启发式
+                if in_section and line and ':' in line and not line.strip().startswith('-') and not line.strip().startswith(' '):
+                     # 如果这行看起来像是一个新的顶级key（例如 "dimensions:"），且不是当前section
+                     if not stripped.startswith(f"{section}:") and not line.strip().startswith('#'):
+                         # 这是一个新的顶级 section，结束当前 section
+                         in_section = False
+                
+                if in_section:
+                    filtered_lines.append(line)
+            
+            if found_section:
+                content = '\n'.join(filtered_lines)
+            else:
+                 # 未找到 section，如果请求的是常见部分，提示未找到
+                 if section in ["measures", "dimensions", "sql_table", "joins", "description"]:
+                     content = f"未在文件 {filename} 中找到 '{section}' 部分。"
+
+        # 限制大小
+        return SchemaFSValidator.sanitize_content(content)
+        
+    except Exception as e:
+        logger.error(f"Error reading schema file {filename}: {e}")
+        return f"读取文件失败: {str(e)}"
+
+
+def search_schema(keyword: str) -> str:
+    """
+    在所有 cube_schema 文件中搜索关键词
+
+    参数：
+    - keyword: 搜索关键词（如表名、字段名、度量名）
+
+    返回：匹配的文件和内容片段
+
+    使用场景：
+    - 查找包含"收入"的所有度量
+    - 搜索"customer_id"字段在哪些表中
+    - 查找所有与"库存"相关的维度
+    """
+    base_path = SchemaFSValidator.ALLOWED_BASE_PATH
+
+    if not base_path.exists():
+        return "错误：cube_schema 目录不存在"
+
+    results = []
+    keyword_lower = keyword.lower()
+
+    try:
+        # 搜索 yaml 和 md 文件
+        files = list(base_path.glob("*.yaml")) + list(base_path.glob("*.md"))
+        
+        for file_path in files:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                if keyword_lower in content.lower():
+                    # 提取匹配的行（上下文）
+                    lines = content.split('\n')
+                    matches = []
+                    for i, line in enumerate(lines):
+                        if keyword_lower in line.lower():
+                            # 上下文：前后各2行
+                            start = max(0, i-2)
+                            end = min(len(lines), i+3)
+                            
+                            # 构建上下文片段
+                            context_lines = []
+                            for j in range(start, end):
+                                prefix = "> " if j == i else "  "
+                                context_lines.append(f"{prefix}{lines[j]}")
+                                
+                            matches.append('\n'.join(context_lines))
+                            
+                            # 限制每个文件的匹配数，避免过多
+                            if len(matches) >= 3:
+                                break
+                    
+                    if matches:
+                        results.append({
+                            "file": file_path.name,
+                            "matches": matches
+                        })
+            except Exception as e:
+                logger.warning(f"读取文件 {file_path.name} 失败: {e}")
+
+        if not results:
+            return f"未找到包含 '{keyword}' 的内容"
+
+        return json.dumps(results, ensure_ascii=False, indent=2)
+        
+    except Exception as e:
+        return f"搜索出错: {str(e)}"
+
+
+# ============================================================================
 # 工具集合
 # ============================================================================
 
@@ -1357,15 +1837,22 @@ def get_database_tools(
     bound_list_tables = make_list_tables(connection_id, db_session, tenant_id)
     bound_get_schema = make_get_schema(connection_id, db_session, tenant_id)
 
-    # 创建 StructuredTool 对象
+    # 创建 StructuredTool 对象 - 数据库工具
     tools = [
         StructuredTool.from_function(
             func=bound_execute_query,
             name="execute_query",
             description=(
-                "Execute a SQL SELECT query on the database or Excel file. "
-                "🚨🚨🚨 CRITICAL: You MUST call list_tables() FIRST before using this tool! "
-                "Do NOT guess table names - use the exact names returned by list_tables(). "
+                "✅ Execute SQL to get ACTUAL DATA from tables (NOT table names). "
+                ""
+                "Use this when user asks: 'what regions exist', '有哪些地区', 'list all cities', 'show users', etc. "
+                "This returns the BUSINESS DATA such as: ['华东', '华南', '华北'] for regions. "
+                ""
+                "Examples of questions that need THIS tool (not list_tables): "
+                "- '有哪些地区？' → execute_query('SELECT * FROM regions') "
+                "- 'what users exist' → execute_query('SELECT * FROM users LIMIT 100') "
+                ""
+                "Returns results in JSON format with columns and rows. "
                 "Args: query (str): The SQL SELECT query to execute"
             )
         ),
@@ -1373,9 +1860,14 @@ def get_database_tools(
             func=bound_list_tables,
             name="list_tables",
             description=(
-                "List all available tables in the database or sheets in the Excel file. "
-                "🚨🚨🚨 CRITICAL: You MUST call this tool FIRST before execute_query()! "
-                "This returns the actual table/sheet names that exist in the data source. "
+                "🔴 CRITICAL: List all TABLE NAMES in the database (NOT the data within tables). "
+                "Returns meta-information like ['regions', 'users', 'orders']. "
+                ""
+                "ONLY use this tool when user asks: 'what tables exist', '数据库有哪些表', 'show database structure'. "
+                ""
+                "❌ DO NOT use this tool when user asks: 'what regions exist', '有哪些地区', 'list users', etc. "
+                "   For questions about business DATA, use execute_query instead. "
+                ""
                 "Args: None"
             )
         ),
@@ -1388,6 +1880,40 @@ def get_database_tools(
             )
         )
     ]
+
+    # 🔥 新增：语义层文件系统工具（Schema FS Tools）
+    # 这些工具不需要 connection_id，直接读取 cube_schema 目录
+    tools.extend([
+        StructuredTool.from_function(
+            func=list_schema_files,
+            name="list_schema_files",
+            description=(
+                "List all available semantic layer documents (YAML/MD files) in the cube_schema directory. "
+                "Use this to answer questions like 'What tables are documented?' or 'What semantic layers are available?'. "
+                "Returns a JSON array with filename, size, and modified time. "
+                "Args: None"
+            )
+        ),
+        StructuredTool.from_function(
+            func=read_schema_file,
+            name="read_schema_file",
+            description=(
+                "Read the content of a specific semantic layer document (YAML/MD file) from cube_schema. "
+                "Use this to get detailed information about table structure, measures, dimensions, and business logic. "
+                "Args: filename (str): The name of the file (e.g., 'Orders.yaml'); "
+                "section (str, optional): Filter to specific section like 'measures', 'dimensions', 'sql_table'"
+            )
+        ),
+        StructuredTool.from_function(
+            func=search_schema,
+            name="search_schema",
+            description=(
+                "Search for a keyword across all semantic layer documents in cube_schema. "
+                "Use this to find which tables contain specific measures, dimensions, or business concepts. "
+                "Args: keyword (str): The search keyword (e.g., 'revenue', 'customer_id')"
+            )
+        )
+    ])
 
     logger.info(f"[get_database_tools] Created {len(tools)} tools with connection_id={connection_id}")
     return tools

@@ -90,6 +90,17 @@ from models import VisualizationResponse, QueryResult, ChartConfig, ChartType
 from terminal_viz import render_response
 from data_transformer import sql_result_to_echarts_data, sql_result_to_mcp_echarts_data
 from chart_service import ChartRequest, generate_chart_simple, ChartResponse
+# 数据一致性验证：防止 LLM 幻觉导致的数据不匹配
+try:
+    from backend.src.app.services.agent.data_validator import (
+        validate_sql_data_consistency,
+        smart_field_mapping,
+        recommend_chart,
+    )
+    DATA_VALIDATION_ENABLED = True
+except ImportError:
+    DATA_VALIDATION_ENABLED = False
+    print("⚠️  警告: 数据验证模块未启用（data_validator.py不可用）")
 
 # 🔍 错误追踪模块（质量保证）
 try:
@@ -308,14 +319,33 @@ BASE_SYSTEM_PROMPT = """你是一个专业的数据库助手，具备数据查�
 
 **1. 重复WHERE条件**（最常见！）：
 ```sql
--- ❌ 错误：重复的tenant_id
-WHERE tenant_id = 'default_tenant' AND region_id = '5' AND tenant_id = 'default_tenant'
+-- ❌ 错误：重复的相同条件
+WHERE region_id = '5' AND region_id = '5'
 
 -- ✅ 正确：每个条件只一次
-WHERE tenant_id = 'default_tenant' AND region_id = '5'
+WHERE region_id = '5'
 ```
 
-**2. 禁止多次COUNT查询**（占比类问题！）：
+**2. WHERE子句位置错误**（极常见！）：
+```sql
+-- ❌ 错误：WHERE 在 GROUP BY/ORDER BY 之后
+SELECT ... GROUP BY year ORDER BY year WHERE status = 'active'
+SELECT ... ORDER BY year AND status = 'active'
+
+-- ✅ 正确：WHERE 必须在 GROUP BY/ORDER BY 之前
+SELECT ... WHERE status = 'active' GROUP BY year ORDER BY year
+```
+
+**3. 禁止在 SQL 中手动添加 tenant_id**：
+```sql
+-- ❌ 错误：不要手动添加 tenant_id，系统会自动处理
+WHERE tenant_id = 'xxx' AND ...
+
+-- ✅ 正确：系统会自动注入租户过滤条件
+WHERE status = 'active'
+```
+
+**4. 禁止多次COUNT查询**（占比类问题！）：
 ```sql
 -- ❌ 错误：多次查询
 SELECT COUNT(*) FROM customers WHERE region_id = 5;
@@ -388,6 +418,7 @@ SELECT * FROM customers WHERE address LIKE '%杭州%'
 **示例**（"杭州客户的占比"）：
 ```sql
 -- ✅ 正确：一次GROUP BY获取所有城市分布
+-- 注意：不要手动添加 tenant_id，系统会自动注入租户过滤条件
 SELECT
     CASE
         WHEN address LIKE '%杭州%' THEN '杭州'
@@ -397,7 +428,6 @@ SELECT
     END as category,
     COUNT(*) as value
 FROM customers
-WHERE tenant_id = 'default_tenant'
 GROUP BY category;
 ```
 
@@ -464,7 +494,8 @@ ORDER BY date;
 
 每生成一条SQL必须逐项检查：
 ```
-□ 无重复WHERE条件（特别是tenant_id）
+□ 不要手动添加 tenant_id 条件（系统会自动处理）
+□ WHERE 子句必须在 GROUP BY/ORDER BY 之前
 □ 表名正确（非系统元数据表）
 □ 字段名存在（基于get_schema结果）
 □ 占比问题用GROUP BY（不是多次COUNT）
@@ -997,6 +1028,51 @@ async def build_visualization_response(
 
     # 构建QueryResult
     query_result = QueryResult.from_raw_data(raw_data) if raw_data else QueryResult()
+
+    # ========================================================================
+    # 🔥 数据一致性验证：防止 LLM 幻觉导致的数据不匹配问题
+    # ========================================================================
+    # 验证 LLM 生成的字段是否真实存在于查询结果中
+    llm_x_field = chart_config_data.get('x_field') if chart_config_data else None
+    llm_y_field = chart_config_data.get('y_field') if chart_config_data else None
+
+    actual_columns = []
+    if raw_data and len(raw_data) > 0:
+        actual_columns = list(raw_data[0].keys())
+
+    # 检测幻觉字段
+    hallucinated_fields = []
+    if llm_x_field and llm_x_field not in actual_columns:
+        hallucinated_fields.append(f"x_field: {llm_x_field}")
+    if llm_y_field and llm_y_field not in actual_columns:
+        hallucinated_fields.append(f"y_field: {llm_y_field}")
+
+    if hallucinated_fields:
+        print(f"⚠️ [数据验证] 检测到 LLM 幻觉字段: {hallucinated_fields}")
+        print(f"   实际字段: {actual_columns}，将使用智能字段映射")
+        # 清除幻觉配置，强制使用智能映射
+        chart_config_data = None
+
+    # 使用智能字段映射（如果有数据）
+    if raw_data and DATA_VALIDATION_ENABLED:
+        field_mapping = smart_field_mapping(raw_data, sql)
+        chart_rec = recommend_chart(raw_data, sql, final_content[:200] if final_content else "")
+
+        # 覆盖 LLM 提供的字段，使用真实数据映射
+        if not chart_config_data:
+            chart_config_data = {
+                'chart_type': chart_rec.chart_type,
+                'chart_title': chart_rec.title,
+                'x_field': field_mapping.x_field,
+                'y_field': field_mapping.y_field,
+            }
+            print(f"📊 [智能映射] X={field_mapping.x_field}, Y={field_mapping.y_field}, 类型={chart_rec.chart_type}")
+        else:
+            # 验证 LLM 配置的字段，如果无效则使用智能映射
+            if llm_x_field and llm_x_field not in actual_columns:
+                chart_config_data['x_field'] = field_mapping.x_field
+            if llm_y_field and llm_y_field not in actual_columns:
+                chart_config_data['y_field'] = field_mapping.y_field
 
     # 构建ChartConfig
     chart_path = mcp_chart_path  # 优先使用 mcp-echarts 的图表
@@ -1539,6 +1615,7 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
         - 检测工具错误并路由回 Agent 进行自我修正
         - 检测 SQL 安全问题并阻止执行
         - 限制修复次数防止无限循环
+        - 🔥 修复：强制工具执行后回到 agent 节点生成最终分析答案
         """
         messages = state["messages"]
         last_message = messages[-1]
@@ -1571,6 +1648,12 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
                     print(f"🚨 检测到工具执行错误，路由回 Agent 进行自我修正...")
                     return "agent"
 
+            # 🔥 核心修复：工具执行成功后，强制回到 agent 让 LLM 生成最终分析答案
+            # 这解决了"工具调用后只返回原始数据而不生成分析文本"的问题
+            if tool_message_count < 5:  # 确保不会无限循环
+                print(f"✅ 工具执行完成，路由回 Agent 生成最终分析答案...")
+                return "agent"
+
         # B. 检查 AI 是否要调用工具
         if isinstance(last_message, AIMessage) and last_message.tool_calls:
             # 🔒 SQL 安全拦截：在工具执行前校验 SQL（使用独立的 SQLValidator 模块）
@@ -1586,6 +1669,22 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
                         # 注意：这里返回 "tools" 让 SafeToolNode 处理，它会返回错误消息给 Agent
                         # 这样 Agent 可以看到错误并尝试修正
             return "tools"
+
+        # 🔥 新增：如果最后一条消息是 AIMessage 但没有有意义的 content，继续生成
+        if isinstance(last_message, AIMessage):
+            content = last_message.content
+            # 检查是否没有 content 或 content 太短（少于20个字符）
+            if not content or len(content.strip()) < 20:
+                print(f"⚠️ AIMessage 没有有意义的 content (长度: {len(content) if content else 0})，需要继续生成...")
+                # 但要避免无限循环，检查前面是否已经有多次尝试
+                empty_content_count = sum(
+                    1 for m in messages
+                    if isinstance(m, AIMessage) and (not m.content or len(m.content.strip()) < 20)
+                )
+                if empty_content_count < 3:  # 最多允许3次空内容尝试
+                    return "agent"
+                else:
+                    print(f"❌ 空内容尝试次数已达上限 ({empty_content_count})，结束执行")
 
         return END
 

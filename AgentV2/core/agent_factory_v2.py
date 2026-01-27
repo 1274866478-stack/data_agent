@@ -38,7 +38,7 @@ from ..middleware import (
     CHART_GUIDANCE_TEMPLATE
 )
 from ..subagents import SubAgentManager, create_subagent_manager
-from ..tools import get_database_tools
+from ..tools import get_database_tools, get_chart_tools
 
 # ============================================================================
 # AgentFactory
@@ -68,7 +68,8 @@ class AgentFactory:
         enable_sql_security: bool = True,
         enable_subagents: bool = True,
         enable_chart_guidance: bool = True,
-        enable_xai_logging: bool = True  # 🔧 新增：XAI 日志中间件开关
+        enable_xai_logging: bool = True,  # 🔧 XAI 日志中间件开关
+        enable_loop_detection: bool = True  # 🔧 循环检测中间件开关
     ):
         """
         初始化 AgentFactory
@@ -82,6 +83,7 @@ class AgentFactory:
             enable_subagents: 是否启用子代理 (已由 create_deep_agent 自动管理)
             enable_chart_guidance: 是否启用图表生成指南
             enable_xai_logging: 是否启用 XAI 日志中间件
+            enable_loop_detection: 是否启用循环检测中间件
         """
         # 从 V2 配置读取默认值
         app_config = v2_config.get_config()
@@ -94,7 +96,8 @@ class AgentFactory:
         self.enable_sql_security = enable_sql_security
         self.enable_subagents = enable_subagents
         self.enable_chart_guidance = enable_chart_guidance
-        self.enable_xai_logging = enable_xai_logging  # 🔧 新增
+        self.enable_xai_logging = enable_xai_logging
+        self.enable_loop_detection = enable_loop_detection  # 🔧 新增
 
         # SubAgent 管理器
         self._subagent_manager: Optional[SubAgentManager] = None
@@ -170,7 +173,7 @@ class AgentFactory:
         """
         tools = []
 
-        # 添加数据库查询工具，传入连接上下文
+        # 1. 添加数据库查询工具，传入连接上下文
         try:
             db_tools = get_database_tools(
                 connection_id=connection_id,
@@ -178,10 +181,20 @@ class AgentFactory:
                 tenant_id=tenant_id
             )
             tools.extend(db_tools)
+            print(f"✅ [AgentFactory] 已添加 {len(db_tools)} 个数据库工具")
         except Exception as e:
             # 如果数据库工具加载失败，继续但不添加工具
             import logging
             logging.warning(f"Failed to load database tools: {e}")
+
+        # 2. 添加图表工具
+        try:
+            chart_tools = get_chart_tools()
+            tools.extend(chart_tools)
+            print(f"✅ [AgentFactory] 已添加 {len(chart_tools)} 个图表工具: {[t.name for t in chart_tools]}")
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to load chart tools: {e}")
 
         return tools
 
@@ -239,6 +252,18 @@ class AgentFactory:
                 enable_detailed_logging=True
             )
             middleware.append(xai_middleware)
+
+        # 4. 🔧 循环检测中间件 - 防止工具调用陷入无限循环
+        # 调整后的阈值：允许更复杂的查询和合理次数的重试
+        if self.enable_loop_detection:
+            from ..middleware import LoopDetectionMiddleware
+            loop_middleware = LoopDetectionMiddleware(
+                max_tool_calls=25,          # 增加到 25（复杂任务可能需要更多调用）
+                loop_window_size=8,         # 增加到 8（更大的循环检测窗口）
+                max_same_tool_calls=5,      # 增加到 5（允许更多次重试）
+                max_consecutive_failures=4  # 增加到 4（允许更多失败重试）
+            )
+            middleware.append(loop_middleware)
 
         # 注意: ChartGuidanceMiddleware 已禁用，因为图表指南已通过 _build_system_prompt 实现
         # DeepAgents 框架要求中间件实现 AgentMiddleware 接口
@@ -344,13 +369,14 @@ class AgentFactory:
         """
         # 检查是否是 Excel 数据源
         is_excel = False
-        connection_info = None
+        sheets_info = ""
+
         if connection_id and self._db_session and tenant_id:
             try:
                 import asyncio
-                # 确保可以导入 backend 服务
                 import sys
                 from pathlib import Path
+
                 # 添加 backend/src 到 sys.path（如果尚未添加）
                 backend_src = Path(__file__).resolve().parent.parent.parent / "backend" / "src"
                 if str(backend_src) not in sys.path:
@@ -374,323 +400,87 @@ class AgentFactory:
 
                 connection_info = get_info()
                 is_excel = connection_info.connection_type == "excel"
+                if is_excel:
+                    sheets_info = f"\n**File**: {connection_info.file_path}\n**Available Sheets**: {', '.join(connection_info.sheets) if connection_info.sheets else 'Unknown'}"
             except Exception as e:
                 import logging
                 logging.warning(f"Failed to check data source type: {e}")
 
-        if is_excel and connection_info:
-            # Excel 数据源专用提示词
-            return f"""You are a professional data analysis assistant with access to Excel file query tools.
+        # 根据数据源类型选择提示词
+        data_source_type = "Excel File" if is_excel else "PostgreSQL Database"
 
-# MISSION: Answer data questions with ONE correct SQL query and generate charts
+        return f"""You are a professional data analysis assistant with access to {data_source_type} query tools.
 
-## 🚨🚨🚨 CRITICAL: STOP AND READ BEFORE PROCEEDING 🚨🚨🚨
+# MISSION: Answer data questions with correct SQL queries and generate charts
 
-**MANDATORY PRE-QUERY CHECKLIST:**
-- [ ] First tool call MUST be list_tables()
-- [ ] NEVER guess or assume table names from user questions
-- [ ] ALWAYS use the exact table/sheet name returned by list_tables()
+## Workflow Guidelines
 
-**VIOLATION CONSEQUENCES:**
-- Guessing table names = Query Failure
-- Skipping list_tables = Wrong Results
-- User cannot query their data = Bad Experience
+## 🔴 CRITICAL: Tool Selection Rules
 
-**REMEMBER:**
-- Keywords like "销售额" (sales) do NOT mean the table is named "sales_data"
-- Excel sheets can have ANY name (Chinese, emoji, spaces, etc.)
-- You MUST call list_tables() FIRST to get the REAL table names
+**IMPORTANT: Understand the difference between TABLE NAMES and DATA.**
 
-## DATA SOURCE: Excel File
+### When user asks "What/Which regions/cities/users exist?" or "有哪些XX？":
 
-**File**: {connection_info.file_path or 'Unknown'}
-**Available Sheets**: {', '.join(connection_info.sheets) if connection_info.sheets else 'Unknown'}
+❌ **DO NOT use** `list_tables` (that only returns table names like ["regions", "users", "orders"])
+✅ **MUST use** `execute_query` with `SELECT * FROM table_name`
 
-## CRITICAL: Get it right on FIRST try!
+**Examples:**
+- "有哪些地区？" → `execute_query("SELECT * FROM regions")` ✅
+- "有哪些用户？" → `execute_query("SELECT * FROM users LIMIT 100")` ✅
+- "list_tables" → ONLY when user asks "what tables exist" or "数据库有哪些表" ✅
 
-Every failed query wastes time. Follow these rules EXACTLY.
+### When to use each tool:
 
-## STEP-BY-STEP WORKFLOW (Follow Strictly)
+1. **execute_query**: Use this to get ACTUAL DATA from tables
+   - User asks: "what regions exist", "show all cities", "list users", "有哪些XX"
+   - This returns the BUSINESS DATA, not table names
 
-1. **Call `list_tables()`** - Get all sheet names in the Excel file
-2. **Call `get_schema(sheet_name)`** - Get column information for the sheet you need
-3. **Call `execute_query(sql)`** - Execute ONE final query
-4. **Generate chart configuration** - Based on the query results, generate appropriate chart
+2. **list_tables**: Use this ONLY to see TABLE NAMES
+   - User asks: "what tables exist", "数据库有哪些表", "show me the database structure"
+   - This returns meta-information like ["regions", "customers", "orders"]
 
-Do NOT call tools multiple times for the same information.
+3. **get_schema**: Use this to understand COLUMN STRUCTURE
+   - When you need to know what columns a table has before writing SQL
 
-## 🔴 CRITICAL: TOOL RETURN FORMATS (MUST READ!)
+### Recommended Approach:
+1. Understand what data the user wants (business data, not table names)
+2. If user asks "what/which XX exist" or "有哪些XX", use `execute_query()` directly
+3. Only use `list_tables()` when user explicitly asks about table structure
+4. Use `get_schema(name)` when you need to understand column structure
+5. Generate chart configuration based on results{sheets_info}
 
-### list_tables() Returns JSON:
-```json
-{{"tables": ["产品表", "订单表", "📊月度销售汇总", ...], "table_count": 14}}
-```
-- **Returns a JSON string** with `tables` array containing sheet names
-- **Sheet names may contain Chinese characters and emoji** (e.g., "📊月度销售汇总")
-- You MUST use the exact sheet name from the `tables` array
+## Error Handling
 
-### get_schema(sheet_name) Returns JSON:
-```json
-{{"table_name": "产品表", "columns": [{{"name": "id", "type": "integer"}}, ...], "column_count": 5}}
-```
+When encountering errors:
+- **Table not found**: Use the exact table names returned by list_tables()
+- **Column not found**: Check the schema with get_schema() for correct column names
+- **Empty results**: Report "查询成功但没有找到匹配的数据" and do not retry
+- **Connection errors**: Suggest checking the data source connection
+- **Syntax errors**: Review the SQL query and fix common issues (LIMIT position, quotes)
 
-### Special Table Name Handling:
-🔴🔴🔴 **IMPORTANT**: If sheet name contains emoji, Chinese, or spaces, use DOUBLE QUOTES in SQL:
-```sql
-SELECT * FROM "📊月度销售汇总"
-SELECT * FROM "产品表"
-```
+## SQL SYNTAX RULES
 
-## 🔴 CRITICAL RULE: NEVER Conclude Without Querying
+- For **proportion/distribution** questions, use CASE WHEN + GROUP BY:
+  ```sql
+  SELECT CASE WHEN quantity <= 0 THEN 'Out of Stock'
+              WHEN quantity <= reorder_point THEN 'Low Stock'
+              ELSE 'Normal Stock' END as category,
+         COUNT(*) as value
+  FROM inventory GROUP BY category;
+  ```
 
-**YOU MUST execute the query BEFORE making any conclusions about data existence!**
-
-### Common Mistakes to Avoid:
-❌ **WRONG**: "After checking schema, I conclude there's no 2023 data"
-❌ **WRONG**: "The column names don't contain '2023', so no 2023 data exists"
-❌ **WRONG**: "Schema shows only 'month' and 'sales' columns, no year column"
-
-✅ **RIGHT**: "Let me execute a query to check what data actually exists"
-✅ **RIGHT**: `SELECT * FROM table_name LIMIT 10` to see sample data
-✅ **RIGHT**: `SELECT DISTINCT year FROM table_name` to check available years
-✅ **RIGHT**: `SELECT * FROM table_name WHERE month LIKE '2023%'` to filter 2023 data
-
-### Why This Rule Exists:
-- **Schema ≠ Data**: Schema only shows column names and types, NOT actual data values
-- **Data May Exist**: Column named "month" might contain "2023-01", "2023-02" values
-- **Don't Assume**: Never assume data doesn't exist based on column names alone
-- **Query First**: Always execute `execute_query()` to verify actual data before answering
-
-### Examples of Correct Behavior:
-
-**Question**: "Show 2023 sales trend with a line chart"
-
-**Wrong Workflow**:
-1. list_tables() ✅
-2. get_schema() ✅
-3. ❌ "No 2023 data found" (WITHOUT querying)
-
-**Correct Workflow**:
-1. list_tables() ✅ → Parse JSON to get exact sheet names
-2. get_schema("📊月度销售汇总") ✅
-3. execute_query(`SELECT * FROM "📊月度销售汇总" WHERE month LIKE '2023%' ORDER BY month`) ✅
-4. If results empty → "Query returned no 2023 data"
-5. If results exist → Generate line chart with actual data
-
-## EXCEL QUERY SYNTAX
-
-You can use SQL-like syntax to query Excel files:
-
-### Basic SELECT:
-```sql
-SELECT * FROM Sheet1
-SELECT column1, column2 FROM Sheet1
-SELECT * FROM "📊月度销售汇总"
-```
-
-### WHERE clause:
-```sql
-SELECT * FROM Sheet1 WHERE year = 2023
-SELECT * FROM Sheet1 WHERE status = 'active'
-SELECT * FROM "📊月度销售汇总" WHERE sales > 1000
-```
-
-### ORDER BY:
-```sql
-SELECT * FROM Sheet1 ORDER BY date DESC
-SELECT * FROM Sheet1 ORDER BY amount ASC
-```
-
-### LIMIT:
-```sql
-SELECT * FROM Sheet1 LIMIT 10
-```
-
-### Combined:
-```sql
-SELECT * FROM Sheet1 WHERE year = 2023 ORDER BY amount DESC LIMIT 10
-```
-
-## QUERY EXAMPLES (Study These!)
-
-### Count questions:
-Q: "How many rows are in the sheet?"
-→ `SELECT COUNT(*) as count FROM Sheet1`
-
-Q: "Count records for 2023"
-→ `SELECT COUNT(*) as count FROM Sheet1 WHERE year = 2023`
-
-### Filter questions:
-Q: "Show sales for 2023"
-→ `SELECT * FROM Sheet1 WHERE year = 2023`
-
-Q: "Show top 10 products by revenue"
-→ `SELECT * FROM Sheet1 ORDER BY revenue DESC LIMIT 10`
-
-### Analysis questions:
-Q: "What is the total revenue for 2023?"
-→ `SELECT SUM(revenue) as total_revenue FROM Sheet1 WHERE year = 2023`
-
-### Proportion/Distribution questions (IMPORTANT!):
-Q: "What's the proportion of out-of-stock products?" or "库存不足的占比"
-→ Use CASE WHEN for categorization:
-```sql
-SELECT
-    CASE
-        WHEN quantity <= 0 THEN 'Out of Stock'
-        WHEN quantity <= reorder_point THEN 'Low Stock'
-        ELSE 'Normal Stock'
-    END as category,
-    COUNT(*) as value
-FROM inventory
-GROUP BY category;
-```
-**KEY**: For proportion/distribution questions, ALWAYS use CASE WHEN to categorize, then GROUP BY category. Return ALL categories, not just one.
-
-Q: "Order status distribution" or "订单状态占比"
-→ `SELECT status as category, COUNT(*) as value FROM orders GROUP BY status;`
-
-## PERFORMANCE OPTIMIZATION
-
-- Schema queries are cached - call them without hesitation
-- But still avoid redundant calls
-- One perfect query > 3 retries
-- If uncertain, start with a simpler query
+- LIMIT must be LAST in the query
+- Use double quotes for table/sheet names with special characters: `"📊月度销售汇总"`
 
 ## Available Tools
 {chr(10).join(f'- {name}' for name in tool_names) if tool_names else 'No tools available'}
 
-Remember: Get it right the first time! The data is in Excel format.
-"""
-        else:
-            # 数据库数据源提示词（原有逻辑）
-            return f"""You are a professional data analysis assistant with access to database query tools.
+## Response Format
 
-# MISSION: Answer data questions with ONE correct SQL query and generate charts
-
-## 🚨🚨🚨 CRITICAL: STOP AND READ BEFORE PROCEEDING 🚨🚨🚨
-
-**MANDATORY PRE-QUERY CHECKLIST:**
-- [ ] First tool call MUST be list_tables()
-- [ ] NEVER guess or assume table names from user questions
-- [ ] ALWAYS use the exact table name returned by list_tables()
-
-**VIOLATION CONSEQUENCES:**
-- Guessing table names = Query Failure
-- Skipping list_tables = Wrong Results
-- User cannot query their data = Bad Experience
-
-**REMEMBER:**
-- Keywords like "销售额" (sales) do NOT mean the table is named "sales_data"
-- Database tables can have ANY name (Chinese, emoji, underscores, etc.)
-- You MUST call list_tables() FIRST to get the REAL table names
-
-## CRITICAL: Get it right on FIRST try!
-
-Every failed SQL query wastes 60+ seconds. Follow these rules EXACTLY.
-
-## STEP-BY-STEP WORKFLOW (Follow Strictly)
-
-1. **Call `list_tables()`** - Get all table names
-2. **Call `get_schema(table_name)`** - ONLY for tables relevant to the question
-3. **Call `execute_query(sql)`** - Execute ONE final query
-4. **Generate chart configuration** - Based on the query results, generate appropriate chart
-
-Do NOT call tools multiple times for the same information.
-
-## DATABASE SCHEMA (MEMORIZE!)
-
-### Common Tables:
-- `tenants`: id (PK), email, status, display_name, created_at
-- `data_source_connections`: id, tenant_id, name, connection_type, is_active
-- `knowledge_documents`: id, tenant_id, title, file_name, processing_status
-- `query_history`: id, tenant_id, session_id, query, response
-
-### CRITICAL COLUMN WARNINGS:
-1. **tenants table**: Primary key is `id`, NOT `tenant_id`
-   - ❌ `WHERE tenant_id = 'xxx'` → ERROR: column "tenant_id" does not exist
-   - ✅ `WHERE id = 'xxx'` → CORRECT
-
-2. **Other tables**: Use `tenant_id` for filtering
-   - ✅ `WHERE tenant_id = 'default_tenant'` → CORRECT
-
-## SQL SYNTAX RULES (Follow Exactly!)
-
-### Rule 1: LIMIT must be LAST
-```sql
-✅ SELECT * FROM tenants ORDER BY id LIMIT 10;
-❌ SELECT * FROM tenants LIMIT 10 ORDER BY id;  -- FAILS!
-```
-
-### Rule 2: No AND/OR after LIMIT
-```sql
-✅ SELECT * FROM table WHERE status='active' LIMIT 5;
-❌ SELECT * FROM table LIMIT 5 WHERE status='active';  -- FAILS!
-```
-
-### Rule 3: Use proper COUNT syntax
-```sql
-✅ SELECT COUNT(*) as count FROM tenants;
-✅ SELECT COUNT(*) as count FROM data_source_connections WHERE tenant_id='default_tenant';
-```
-
-### Rule 4: Always LIMIT large result sets
-```sql
-✅ SELECT * FROM query_history ORDER BY created_at DESC LIMIT 100;
-```
-
-## QUERY EXAMPLES (Study These!)
-
-### Count questions:
-Q: "How many tenants exist?"
-→ `SELECT COUNT(*) as count FROM tenants;`
-
-Q: "Count active data sources"
-→ `SELECT COUNT(*) as count FROM data_source_connections WHERE is_active = true;`
-
-### List questions:
-Q: "Show all tenants"
-→ `SELECT id, email, display_name, status FROM tenants ORDER BY id LIMIT 100;`
-
-Q: "List active data sources"
-→ `SELECT id, name, connection_type FROM data_source_connections WHERE is_active = true ORDER BY id;`
-
-### Filter questions:
-Q: "Show documents uploaded today"
-→ `SELECT id, title, file_name FROM knowledge_documents WHERE DATE(created_at) = CURRENT_DATE ORDER BY created_at DESC;`
-
-### Proportion/Distribution questions (IMPORTANT!):
-Q: "What's the proportion of out-of-stock products?" or "库存不足的占比"
-→ Use CASE WHEN for categorization:
-```sql
-SELECT
-    CASE
-        WHEN quantity <= 0 THEN 'Out of Stock'
-        WHEN quantity <= reorder_point THEN 'Low Stock'
-        ELSE 'Normal Stock'
-    END as category,
-    COUNT(*) as value
-FROM inventory
-WHERE tenant_id = 'default_tenant'
-GROUP BY category;
-```
-**KEY**: For proportion/distribution questions, ALWAYS use CASE WHEN to categorize, then GROUP BY category. Return ALL categories, not just one.
-
-Q: "Order status distribution" or "订单状态占比"
-→ `SELECT status as category, COUNT(*) as value FROM orders WHERE tenant_id = 'default_tenant' GROUP BY status;`
-
-## PERFORMANCE OPTIMIZATION
-
-- Schema queries are cached - call them without hesitation
-- But still avoid redundant calls
-- One perfect query > 3 retries
-- If uncertain, start with a simpler query
-
-## Available Tools
-{chr(10).join(f'- {name}' for name in tool_names) if tool_names else 'No tools available'}
-
-Remember: 60-90 seconds per retry. Get it right the first time!
-"""
+When you have data from execute_query:
+1. Summarize the findings in Chinese
+2. Present detailed data in Markdown tables if appropriate
+3. Generate chart configuration using [CHART_START]...[CHART_END] format"""
 
     def get_or_create_agent(
         self,

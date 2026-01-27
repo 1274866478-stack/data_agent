@@ -15,14 +15,132 @@ Tenant Isolation Middleware - 租户隔离中间件
 """
 
 import os
+import re
+import logging
 from typing import Any, Dict, Optional, Callable, Awaitable
 from dataclasses import dataclass, field
+
+# 配置日志
+logger = logging.getLogger(__name__)
 
 # LangChain/LangGraph imports for deepagents compatibility
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langchain_core.messages.tool import ToolMessage
 from langgraph.types import Command
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse, ModelCallResult
+
+
+# ============================================================================
+# 租户过滤注入函数
+# ============================================================================
+
+def inject_tenant_filter(sql: str, tenant_id: str) -> str:
+    """
+    智能地将 tenant_id 过滤条件注入到 SQL 查询中
+
+    策略：
+    1. 解析 SQL 找到正确的注入位置
+    2. WHERE 子句应该在 FROM 之后、GROUP BY/HAVING/ORDER BY 之前
+    3. 如果已有 WHERE，使用 AND 添加
+    4. 如果没有 WHERE，在正确位置插入
+
+    正确的 SQL 子句顺序：
+    SELECT ... FROM ... WHERE ... GROUP BY ... HAVING ... ORDER BY ... LIMIT
+
+    v4.3.0 优化：
+    - 添加详细日志记录，方便调试
+    - 改进已存在 tenant_id 的检测逻辑
+
+    Args:
+        sql: 原始 SQL 查询
+        tenant_id: 要注入的租户 ID
+
+    Returns:
+        注入 tenant_id 过滤条件后的 SQL
+    """
+    sql_upper = sql.upper()
+
+    # 📊 详细日志：记录输入的 SQL
+    logger.debug(f"[TENANT_INJECT] Input SQL: {sql[:150]}...")
+    logger.debug(f"[TENANT_INJECT] tenant_id: {tenant_id}")
+
+    # 检查是否已经包含 tenant_id 过滤
+    # v4.3.0: 改进检测逻辑，更精确地判断是否已有 tenant_id 条件
+    tenant_pattern = re.search(r'\btenant_id\s*=', sql, re.IGNORECASE)
+    if tenant_pattern:
+        logger.info(f"[TENANT_INJECT] SQL already contains tenant_id filter at position {tenant_pattern.start()}, skipping injection")
+        logger.debug(f"[TENANT_INJECT] Existing tenant_id snippet: {sql[max(0,tenant_pattern.start()-20):tenant_pattern.end()+20]}")
+        return sql
+
+    # 找到各个子句的位置
+    where_match = re.search(r'\bWHERE\b', sql_upper)
+    group_match = re.search(r'\bGROUP\s+BY\b', sql_upper)
+    having_match = re.search(r'\bHAVING\b', sql_upper)
+    order_match = re.search(r'\bORDER\s+BY\b', sql_upper)
+    limit_match = re.search(r'\bLIMIT\b', sql_upper)
+
+    logger.debug(f"[TENANT_INJECT] Clause positions: WHERE={where_match.start() if where_match else None}, "
+                f"GROUP BY={group_match.start() if group_match else None}, "
+                f"HAVING={having_match.start() if having_match else None}, "
+                f"ORDER BY={order_match.start() if order_match else None}, "
+                f"LIMIT={limit_match.start() if limit_match else None}")
+
+    # 确定插入位置
+    if where_match:
+        # 已有 WHERE，在 WHERE 后面添加 AND
+        where_end = where_match.end()
+
+        # 找到下一个子句的开始位置
+        next_clause_pos = float('inf')
+        next_clause_name = None
+        for match in [group_match, having_match, order_match, limit_match]:
+            if match and match.start() > where_end:
+                if match.start() < next_clause_pos:
+                    next_clause_pos = match.start()
+                    next_clause_name = match.group()
+
+        if next_clause_pos < float('inf'):
+            # 在下一个子句之前插入 AND tenant_id
+            before = sql[:next_clause_pos].rstrip()
+            after = sql[next_clause_pos:]
+            result = f"{before} AND tenant_id = '{tenant_id}' {after}"
+            logger.info(f"[TENANT_INJECT] Injected before {next_clause_name} clause")
+        else:
+            # 没有其他子句，直接在末尾添加
+            result = f"{sql} AND tenant_id = '{tenant_id}'"
+            logger.info("[TENANT_INJECT] Injected at end (existing WHERE)")
+    else:
+        # 没有 WHERE，需要插入 WHERE 子句
+        # 找到插入位置：在 FROM 之后，GROUP BY/HAVING/ORDER BY/LIMIT 之前
+        from_match = re.search(r'\bFROM\b', sql_upper)
+        if not from_match:
+            # 无法解析，返回原 SQL
+            logger.warning("[TENANT_INJECT] Cannot find FROM clause, skipping injection")
+            return sql
+
+        # 找到 FROM 子句后的插入位置
+        # 简化处理：找到 GROUP BY/HAVING/ORDER BY/LIMIT 中最早出现的子句
+        insert_pos = float('inf')
+        next_clause_name = None
+        for match in [group_match, having_match, order_match, limit_match]:
+            if match and match.start() > from_match.end():
+                if match.start() < insert_pos:
+                    insert_pos = match.start()
+                    next_clause_name = match.group()
+
+        if insert_pos < float('inf'):
+            # 在找到的子句之前插入 WHERE
+            before = sql[:insert_pos].rstrip()
+            after = sql[insert_pos:]
+            result = f"{before} WHERE tenant_id = '{tenant_id}' {after}"
+            logger.info(f"[TENANT_INJECT] Injected before {next_clause_name} clause (new WHERE)")
+        else:
+            # 没有其他子句，在末尾添加 WHERE
+            result = f"{sql} WHERE tenant_id = '{tenant_id}'"
+            logger.info("[TENANT_INJECT] Injected at end (new WHERE)")
+
+    logger.debug(f"[TENANT_INJECT] Output SQL: {result[:150]}...")
+    return result
 
 
 # ============================================================================
@@ -214,13 +332,9 @@ class TenantIsolationMiddleware(AgentMiddleware):
             "session_id": self.session_id,
         }
 
-        # 对于数据库查询，注入 WHERE 条件
+        # 对于数据库查询，智能注入 WHERE 条件
         if "query" in tool_input and isinstance(tool_input["query"], str):
-            # 简单的租户 ID 注入（实际实现需要更复杂的 SQL 解析）
-            if "WHERE" in tool_input["query"].upper():
-                tool_input["query"] += f" AND tenant_id = '{self.tenant_id}'"
-            else:
-                tool_input["query"] += f" WHERE tenant_id = '{self.tenant_id}'"
+            tool_input["query"] = inject_tenant_filter(tool_input["query"], self.tenant_id)
 
         # 更新工具调用
         tool_call["args"] = tool_input
@@ -264,13 +378,9 @@ class TenantIsolationMiddleware(AgentMiddleware):
             "session_id": self.session_id,
         }
 
-        # 对于数据库查询，注入 WHERE 条件
+        # 对于数据库查询，智能注入 WHERE 条件
         if "query" in tool_input and isinstance(tool_input["query"], str):
-            # 简单的租户 ID 注入（实际实现需要更复杂的 SQL 解析）
-            if "WHERE" in tool_input["query"].upper():
-                tool_input["query"] += f" AND tenant_id = '{self.tenant_id}'"
-            else:
-                tool_input["query"] += f" WHERE tenant_id = '{self.tenant_id}'"
+            tool_input["query"] = inject_tenant_filter(tool_input["query"], self.tenant_id)
 
         # 更新工具调用
         tool_call["args"] = tool_input
