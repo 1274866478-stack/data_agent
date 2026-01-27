@@ -35,10 +35,18 @@ from ..config import agent_config as v2_config
 from ..middleware import (
     TenantIsolationMiddleware,
     SQLSecurityMiddleware,
-    CHART_GUIDANCE_TEMPLATE
+    CHART_GUIDANCE_TEMPLATE,
+    SemanticPriorityMiddleware
 )
 from ..subagents import SubAgentManager, create_subagent_manager
 from ..tools import get_database_tools, get_chart_tools
+from ..tools.semantic_layer_tools import (
+    resolve_business_term,
+    get_semantic_measure,
+    list_available_cubes,
+    get_cube_measures,
+    normalize_status_value
+)
 
 # ============================================================================
 # AgentFactory
@@ -69,7 +77,8 @@ class AgentFactory:
         enable_subagents: bool = True,
         enable_chart_guidance: bool = True,
         enable_xai_logging: bool = True,  # 🔧 XAI 日志中间件开关
-        enable_loop_detection: bool = True  # 🔧 循环检测中间件开关
+        enable_loop_detection: bool = True,  # 🔧 循环检测中间件开关
+        enable_semantic_priority: bool = True  # 🔧 语义层优先中间件开关
     ):
         """
         初始化 AgentFactory
@@ -98,6 +107,7 @@ class AgentFactory:
         self.enable_chart_guidance = enable_chart_guidance
         self.enable_xai_logging = enable_xai_logging
         self.enable_loop_detection = enable_loop_detection  # 🔧 新增
+        self.enable_semantic_priority = enable_semantic_priority  # 🔧 新增
 
         # SubAgent 管理器
         self._subagent_manager: Optional[SubAgentManager] = None
@@ -196,6 +206,60 @@ class AgentFactory:
             import logging
             logging.warning(f"Failed to load chart tools: {e}")
 
+        # 3. 添加语义层工具
+        try:
+            from langchain_core.tools import StructuredTool
+
+            semantic_tools = [
+                StructuredTool.from_function(
+                    func=resolve_business_term,
+                    name="resolve_business_term",
+                    description=(
+                        "解析业务术语，返回匹配的语义层定义。"
+                        "使用场景：查询涉及业务指标（如'总收入'、'订单数'、'GMV'）时，"
+                        "首先调用此工具获取标准定义和SQL表达式。"
+                        "Args: term (str) - 业务术语，如'总收入'"
+                    )
+                ),
+                StructuredTool.from_function(
+                    func=get_semantic_measure,
+                    name="get_semantic_measure",
+                    description=(
+                        "获取特定Cube中度量的完整定义（包括SQL表达式）。"
+                        "Args: cube (str) - Cube名称, measure (str) - 度量名称"
+                    )
+                ),
+                StructuredTool.from_function(
+                    func=normalize_status_value,
+                    name="normalize_status_value",
+                    description=(
+                        "规范化状态值（如'已完成' → 'completed'）。"
+                        "Args: status (str) - 原始状态值"
+                    )
+                ),
+                StructuredTool.from_function(
+                    func=list_available_cubes,
+                    name="list_available_cubes",
+                    description=(
+                        "列出所有可用的语义层Cube。"
+                        "Args: None"
+                    )
+                ),
+                StructuredTool.from_function(
+                    func=get_cube_measures,
+                    name="get_cube_measures",
+                    description=(
+                        "获取指定Cube的所有度量定义。"
+                        "Args: cube (str) - Cube名称"
+                    )
+                ),
+            ]
+            tools.extend(semantic_tools)
+            print(f"✅ [AgentFactory] 已添加 {len(semantic_tools)} 个语义层工具: {[t.name for t in semantic_tools]}")
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to load semantic tools: {e}")
+
         return tools
 
     def _build_middleware(
@@ -264,6 +328,15 @@ class AgentFactory:
                 max_consecutive_failures=4  # 增加到 4（允许更多失败重试）
             )
             middleware.append(loop_middleware)
+
+        # 5. 🔧 语义层优先中间件 - 引导 LLM 使用语义层工具
+        if self.enable_semantic_priority:
+            semantic_middleware = SemanticPriorityMiddleware(
+                enable_detection=True,
+                min_confidence=0.3,
+                enable_logging=True
+            )
+            middleware.append(semantic_middleware)
 
         # 注意: ChartGuidanceMiddleware 已禁用，因为图表指南已通过 _build_system_prompt 实现
         # DeepAgents 框架要求中间件实现 AgentMiddleware 接口
@@ -471,6 +544,43 @@ When encountering errors:
 
 - LIMIT must be LAST in the query
 - Use double quotes for table/sheet names with special characters: `"📊月度销售汇总"`
+
+## 🔥 Semantic Layer Tools (Business Term Resolution)
+
+**IMPORTANT**: Before generating SQL, use semantic layer tools to resolve business terms!
+
+### When to use semantic tools:
+- User mentions "销售额" (sales), "总收入" (revenue), "订单数" (order count)
+- Any business metric/fundamental terms in the query
+
+### Available semantic tools:
+1. **resolve_business_term** - Map business terms to database tables/columns
+   - Example: "销售额" → returns `Orders` cube, `total_amount` column
+   - Args: term (str) - business term like "销售额"
+
+2. **list_available_cubes** - List all available semantic cubes
+   - Returns: Orders, Customers, Products, etc.
+
+3. **get_semantic_measure** - Get detailed measure definition
+   - Args: cube (str), measure (str)
+
+4. **get_cube_measures** - Get all measures in a cube
+   - Args: cube (str)
+
+5. **normalize_status_value** - Normalize status values
+   - Example: "已完成" → "completed"
+   - Args: status (str)
+
+### Critical mappings:
+- **NO `sales` table exists!** All sales data is in `orders` table
+- "销售额" → `orders.total_amount`
+- "订单数" → `COUNT(*) FROM orders`
+- "客户数" → customers table
+
+### Workflow:
+```
+User query → resolve_business_term(term) → Get SQL expression → Generate SQL
+```
 
 ## Available Tools
 {chr(10).join(f'- {name}' for name in tool_names) if tool_names else 'No tools available'}

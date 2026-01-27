@@ -5,8 +5,9 @@
 **文件名**: sql_agent.py
 **职责**: 实现基于LangGraph和MCP的SQL智能查询代理 - 自然语言理解、Schema发现、SQL生成、图表可视化、多轮对话
 **作者**: Data Agent Team
-**版本**: 1.2.0
+**版本**: 1.3.0
 **变更记录**:
+- v1.3.0 (2026-01-27): 企业级可信智能数据体优化 - 集成 planning、reflection、clarification 节点
 - v1.2.0 (2026-01-06): 稳定性增强 - 动态时间上下文注入、JSON解析容错处理
 - v1.1.0 (2026-01-06): 安全增强 - 集成 SQLValidator 模块，增强 should_continue 错误重试逻辑
 - v1.0.1 (2026-01-02): 修复MCP echarts服务器URL配置（本地开发使用localhost）
@@ -90,6 +91,27 @@ from models import VisualizationResponse, QueryResult, ChartConfig, ChartType
 from terminal_viz import render_response
 from data_transformer import sql_result_to_echarts_data, sql_result_to_mcp_echarts_data
 from chart_service import ChartRequest, generate_chart_simple, ChartResponse
+
+# 🔧 新增：企业级可信智能数据体节点
+from .nodes import (
+    PlanningNode,
+    ReflectionNode,
+    ClarificationNode,
+    create_planning_node,
+    create_reflection_node,
+    create_clarification_node,
+    ErrorCategory
+)
+
+# 🔥 导入语义层工具
+from .tools import (
+    resolve_business_term,
+    get_semantic_measure,
+    list_available_cubes,
+    get_cube_measures,
+    normalize_status_value,
+)
+
 # 数据一致性验证：防止 LLM 幻觉导致的数据不匹配
 try:
     from backend.src.app.services.agent.data_validator import (
@@ -402,6 +424,41 @@ SELECT * FROM customers WHERE address LIKE '%杭州%'
 - generate_bar_chart - 柱状图：[{"category": "名称", "value": 数值}]
 - generate_line_chart - 折线图：[{"time": "时间", "value": 数值}]
 - generate_pie_chart - 饼图：[{"category": "名称", "value": 数值}]
+
+### 🔥 语义层工具（业务术语解析）
+
+**重要**：在生成 SQL 之前，请先使用语义层工具解析业务术语！
+
+1. **resolve_business_term** - 解析业务术语
+   - 用途：将"销售额"、"总收入"、"订单数"等业务术语映射到正确的表和字段
+   - 输入：术语名称（如"销售额"）
+   - 输出：JSON格式的度量定义（包含表名、字段名、SQL表达式）
+
+2. **list_available_cubes** - 列出可用的语义层Cube
+   - 输出：所有可用的Cube列表（如Orders、Customers、Products）
+
+3. **get_semantic_measure** - 获取指定Cube的度量详情
+   - 输入：cube名称和度量名称
+   - 输出：完整的度量定义
+
+4. **get_cube_measures** - 获取指定Cube的所有度量
+   - 输入：cube名称
+   - 输出：该Cube的所有度量列表
+
+5. **normalize_status_value** - 规范化状态值
+   - 用途：将"已完成"映射为"completed"等标准值
+   - 输入：原始状态值
+   - 输出：规范化后的状态信息
+
+**语义层使用工作流程**：
+```
+用户查询 → resolve_business_term(术语) → 获取SQL表达式 → 生成完整SQL
+```
+
+**关键提示**：
+- 项目中没有独立的 `sales` 表，所有销售数据在 `orders` 表中
+- "销售额"对应的字段是 `orders.total_amount`
+- 使用语义层工具获取正确的表名和字段名
 
 ### 工作流程
 1. list_tables → 2. get_schema → 3. query → 4. 调用图表工具（如需）
@@ -1316,16 +1373,53 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
         else:
             print(f"⚠️ analyze_dataframe 工具未导入，无法添加")
         
+        # 🔥 添加语义层工具
+        from langchain_core.tools import StructuredTool
+
+        semantic_tools = [
+            StructuredTool.from_function(
+                func=resolve_business_term,
+                name="resolve_business_term",
+                description="解析业务术语（如'总收入'、'销售额'），返回语义层定义。输入: 术语名称，输出: JSON格式的度量定义",
+            ),
+            StructuredTool.from_function(
+                func=get_semantic_measure,
+                name="get_semantic_measure",
+                description="获取指定 Cube 的度量详情。输入: cube名称和度量名称，输出: 完整度量定义",
+            ),
+            StructuredTool.from_function(
+                func=list_available_cubes,
+                name="list_available_cubes",
+                description="列出所有可用的语义层 Cube（如 Orders、Customers、Products）",
+            ),
+            StructuredTool.from_function(
+                func=get_cube_measures,
+                name="get_cube_measures",
+                description="获取指定 Cube 的所有度量。输入: cube名称，输出: 度量列表",
+            ),
+            StructuredTool.from_function(
+                func=normalize_status_value,
+                name="normalize_status_value",
+                description="规范化状态值（如'已完成'→'completed'）",
+            ),
+        ]
+
+        # 将语义层工具添加到工具列表
+        _cached_tools.extend(semantic_tools)
+        print(f"✅ 已添加 {len(semantic_tools)} 个语义层工具")
+
         # 最终验证
         final_tool_count = len(_cached_tools)
         final_tool_names = [getattr(t, "name", str(t)) for t in _cached_tools]
+        semantic_tool_names = [getattr(t, "name", str(t)) for t in semantic_tools]
         print(f"\n{'='*60}")
         print(f"✅ FORCED REGISTRATION: 最终工具列表包含 {final_tool_count} 个工具")
         print(f"   工具名称: {', '.join(final_tool_names)}")
         print(f"   - inspect_file: {'✅' if 'inspect_file' in final_tool_names else '❌'}")
         print(f"   - analyze_dataframe: {'✅' if 'analyze_dataframe' in final_tool_names else '❌'}")
+        print(f"   - 语义层工具: {', '.join(semantic_tool_names)}")
         print(f"{'='*60}\n")
-        
+
     except FileNotFoundError as e:
         error_message = str(e)
         print(
@@ -1792,21 +1886,97 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
         # 没有发现问题，直接返回
         return {"messages": []}
 
+    # ================================================================
+    # 🔧 新增：企业级可信智能数据体节点
+    # ================================================================
+
+    # 创建节点实例
+    planning_node = create_planning_node(enable_logging=True, min_confidence=0.6)
+    reflection_node = create_reflection_node(max_retries=3, enable_logging=True)
+    clarification_node = create_clarification_node(confidence_threshold=0.6, enable_logging=True)
+
+    # Planning 节点包装
+    async def planning_node_wrapper(state: MessagesState) -> Dict:
+        """Planning 节点包装器"""
+        return planning_node(state)
+
+    # Reflection 节点包装
+    async def reflection_node_wrapper(state: MessagesState) -> Dict:
+        """Reflection 节点包装器"""
+        return reflection_node(state)
+
+    # Clarification 节点包装
+    async def clarification_node_wrapper(state: MessagesState) -> Dict:
+        """Clarification 节点包装器"""
+        return clarification_node(state)
+
+    # 路由函数：决定是否需要澄清
+    def should_clarify(state: MessagesState) -> Literal["clarification", "agent"]:
+        """检查是否需要澄清"""
+        messages = state["messages"]
+
+        # 检查是否有澄清结果
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage) and hasattr(msg, 'content'):
+                # 检查是否是澄清消息
+                if "需要澄清" in str(msg.content) or "🤔" in str(msg.content):
+                    return "clarification"
+
+        # 检查是否有执行计划中的低置信度
+        if "__execution_plan__" in state:
+            plan = state["__execution_plan__"]
+            if plan.get("confidence", 1.0) < 0.6:
+                return "clarification"
+
+        return "agent"
+
+    # 路由函数：决定是否需要重试
+    def should_retry_after_reflection(state: MessagesState) -> Literal["agent", END]:
+        """反思后决定是否重试"""
+        messages = state["messages"]
+
+        # 检查反思结果
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage):
+                content = str(msg.content)
+                if "🔄 执行失败" in content and "正在重新生成查询" in content:
+                    # 需要重试
+                    return "agent"
+                if "❌ 检测到错误" in content:
+                    # 检查重试次数
+                    retry_count = state.get("__retry_count__", 0)
+                    if retry_count < 3:
+                        return "agent"
+
+        return END
+
     # 构建图
     builder = StateGraph(MessagesState)
+
+    # 添加节点
     builder.add_node("agent", call_model)
     builder.add_node("tools", tool_node)
     builder.add_node("sql_quality_check", sql_quality_check_node)
-    builder.add_edge(START, "agent")
+    builder.add_node("planning", planning_node_wrapper)    # 🔧 新增：计划节点
+    builder.add_node("reflection", reflection_node_wrapper)  # 🔧 新增：反思节点
+    builder.add_node("clarification", clarification_node_wrapper)  # 🔧 新增：澄清节点
+
+    # 构建边（新的工作流）
+    # START → planning → [needs_clarification?] → clarification → agent → tools → reflection → [should_retry?] → agent/END
+    builder.add_edge(START, "planning")
+    builder.add_conditional_edges("planning", should_clarify)
+    builder.add_edge("clarification", "agent")
     builder.add_conditional_edges("agent", should_continue)
-    builder.add_edge("tools", "sql_quality_check")
-    builder.add_edge("sql_quality_check", "agent")  # 质量检查后返回agent
+    builder.add_edge("tools", "reflection")  # 🔧 修改：工具执行后进入反思节点
+    builder.add_conditional_edges("reflection", should_retry_after_reflection)  # 🔧 新增：反思后路由
+    builder.add_edge("sql_quality_check", END)  # 🔧 修改：质量检查后结束（进入reflection处理）
 
     # 持久化 checkpointer
     _cached_checkpointer = MemorySaver()
     _cached_agent = builder.compile(checkpointer=_cached_checkpointer)
 
     print("✅ Agent 初始化完成！")
+    print("📋 工作流: START → planning → clarification → agent → tools → reflection → agent/END")
 
     return _cached_agent, _cached_mcp_client
 

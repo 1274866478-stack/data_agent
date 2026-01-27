@@ -12,9 +12,16 @@ Includes:
     - ErrorTrackerMiddleware: 错误追踪中间件
     - ChartGuidanceMiddleware: 图表生成指南中间件
     - LoopDetectionMiddleware: 循环检测中间件
+    - SemanticPriorityMiddleware: 语义层优先中间件
 """
 
 from .sql_security import SQLSecurityMiddleware
+from .semantic_priority import (
+    SemanticPriorityMiddleware,
+    SemanticDetectionResult,
+    detect_semantic_terms,
+    needs_semantic_layer
+)
 from .loop_detection import (
     LoopDetectionMiddleware,
     create_loop_detection_middleware
@@ -69,5 +76,10 @@ __all__ = [
     "create_chart_guidance_middleware",
     "CHART_GUIDANCE_TEMPLATE",
     "LoopDetectionMiddleware",
-    "create_loop_detection_middleware"
+    "create_loop_detection_middleware",
+    # 语义层优先中间件
+    "SemanticPriorityMiddleware",
+    "SemanticDetectionResult",
+    "detect_semantic_terms",
+    "needs_semantic_layer",
 ]
