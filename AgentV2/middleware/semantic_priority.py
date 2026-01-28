@@ -16,10 +16,16 @@
 
 import re
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable, Awaitable, Any
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+# LangChain/LangGraph imports for deepagents compatibility
+from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelCallResult
+from langgraph.prebuilt.tool_node import ToolCallRequest
+from langchain_core.messages.tool import ToolMessage
+from langgraph.types import Command
 
 
 @dataclass
@@ -38,9 +44,11 @@ class SemanticDetectionResult:
     guidance: str
 
 
-class SemanticPriorityMiddleware:
+class SemanticPriorityMiddleware(AgentMiddleware):
     """
     语义层优先中间件
+
+    继承 AgentMiddleware 以与 deepagents 正确集成。
 
     工作原理:
         1. 检测用户查询中的业务术语
@@ -114,6 +122,11 @@ class SemanticPriorityMiddleware:
         self.enable_detection = enable_detection
         self.min_confidence = min_confidence
         self.enable_logging = enable_logging
+
+    @property
+    def name(self) -> str:
+        """返回中间件名称"""
+        return "SemanticPriorityMiddleware"
 
     def before_agent_execution(
         self,
@@ -348,6 +361,90 @@ class SemanticPriorityMiddleware:
 
 {guidance}
 """
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command],
+    ) -> ToolMessage | Command:
+        """
+        包装工具调用以注入语义层引导
+
+        这是 deepagents 中间件接口的要求。
+
+        Args:
+            request: The tool call request being processed
+            handler: The handler function to call
+
+        Returns:
+            The raw ToolMessage, or a Command
+        """
+        # 在工具调用前可以注入语义层引导（如果有）
+        # 目前直接调用处理器，不做额外处理
+        # 因为语义层引导主要在 before_agent_execution 中完成
+        return handler(request)
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
+    ) -> ToolMessage | Command:
+        """
+        包装工具调用以注入语义层引导（异步版本）
+
+        这是 deepagents 中间件接口的异步要求。
+
+        Args:
+            request: The tool call request being processed
+            handler: The async handler function to call
+
+        Returns:
+            The raw ToolMessage, or a Command
+        """
+        # 在工具调用前可以注入语义层引导（如果有）
+        # 目前直接调用处理器，不做额外处理
+        # 因为语义层引导主要在 before_agent_execution 中完成
+        return await handler(request)
+
+    def wrap_model_call(self, request: ModelRequest, handler) -> Any:
+        """
+        包装模型调用以注入语义层引导
+
+        这是 deepagents 中间件接口的要求。
+
+        Args:
+            request: The model call request being processed
+            handler: The handler function to call
+
+        Returns:
+            The model call result
+        """
+        # 在模型调用前可以注入语义层引导（如果有）
+        # 目前直接调用处理器，不做额外处理
+        # 因为语义层引导主要在 before_agent_execution 中完成
+        return handler(request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelCallResult]]
+    ) -> ModelCallResult:
+        """
+        包装模型调用以注入语义层引导（异步版本）
+
+        这是 deepagents 中间件接口的异步要求。
+
+        Args:
+            request: The model call request being processed
+            handler: The async handler function to call
+
+        Returns:
+            The model call result
+        """
+        # 在模型调用前可以注入语义层引导（如果有）
+        # 目前直接调用处理器，不做额外处理
+        # 因为语义层引导主要在 before_agent_execution 中完成
+        return await handler(request)
 
     @classmethod
     def create_default(cls) -> 'SemanticPriorityMiddleware':
