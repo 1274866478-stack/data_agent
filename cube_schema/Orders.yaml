@@ -169,4 +169,16 @@ cubes:
     joins:
       - name: Customers
         sql: ${Orders}.customer_id = ${Customers}.id
-        relationship: one_to_many
+        relationship: many_to_one
+        join_type: LEFT
+        metadata:
+          description: "订单所属的客户"
+          cardinality: "many_orders_to_one_customer"
+
+      - name: Products
+        sql: ${Orders}.product_id = ${Products}.id
+        relationship: many_to_one
+        join_type: LEFT
+        metadata:
+          description: "订单中的产品"
+          cardinality: "many_orders_to_one_product"

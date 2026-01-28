@@ -1,0 +1,446 @@
+{
+  "version": "2.0",
+  "description": "业务术语表配置文件 - 将业务术语映射到标准定义",
+  "entries": [
+    {
+      "id": "city_shanghai",
+      "term": "上海",
+      "aliases": ["魔都", "申城", "Shanghai"],
+      "mapping_type": "city_alias",
+      "target_value": "上海",
+      "metadata": {
+        "level": "municipality",
+        "region": "East China"
+      }
+    },
+    {
+      "id": "city_beijing",
+      "term": "北京",
+      "aliases": ["首都", "帝都", "Beijing", "Peking"],
+      "mapping_type": "city_alias",
+      "target_value": "北京",
+      "metadata": {
+        "level": "municipality",
+        "region": "North China"
+      }
+    },
+    {
+      "id": "city_guangzhou",
+      "term": "广州",
+      "aliases": ["羊城", "花城", "Guangzhou", "Canton"],
+      "mapping_type": "city_alias",
+      "target_value": "广州",
+      "metadata": {
+        "level": "city",
+        "province": "Guangdong"
+      }
+    },
+    {
+      "id": "city_shenzhen",
+      "term": "深圳",
+      "aliases": ["鹏城", "Shenzhen"],
+      "mapping_type": "city_alias",
+      "target_value": "深圳",
+      "metadata": {
+        "level": "city",
+        "province": "Guangdong"
+      }
+    },
+    {
+      "id": "city_hangzhou",
+      "term": "杭州",
+      "aliases": ["西湖", "Hangzhou"],
+      "mapping_type": "city_alias",
+      "target_value": "杭州",
+      "metadata": {
+        "level": "city",
+        "province": "Zhejiang"
+      }
+    },
+    {
+      "id": "city_chengdu",
+      "term": "成都",
+      "aliases": ["蓉城", "Chengdu"],
+      "mapping_type": "city_alias",
+      "target_value": "成都",
+      "metadata": {
+        "level": "city",
+        "province": "Sichuan"
+      }
+    },
+    {
+      "id": "city_chongqing",
+      "term": "重庆",
+      "aliases": ["山城", "Chongqing"],
+      "mapping_type": "city_alias",
+      "target_value": "重庆",
+      "metadata": {
+        "level": "municipality",
+        "region": "Southwest China"
+      }
+    },
+    {
+      "id": "city_wuhan",
+      "term": "武汉",
+      "aliases": ["江城", "Wuhan"],
+      "mapping_type": "city_alias",
+      "target_value": "武汉",
+      "metadata": {
+        "level": "city",
+        "province": "Hubei"
+      }
+    },
+    {
+      "id": "city_nanjing",
+      "term": "南京",
+      "aliases": ["金陵", "姑苏", "Nanjing"],
+      "mapping_type": "city_alias",
+      "target_value": "南京",
+      "metadata": {
+        "level": "city",
+        "province": "Jiangsu"
+      }
+    },
+    {
+      "id": "city_suzhou",
+      "term": "苏州",
+      "aliases": ["姑苏", "Suzhou"],
+      "mapping_type": "city_alias",
+      "target_value": "苏州",
+      "metadata": {
+        "level": "city",
+        "province": "Jiangsu"
+      }
+    },
+    {
+      "id": "metric_gmv",
+      "term": "GMV",
+      "aliases": ["Gross Merchandise Volume", "商品交易总额", "成交总额", "gmv"],
+      "mapping_type": "business_metric",
+      "target_value": "total_amount",
+      "metadata": {
+        "cube": "Orders",
+        "measure": "total_revenue",
+        "description": "一定时间段内的成交商品金额总和",
+        "category": "financial"
+      }
+    },
+    {
+      "id": "metric_arpu",
+      "term": "ARPU",
+      "aliases": ["Average Revenue Per User", "每用户平均收入", "人均收入"],
+      "mapping_type": "business_metric",
+      "target_value": "avg_revenue_per_user",
+      "metadata": {
+        "description": "每用户平均收入",
+        "sql_template": "SUM(total_amount) / COUNT(DISTINCT customer_id)",
+        "category": "financial"
+      }
+    },
+    {
+      "id": "metric_roi",
+      "term": "ROI",
+      "aliases": ["Return on Investment", "投资回报率", "回报率"],
+      "mapping_type": "business_metric",
+      "target_value": "return_on_investment",
+      "metadata": {
+        "description": "投资回报率",
+        "category": "financial"
+      }
+    },
+    {
+      "id": "metric_ltv",
+      "term": "LTV",
+      "aliases": ["Lifetime Value", "客户生命周期价值", "用户终身价值"],
+      "mapping_type": "business_metric",
+      "target_value": "lifetime_value",
+      "metadata": {
+        "description": "客户生命周期价值",
+        "category": "financial"
+      }
+    },
+    {
+      "id": "metric_cac",
+      "term": "CAC",
+      "aliases": ["Customer Acquisition Cost", "客户获取成本", "获客成本"],
+      "mapping_type": "business_metric",
+      "target_value": "customer_acquisition_cost",
+      "metadata": {
+        "description": "获取一个新客户的成本",
+        "category": "financial"
+      }
+    },
+    {
+      "id": "metric_aov",
+      "term": "AOV",
+      "aliases": ["Average Order Value", "平均订单价值", "客单价"],
+      "mapping_type": "business_metric",
+      "target_value": "avg_order_value",
+      "metadata": {
+        "cube": "Orders",
+        "measure": "average_order_value",
+        "description": "平均每个订单的金额",
+        "category": "financial"
+      }
+    },
+    {
+      "id": "status_orders_completed",
+      "term": "已完成",
+      "aliases": ["完成", "completed", "done"],
+      "mapping_type": "status_value",
+      "target_value": "completed",
+      "metadata": {
+        "table": "Orders",
+        "display": "已完成"
+      }
+    },
+    {
+      "id": "status_orders_processing",
+      "term": "进行中",
+      "aliases": ["处理中", "processing", "in_progress"],
+      "mapping_type": "status_value",
+      "target_value": "processing",
+      "metadata": {
+        "table": "Orders",
+        "display": "进行中"
+      }
+    },
+    {
+      "id": "status_orders_cancelled",
+      "term": "已取消",
+      "aliases": ["取消", "cancelled", "canceled"],
+      "mapping_type": "status_value",
+      "target_value": "cancelled",
+      "metadata": {
+        "table": "Orders",
+        "display": "已取消"
+      }
+    },
+    {
+      "id": "status_orders_pending",
+      "term": "待处理",
+      "aliases": ["pending", "等待处理"],
+      "mapping_type": "status_value",
+      "target_value": "pending",
+      "metadata": {
+        "table": "Orders",
+        "display": "待处理"
+      }
+    },
+    {
+      "id": "status_orders_refunded",
+      "term": "已退款",
+      "aliases": ["退款", "refunded"],
+      "mapping_type": "status_value",
+      "target_value": "refunded",
+      "metadata": {
+        "table": "Orders",
+        "display": "已退款"
+      }
+    },
+    {
+      "id": "status_orders_shipped",
+      "term": "已发货",
+      "aliases": ["发货", "shipped", "delivered"],
+      "mapping_type": "status_value",
+      "target_value": "shipped",
+      "metadata": {
+        "table": "Orders",
+        "display": "已发货"
+      }
+    },
+    {
+      "id": "time_today",
+      "term": "今天",
+      "aliases": ["今日", "today"],
+      "mapping_type": "time_expression",
+      "target_value": "CURRENT_DATE",
+      "metadata": {
+        "sql": "CURRENT_DATE"
+      }
+    },
+    {
+      "id": "time_yesterday",
+      "term": "昨天",
+      "aliases": ["昨日", "yesterday"],
+      "mapping_type": "time_expression",
+      "target_value": "CURRENT_DATE - INTERVAL '1 day'",
+      "metadata": {
+        "sql": "CURRENT_DATE - INTERVAL '1 day'"
+      }
+    },
+    {
+      "id": "time_this_week",
+      "term": "本周",
+      "aliases": ["这周", "this week"],
+      "mapping_type": "time_expression",
+      "target_value": "DATE_TRUNC('week', CURRENT_DATE)",
+      "metadata": {
+        "sql": "DATE_TRUNC('week', CURRENT_DATE)"
+      }
+    },
+    {
+      "id": "time_last_week",
+      "term": "上周",
+      "aliases": ["last week"],
+      "mapping_type": "time_expression",
+      "target_value": "DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')",
+      "metadata": {
+        "sql": "DATE_TRUNC('week', CURRENT_DATE - INTERVAL '1 week')"
+      }
+    },
+    {
+      "id": "time_this_month",
+      "term": "本月",
+      "aliases": ["这个月", "this month"],
+      "mapping_type": "time_expression",
+      "target_value": "DATE_TRUNC('month', CURRENT_DATE)",
+      "metadata": {
+        "sql": "DATE_TRUNC('month', CURRENT_DATE)"
+      }
+    },
+    {
+      "id": "time_last_month",
+      "term": "上月",
+      "aliases": ["上个月", "last month"],
+      "mapping_type": "time_expression",
+      "target_value": "DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')",
+      "metadata": {
+        "sql": "DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')"
+      }
+    },
+    {
+      "id": "time_this_quarter",
+      "term": "本季度",
+      "aliases": ["这个季度", "this quarter"],
+      "mapping_type": "time_expression",
+      "target_value": "DATE_TRUNC('quarter', CURRENT_DATE)",
+      "metadata": {
+        "sql": "DATE_TRUNC('quarter', CURRENT_DATE)"
+      }
+    },
+    {
+      "id": "time_this_year",
+      "term": "今年",
+      "aliases": ["this year"],
+      "mapping_type": "time_expression",
+      "target_value": "DATE_TRUNC('year', CURRENT_DATE)",
+      "metadata": {
+        "sql": "DATE_TRUNC('year', CURRENT_DATE)"
+      }
+    },
+    {
+      "id": "time_last_year",
+      "term": "去年",
+      "aliases": ["last year"],
+      "mapping_type": "time_expression",
+      "target_value": "DATE_TRUNC('year', CURRENT_DATE - INTERVAL '1 year')",
+      "metadata": {
+        "sql": "DATE_TRUNC('year', CURRENT_DATE - INTERVAL '1 year')"
+      }
+    },
+    {
+      "id": "time_recent",
+      "term": "最近",
+      "aliases": ["近期", "recent"],
+      "mapping_type": "time_expression",
+      "target_value": "CURRENT_DATE - INTERVAL '30 days'",
+      "metadata": {
+        "sql": "CURRENT_DATE - INTERVAL '30 days'"
+      }
+    },
+    {
+      "id": "analytic_yoy",
+      "term": "同比",
+      "aliases": ["year over year", "YoY"],
+      "mapping_type": "analytics_term",
+      "target_value": "同比（与去年同期相比）",
+      "metadata": {
+        "description": "与去年同期相比的增长率"
+      }
+    },
+    {
+      "id": "analytic_mom",
+      "term": "环比",
+      "aliases": ["month over month", "MoM"],
+      "mapping_type": "analytics_term",
+      "target_value": "环比（与上一周期相比）",
+      "metadata": {
+        "description": "与上一周期相比的增长率"
+      }
+    },
+    {
+      "id": "analytic_trend",
+      "term": "趋势",
+      "aliases": ["trend", "走势"],
+      "mapping_type": "analytics_term",
+      "target_value": "时间序列分析",
+      "metadata": {
+        "description": "时间序列分析"
+      }
+    },
+    {
+      "id": "analytic_proportion",
+      "term": "占比",
+      "aliases": ["比例", "百分比", "percentage", "proportion"],
+      "mapping_type": "analytics_term",
+      "target_value": "百分比计算",
+      "metadata": {
+        "description": "计算某部分占总体的百分比"
+      }
+    },
+    {
+      "id": "analytic_distribution",
+      "term": "分布",
+      "aliases": ["distribution", "分组统计"],
+      "mapping_type": "analytics_term",
+      "target_value": "分组统计",
+      "metadata": {
+        "description": "按维度分组统计"
+      }
+    },
+    {
+      "id": "analytic_ranking",
+      "term": "排名",
+      "aliases": ["rank", "ranking"],
+      "mapping_type": "analytics_term",
+      "target_value": "ORDER BY ... LIMIT",
+      "metadata": {
+        "description": "按指标排序并取前N名"
+      }
+    },
+    {
+      "id": "product_iphone",
+      "term": "iPhone",
+      "aliases": ["苹果手机", "Apple iPhone", "ios"],
+      "mapping_type": "product",
+      "target_value": "iPhone",
+      "metadata": {
+        "brand": "Apple",
+        "category": "Smartphone"
+      }
+    },
+    {
+      "id": "product_huawei",
+      "term": "Huawei",
+      "aliases": ["华为", "华为手机"],
+      "mapping_type": "product",
+      "target_value": "Huawei",
+      "metadata": {
+        "brand": "Huawei",
+        "category": "Smartphone"
+      }
+    },
+    {
+      "id": "product_xiaomi",
+      "term": "Xiaomi",
+      "aliases": ["小米", "小米手机", "Mi"],
+      "mapping_type": "product",
+      "target_value": "Xiaomi",
+      "metadata": {
+        "brand": "Xiaomi",
+        "category": "Smartphone"
+      }
+    }
+  ]
+}

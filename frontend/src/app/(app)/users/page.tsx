@@ -105,6 +105,8 @@
 
 import { Button } from '@/components/ui/button'
 import { useState, useEffect } from 'react'
+import { useAuth } from '@/components/auth/AuthContext'
+import { useRouter } from 'next/navigation'
 
 interface User {
   id: string
@@ -117,14 +119,44 @@ interface User {
 }
 
 export default function UsersPage() {
+  const { user, isAuthenticated, loading: authLoading, logout } = useAuth()
+  const router = useRouter()
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
+  // 当认证状态或用户信息变化时，重新加载用户列表
   useEffect(() => {
     loadUsers()
-  }, [])
+  }, [isAuthenticated, user])
+
+  // 当登录用户不在列表中时，添加到列表
+  useEffect(() => {
+    if (isAuthenticated && user && user.email) {
+      setUsers(prevUsers => {
+        // 检查用户是否已在列表中（通过邮箱或ID判断）
+        const exists = prevUsers.some(
+          u => u.email === user.email || u.id === user.id
+        )
+
+        if (!exists) {
+          // 将登录用户添加到列表开头
+          const newUser: User = {
+            id: user.id || Date.now().toString(),
+            email: user.email || '',
+            first_name: user.first_name || user.name?.split(' ')[0] || '登录',
+            last_name: user.last_name || user.name?.split(' ').slice(1).join(' ') || '用户',
+            role: user.role || 'user',
+            is_active: user.is_active !== undefined ? user.is_active : true,
+            created_at: user.created_at || new Date().toISOString()
+          }
+          return [newUser, ...prevUsers]
+        }
+        return prevUsers
+      })
+    }
+  }, [isAuthenticated, user])
 
   const loadUsers = async () => {
     try {
@@ -185,6 +217,19 @@ export default function UsersPage() {
     return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
   }
 
+  const handleLogout = async () => {
+    await logout()
+    router.push('/sign-in')
+  }
+
+  const handleLogin = () => {
+    router.push('/sign-in')
+  }
+
+  const goToPricing = () => {
+    router.push('/pricing')
+  }
+
   if (loading) {
     return (
       <div className="users-bg-grid min-h-screen p-6">
@@ -237,6 +282,71 @@ export default function UsersPage() {
             <span className="material-symbols-outlined text-xl mr-2">person_add</span>
             邀请用户
           </Button>
+        </div>
+
+        {/* 当前用户信息和操作区域 */}
+        <div className="users-glass-card rounded-2xl p-6 mb-8">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              {/* 当前用户头像 */}
+              <div className="users-avatar-container">
+                <span className="text-sm font-bold text-slate-700">
+                  {user?.email ? user.email[0].toUpperCase() : '?'}
+                </span>
+              </div>
+
+              {/* 当前用户信息 */}
+              <div>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    {user?.full_name || user?.email || '未登录用户'}
+                  </h3>
+                  {isAuthenticated && (
+                    <span className="users-role-tag admin">
+                      CURRENT USER
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-slate-500">
+                  {user?.email || '请登录以查看完整信息'}
+                  {user?.tenant_id && ` • 租户 ID: ${user.tenant_id}`}
+                </p>
+              </div>
+            </div>
+
+            {/* 操作按钮组 */}
+            <div className="flex items-center gap-3">
+              {/* 付费/升级按钮 */}
+              <Button
+                onClick={goToPricing}
+                variant="outline"
+                className="border-[#0ABAB5] bg-[#0ABAB5]/10 text-[#0ABAB5] hover:border-[#089692] hover:bg-[#089692]/20 hover:text-[#089692] hover:shadow-[0_0_20px_rgba(10,186,181,0.8)] shadow-[0_0_15px_rgba(10,186,181,0.6)]"
+              >
+                <span className="material-symbols-outlined text-lg mr-2">workspace_premium</span>
+                付费订阅
+              </Button>
+
+              {/* 登录/登出按钮 */}
+              {isAuthenticated ? (
+                <Button
+                  onClick={handleLogout}
+                  variant="outline"
+                  className="border-[#E5E7EB] bg-[#F3F4F6] text-[#374151] hover:bg-[#E5E7EB] hover:text-[#1F2937]"
+                >
+                  <span className="material-symbols-outlined text-lg mr-2">logout</span>
+                  登出
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleLogin}
+                  className="users-glow-button"
+                >
+                  <span className="material-symbols-outlined text-lg mr-2">login</span>
+                  登录
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* 统计卡片 */}

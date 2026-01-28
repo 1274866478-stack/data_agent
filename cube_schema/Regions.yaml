@@ -1,0 +1,62 @@
+# Regions Cube - 地区语义层定义
+#
+# 此文件定义了地区相关的语义层，包括度量和维度
+# 地区表用于地理位置分析，可与客户表关联进行区域销售分析
+
+cube: Regions
+  # 数据源配置
+  sql_table: |
+    SELECT
+      id,
+      region_code,
+      region_name,
+      country
+    FROM regions
+
+  # 度量 (Measures) - 可聚合的数值
+  measures:
+    - name: region_count
+      description: "地区总数"
+      type: count
+      sql: ${id}
+
+  # 维度 (Dimensions) - 用于分组和过滤
+  dimensions:
+    # 字符串维度
+    - name: region_code
+      description: "地区代码"
+      type: string
+      sql: ${region_code}
+
+    - name: region_name
+      description: "地区名称"
+      type: string
+      sql: ${region_name}
+
+    - name: country
+      description: "国家"
+      type: string
+      sql: ${country}
+
+    # 数值维度
+    - name: id
+      description: "地区ID"
+      type: number
+      sql: ${id}
+
+# 数据缓存配置
+cubes:
+  - name: Regions
+    # 查询缓存 TTL（秒）
+    cache_max_queries: 500
+    cache_max_import_duration: 3600
+
+    # 跨 Cube 联合（joins）定义
+    joins:
+      - name: Customers
+        sql: ${Regions}.id = ${Customers}.region_id
+        relationship: one_to_many
+        join_type: LEFT
+        metadata:
+          description: "地区包含的客户"
+          cardinality: "one_region_to_many_customers"

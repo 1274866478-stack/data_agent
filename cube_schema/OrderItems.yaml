@@ -1,0 +1,212 @@
+# OrderItems Cube - 订单明细语义层定义
+#
+# 此文件定义了订单明细相关的语义层，包括度量和维度
+# 基于 order_items 表，是产品销售分析的核心事实表
+#
+# 关键 Join 关系:
+#   - order_id → SalesOrders.id (many_to_one)
+#   - product_id → Products.id (many_to_one)
+
+cube: OrderItems
+  # 数据源配置
+  sql_table: |
+    SELECT
+      id,
+      order_id,
+      product_id,
+      quantity,
+      unit_price,
+      subtotal
+    FROM order_items
+
+  # 度量 (Measures) - 可聚合的数值
+  measures:
+    - name: item_count
+      description: "订单明细总数"
+      type: count
+      sql: ${id}
+
+    - name: total_quantity
+      description: "总销售数量"
+      type: sum
+      sql: ${quantity}
+
+    - name: total_sales
+      description: "销售总额"
+      type: sum
+      sql: ${subtotal}
+
+    - name: avg_quantity
+      description: "平均每单数量"
+      type: avg
+      sql: ${quantity}
+
+    - name: avg_unit_price
+      description: "平均单价"
+      type: avg
+      sql: ${unit_price}
+
+    - name: avg_item_value
+      description: "平均明细金额"
+      type: avg
+      sql: ${subtotal}
+
+    - name: unique_orders
+      description: "涉及订单数（去重）"
+      type: countDistinct
+      sql: ${order_id}
+
+    - name: unique_products
+      description: "涉及产品数（去重）"
+      type: countDistinct
+      sql: ${product_id}
+
+    - name: high_value_items
+      description: "高价值明细数（金额>1000）"
+      type: count
+      sql: |
+        CASE
+          WHEN ${subtotal} > 1000 THEN ${id}
+          ELSE NULL
+        END
+
+    - name: bulk_items
+      description: "批量购买明细数（数量>5）"
+      type: count
+      sql: |
+        CASE
+          WHEN ${quantity} > 5 THEN ${id}
+          ELSE NULL
+        END
+
+  # 维度 (Dimensions) - 用于分组和过滤
+  dimensions:
+    # 字符串维度
+    - name: product_id
+      description: "产品ID"
+      type: number
+      sql: ${product_id}
+
+    - name: order_id
+      description: "订单ID"
+      type: number
+      sql: ${order_id}
+
+    - name: id
+      description: "明细ID"
+      type: number
+      sql: ${id}
+
+    # 数值维度
+    - name: quantity
+      description: "购买数量"
+      type: number
+      sql: ${quantity}
+
+    - name: unit_price
+      description: "单价"
+      type: number
+      sql: ${unit_price}
+
+    - name: subtotal
+      description: "小计金额"
+      type: number
+      sql: ${subtotal}
+
+    # 布尔维度
+    - name: is_high_value
+      description: "是否高价值明细（金额>1000）"
+      type: boolean
+      sql: ${subtotal} > 1000
+
+    - name: is_bulk_purchase
+      description: "是否批量购买（数量>5）"
+      type: boolean
+      sql: ${quantity} > 5
+
+    - name: is_single_unit
+      description: "是否单件购买（数量=1）"
+      type: boolean
+      sql: ${quantity} = 1
+
+    # 计算维度
+    - name: quantity_range
+      description: "数量范围分组"
+      type: string
+      case:
+        when ${quantity} = 1 then '单件'
+        when ${quantity} <= 5 then '少量'
+        when ${quantity} <= 20 then '中量'
+        else '批量'
+
+    - name: price_range
+      description: "单价范围分组"
+      type: string
+      case:
+        when ${unit_price} < 100 then '低价'
+        when ${unit_price} < 1000 then '中价'
+        when ${unit_price} < 5000 then '高价'
+        else '奢侈品'
+
+    - name: item_value_range
+      description: "明细金额范围分组"
+      type: string
+      case:
+        when ${subtotal} < 500 then '小额'
+        when ${subtotal} < 2000 then '中额'
+        when ${subtotal} < 10000 then '大额'
+        else '超大额'
+
+  # 预聚合（可选，用于提升性能）
+  pre_aggregations:
+    - name: items_daily
+      refresh_key:
+        every: '2 hours'
+      measures:
+        - total_quantity
+        - total_sales
+        - item_count
+      time_dimension: order_date
+      granularity: day
+      rollup: true
+
+# 数据缓存配置
+cubes:
+  - name: OrderItems
+    # 查询缓存 TTL（秒）
+    cache_max_queries: 2000
+    cache_max_import_duration: 1800
+
+    # 跨 Cube 联合（joins）定义
+    joins:
+      - name: SalesOrders
+        sql: ${OrderItems}.order_id = ${SalesOrders}.id
+        relationship: many_to_one
+        join_type: LEFT
+        metadata:
+          description: "明细所属的销售订单"
+          cardinality: "many_items_to_one_order"
+
+      - name: Products
+        sql: ${OrderItems}.product_id = ${Products}.id
+        relationship: many_to_one
+        join_type: LEFT
+        metadata:
+          description: "明细对应的产品"
+          cardinality: "many_items_to_one_product"
+
+      - name: Categories
+        sql: ${OrderItems}.product_id = ${Products}.id AND ${Products}.category_id = ${Categories}.id
+        relationship: many_to_one
+        join_type: LEFT
+        metadata:
+          description: "明细产品所属分类（通过Products关联）"
+          note: "间接关联，需先join Products"
+
+      - name: Customers
+        sql: ${OrderItems}.order_id = ${SalesOrders}.id AND ${SalesOrders}.customer_id = ${Customers}.id
+        relationship: many_to_one
+        join_type: LEFT
+        metadata:
+          description: "明细所属订单的客户（通过SalesOrders关联）"
+          note: "间接关联，需先join SalesOrders"

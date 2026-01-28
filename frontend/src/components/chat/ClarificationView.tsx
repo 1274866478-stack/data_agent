@@ -272,7 +272,7 @@ export function ClarificationView({
   const [showCustomInput, setShowCustomInput] = useState<Record<string, boolean>>({})
 
   // 获取当前选择（考虑默认值）
-  const getSelection = useCallback((question: ClarificationQuestion) => string | string[] {
+  const getSelection = useCallback((question: ClarificationQuestion): string | string[] => {
     // 如果已有选择，返回选择
     if (selections[question.question_id]) {
       return selections[question.question_id]
@@ -315,7 +315,7 @@ export function ClarificationView({
       // 单选：直接设置
       setSelections(prev => ({
         ...prev,
-        [question_id]: value
+        [questionId]: value
       }))
     }
   }, [questions, selections, getSelection])
@@ -372,7 +372,7 @@ export function ClarificationView({
         response[question.question_id] = customValue
       } else {
         // 使用选择的值
-        response[question_id] = selections[question.question_id]
+        response[question.question_id] = selections[question.question_id]
       }
     })
 
@@ -434,7 +434,7 @@ export function ClarificationView({
           {questions.map((question, index) => {
             const currentSelection = selections[question.question_id]
             const customValue = customInputs[question.question_id]
-            const isMulti = question.allow_multiple
+            const isMulti = question.allow_multiple || false
 
             return (
               <div
@@ -446,7 +446,7 @@ export function ClarificationView({
                   <Badge variant="outline" className="text-xs">
                     {index + 1}
                   </Badge>
-                  <QuestionIcon type={question} />
+                  <QuestionIcon type={question.question_type} />
                   <h3 className="text-white font-medium">
                     {question.question_text}
                   </h3>
@@ -470,8 +470,8 @@ export function ClarificationView({
                         option={option}
                         isSelected={isSelected}
                         isMultiple={isMulti}
-                        onSelect={() => handleSelect(question.question_id, option.value)}
-                        onDeselect={() => handleDeselect(question.question_id, option.value)}
+                        onSelect={(value) => handleSelect(question.question_id, value)}
+                        onDeselect={(value) => handleDeselect(question.question_id, value)}
                       />
                     )
                   })}
@@ -495,7 +495,7 @@ export function ClarificationView({
                       <CustomInput
                         question={question}
                         value={customValue}
-                        onChange={handleCustomInputChange}
+                        onChange={(value) => handleCustomInputChange(question.question_id, value)}
                       />
                     )}
                   </>

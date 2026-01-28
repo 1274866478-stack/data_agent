@@ -7,16 +7,19 @@
 2. 行业术语映射（GMV → total_amount）
 3. 状态值规范化（已完成 → completed）
 4. 时间表达式规范化（本月 → DATE_TRUNC('month', CURRENT_DATE)）
+5. 从 JSON 配置文件加载术语表（v2.0 新增）
 
 作者: Data Agent Team
-版本: 1.0.0
+版本: 2.0.0
 """
 
 import json
 import logging
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from pathlib import Path
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -181,20 +184,38 @@ class BusinessGlossary:
     def __init__(
         self,
         custom_glossary_path: Optional[str] = None,
-        enable_auto_discovery: bool = True
+        enable_auto_discovery: bool = True,
+        enable_hot_reload: bool = False
     ):
         """初始化业务术语表
 
         Args:
             custom_glossary_path: 自定义术语表文件路径（JSON/YAML）
             enable_auto_discovery: 是否启用自动发现新术语
+            enable_hot_reload: 是否启用热更新（v2.0 新增）
         """
         self.entries: List[GlossaryEntry] = []
         self.enable_auto_discovery = enable_auto_discovery
-        self._load_builtin_glossary()
+        self.enable_hot_reload = enable_hot_reload
+        self._config_file_path: Optional[Path] = None
+        self._config_mtime: Optional[float] = None
+        self._lock = threading.RLock()
+
+        # 默认配置文件路径
+        if custom_glossary_path is None:
+            # 尝试加载默认的 JSON 配置文件
+            default_json = Path(__file__).parent.parent / "business_glossary.json"
+            if default_json.exists():
+                custom_glossary_path = str(default_json)
 
         if custom_glossary_path:
+            self._config_file_path = Path(custom_glossary_path)
             self._load_custom_glossary(custom_glossary_path)
+            if self.enable_hot_reload:
+                self._update_mtime()
+        else:
+            # 回退到内置术语表
+            self._load_builtin_glossary()
 
     def _load_builtin_glossary(self):
         """加载内置术语表"""
@@ -220,13 +241,24 @@ class BusinessGlossary:
 
         logger.info(f"加载内置术语表: {len(self.entries)} 条")
 
-    def _load_custom_glossary(self, path: str):
-        """加载自定义术语表（JSON/YAML 文件）"""
+    def _load_custom_glossary(self, path: str) -> bool:
+        """加载自定义术语表（JSON/YAML 文件）
+
+        v2.0 更新：
+        - 支持 JSON 配置文件中的 id 和 metadata 字段
+        - 返回加载状态
+
+        Args:
+            path: 文件路径
+
+        Returns:
+            是否加载成功
+        """
         file_path = Path(path)
 
         if not file_path.exists():
             logger.warning(f"自定义术语表文件不存在: {path}")
-            return
+            return False
 
         try:
             if file_path.suffix == '.json':
@@ -238,23 +270,31 @@ class BusinessGlossary:
                     data = yaml.safe_load(f)
             else:
                 logger.warning(f"不支持的文件格式: {file_path.suffix}")
-                return
+                return False
 
-            # 解析自定义术语
+            # 解析自定义术语（支持 v2.0 格式）
+            entries_added = 0
             for entry_data in data.get('entries', []):
+                # 支持从 metadata 中获取 description
+                metadata = entry_data.get('metadata', {})
+                description = entry_data.get('description', metadata.get('description', ''))
+
                 entry = GlossaryEntry(
                     term=entry_data['term'],
                     aliases=entry_data.get('aliases', []),
                     mapping_type=entry_data.get('mapping_type', 'custom'),
                     target_value=entry_data.get('target_value'),
-                    description=entry_data.get('description', '')
+                    description=description
                 )
                 self.entries.append(entry)
+                entries_added += 1
 
-            logger.info(f"加载自定义术语表: {len(data.get('entries', []))} 条")
+            logger.info(f"加载自定义术语表: {entries_added} 条 (版本: {data.get('version', '1.0')})")
+            return True
 
         except Exception as e:
             logger.error(f"加载自定义术语表失败: {e}")
+            return False
 
     def normalize_term(
         self,
@@ -466,6 +506,57 @@ class BusinessGlossary:
         )
         self.entries.append(entry)
         logger.info(f"添加自定义术语: {term}")
+
+    def _update_mtime(self):
+        """更新配置文件的修改时间"""
+        if self._config_file_path and self._config_file_path.exists():
+            self._config_mtime = self._config_file_path.stat().st_mtime
+
+    def _check_reload_needed(self) -> bool:
+        """检查是否需要重新加载配置文件"""
+        if not self.enable_hot_reload or not self._config_file_path:
+            return False
+
+        if not self._config_file_path.exists():
+            return False
+
+        current_mtime = self._config_file_path.stat().st_mtime
+        return current_mtime != self._config_mtime
+
+    def reload_if_needed(self) -> bool:
+        """如果配置文件已修改，重新加载
+
+        Returns:
+            是否执行了重新加载
+        """
+        with self._lock:
+            if self._check_reload_needed():
+                logger.info(f"检测到配置文件变更，重新加载: {self._config_file_path}")
+                self.entries.clear()
+                self._load_custom_glossary(str(self._config_file_path))
+                self._update_mtime()
+                return True
+        return False
+
+    def reload(self) -> bool:
+        """强制重新加载配置文件
+
+        Returns:
+            是否加载成功
+        """
+        with self._lock:
+            if not self._config_file_path:
+                logger.warning("没有配置文件路径，无法重新加载")
+                return False
+
+            if not self._config_file_path.exists():
+                logger.warning(f"配置文件不存在: {self._config_file_path}")
+                return False
+
+            self.entries.clear()
+            success = self._load_custom_glossary(str(self._config_file_path))
+            self._update_mtime()
+            return success
 
     def export_glossary(self, output_path: str, format: str = "json"):
         """导出术语表到文件

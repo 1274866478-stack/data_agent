@@ -8,6 +8,10 @@
 /* DataLab UI - Inter, JetBrains Mono, Plus Jakarta Sans 字体引入 */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap');
 
+/* Pricing Page - Space Grotesk, Noto Sans SC, Material Symbols 字体引入 */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+
 @layer base {
   :root {
     /* DataLab 主色调 */
@@ -2288,4 +2292,644 @@
   .datasource-stat-divider {
     display: none;
   }
+}
+
+/* ============================================================
+   Pricing Page - 算力证书风格专用样式
+   ============================================================ */
+
+/* Material Symbols Outlined 字体样式 */
+.pricing-material-symbols {
+  font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 20;
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 神经元点阵背景 - neural-bg */
+.pricing-neural-bg {
+  background-image: radial-gradient(circle at 2px 2px, rgba(130, 217, 208, 0.05) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+
+.dark .pricing-neural-bg {
+  background-image: radial-gradient(circle at 2px 2px, rgba(130, 217, 208, 0.08) 1px, transparent 0);
+}
+
+/* 玻璃态切换开关 - glass-toggle */
+.pricing-glass-toggle {
+  background: rgba(43, 54, 53, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(130, 217, 208, 0.1);
+}
+
+.dark .pricing-glass-toggle {
+  background: rgba(15, 23, 42, 0.6);
+  border-color: rgba(130, 217, 208, 0.2);
+}
+
+/* 脉冲边框动画 - pulse-border */
+.pricing-pulse-border {
+  box-shadow: 0 0 0 0 rgba(130, 217, 208, 0.4);
+  animation: pricing-pulse 2s infinite;
+}
+
+@keyframes pricing-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(130, 217, 208, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(130, 217, 208, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(130, 217, 208, 0); }
+}
+
+/* 证书网格背景 - certificate-grid */
+.pricing-certificate-grid {
+  background-image: linear-gradient(rgba(130, 217, 208, 0.03) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(130, 217, 208, 0.03) 1px, transparent 1px);
+  background-size: 10px 10px;
+}
+
+.dark .pricing-certificate-grid {
+  background-image: linear-gradient(rgba(130, 217, 208, 0.05) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(130, 217, 208, 0.05) 1px, transparent 1px);
+}
+
+/* 扫描线动画 - scan-line */
+.pricing-scan-line {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(130, 217, 208, 0.4), transparent);
+  transform: translateX(-100%);
+  animation: pricing-scan 3s linear infinite;
+}
+
+@keyframes pricing-scan {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+/* Pricing 专用 Tiffany Blue */
+.pricing-primary {
+  color: #82d9d0;
+}
+
+.pricing-bg-primary {
+  background-color: #82d9d0;
+}
+
+.pricing-border-primary {
+  border-color: #82d9d0;
+}
+
+/* 深色背景专用 */
+.pricing-bg-dark {
+  background-color: #0a0f0e;
+}
+
+.pricing-bg-card-dark {
+  background-color: #121a19;
+}
+
+.pricing-bg-card-highlight {
+  background-color: #162321;
+}
+
+/* 单选按钮样式 - 隐藏原样式 */
+.pricing-radio-hidden {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+
+/* 计费切换标签 */
+.pricing-billing-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0.5rem;
+  cursor: pointer;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.5);
+  transition: all 0.2s;
+}
+
+.pricing-billing-label:has(.pricing-radio-hidden:checked) {
+  background-color: rgba(130, 217, 208, 0.2);
+  color: #82d9d0;
+}
+
+/* 价格显示字体 */
+.pricing-price-display {
+  font-family: 'Space Grotesk', 'Noto Sans SC', sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.05em;
+}
+
+/* 技术标签字体 */
+.pricing-tech-label {
+  font-family: 'Space Grotesk', monospace;
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font-weight: 600;
+}
+
+/* 功能列表圆点 */
+.pricing-feature-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: rgba(130, 217, 208, 0.4);
+}
+
+.pricing-feature-dot.highlight {
+  background-color: #82d9d0;
+}
+
+/* 按钮样式 */
+.pricing-btn-primary {
+  background-color: #82d9d0;
+  color: #0a0f0e;
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 1rem;
+  border-radius: 0.25rem;
+  width: 100%;
+  transition: all 0.2s;
+  box-shadow: 0 10px 15px -3px rgba(130, 217, 208, 0.2);
+}
+
+.pricing-btn-primary:hover {
+  filter: brightness(1.1);
+}
+
+.pricing-btn-outline {
+  background-color: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.25rem;
+  width: 100%;
+  transition: all 0.2s;
+}
+
+.pricing-btn-outline:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: #ffffff;
+}
+
+/* 对比表格样式 */
+.pricing-comparison-header {
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.pricing-comparison-row-label {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.pricing-comparison-row-value {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.4);
+  text-align: center;
+}
+
+.pricing-comparison-row-value.highlight {
+  color: #ffffff;
+}
+
+.pricing-comparison-row-value.primary {
+  color: #82d9d0;
+}
+
+/* 页脚样式 */
+.pricing-footer-link {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.4);
+  transition: color 0.2s;
+}
+
+.pricing-footer-link:hover {
+  color: #82d9d0;
+}
+
+/* 状态指示器动画 */
+.pricing-status-ping {
+  animation: pricing-ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes pricing-ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+/* ============================================================
+   能量脉冲实验室 - 登录页面专用样式
+   ============================================================ */
+
+:root {
+  --tiffany-blue: #81d8cf;
+  --tiffany-glow: rgba(129, 216, 207, 0.6);
+  --cyan-intense: #00f2ff;
+}
+
+/* 脉冲发光动画 */
+@keyframes slowPulse {
+  0%, 100% { box-shadow: 0 0 20px 2px var(--tiffany-glow); }
+  50% { box-shadow: 0 0 40px 8px var(--tiffany-glow); }
+}
+
+/* 光线扫过动画 */
+@keyframes lightStreak {
+  0% { left: -100%; }
+  20% { left: 100%; }
+  100% { left: 100%; }
+}
+
+/* 闪烁动画 */
+@keyframes twinkle {
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.5); }
+}
+
+/* 光晕动画 */
+@keyframes aura {
+  0%, 100% { filter: drop-shadow(0 0 5px var(--tiffany-blue)); }
+  50% { filter: drop-shadow(0 0 15px var(--tiffany-blue)); }
+}
+
+/* 能量卡片样式 */
+.energy-card {
+  animation: slowPulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  border: 1px solid var(--tiffany-blue);
+}
+
+/* 动作按钮发光 */
+.action-glow {
+  box-shadow: 0 0 20px rgba(0, 242, 255, 0.4);
+  position: relative;
+  overflow: hidden;
+}
+
+.action-glow::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 100px;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  animation: lightStreak 4s ease-in-out infinite;
+}
+
+/* 网格节点 */
+.grid-node {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: var(--tiffany-blue);
+  border-radius: 50%;
+  box-shadow: 0 0 4px var(--tiffany-blue);
+  animation: twinkle 3s infinite;
+}
+
+/* 实验室渐变背景 */
+.lab-gradient {
+  background: radial-gradient(circle at 50% 50%, #f0fdfa 0%, #e2e8f0 100%);
+}
+
+.dark .lab-gradient {
+  background: radial-gradient(circle at 50% 50%, #0d2e2b 0%, #050d0c 100%);
+}
+
+/* 科技网格 */
+.tech-grid {
+  background-image:
+    linear-gradient(to right, rgba(129, 216, 207, 0.15) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(129, 216, 207, 0.15) 1px, transparent 1px);
+  background-size: 8px 8px;
+}
+
+/* 输入框内发光 */
+.input-inner-glow:focus {
+  box-shadow: inset 0 0 10px var(--tiffany-glow), 0 0 5px var(--tiffany-glow);
+  border-color: var(--tiffany-blue);
+  outline: none;
+}
+
+/* 显微镜图标光晕 */
+.microscope-aura {
+  animation: aura 3s ease-in-out infinite;
+}
+
+/* 能量实验室玻璃面板 */
+.energy-glass-panel {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.dark .energy-glass-panel {
+  background: rgba(10, 25, 23, 0.8);
+}
+
+/* 能量按钮样式 */
+.energy-btn {
+  background: linear-gradient(135deg, #81d8cf 0%, #6bc9c0 100%);
+  color: #0a0f0e;
+  box-shadow: 0 0 20px rgba(129, 216, 207, 0.4);
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.energy-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  animation: lightStreak 3s ease-in-out infinite;
+}
+
+.energy-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 30px rgba(129, 216, 207, 0.6);
+}
+
+.energy-btn:active {
+  transform: translateY(0);
+}
+
+/* 能量输入框样式 */
+.energy-input {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(129, 216, 207, 0.3);
+  transition: all 0.3s ease;
+}
+
+.energy-input:focus {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: #81d8cf;
+  box-shadow: 0 0 0 3px rgba(129, 216, 207, 0.15), 0 0 15px rgba(129, 216, 207, 0.2);
+  outline: none;
+}
+
+.dark .energy-input {
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(129, 216, 207, 0.2);
+}
+
+.dark .energy-input:focus {
+  background: rgba(30, 41, 59, 0.8);
+  border-color: #81d8cf;
+  box-shadow: 0 0 0 3px rgba(129, 216, 207, 0.2), 0 0 15px rgba(129, 216, 207, 0.15);
+}
+
+/* 能量 OAuth 按钮样式 */
+.energy-oauth-btn {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(129, 216, 207, 0.4);
+  color: #334155;
+  transition: all 0.3s ease;
+}
+
+.energy-oauth-btn:hover {
+  background: rgba(129, 216, 207, 0.15);
+  border-color: #81d8cf;
+  box-shadow: 0 0 15px rgba(129, 216, 207, 0.2);
+}
+
+.dark .energy-oauth-btn {
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(129, 216, 207, 0.3);
+  color: #cbd5e1;
+}
+
+.dark .energy-oauth-btn:hover {
+  background: rgba(129, 216, 207, 0.15);
+  border-color: #81d8cf;
+}
+
+/* 状态指示器发光 */
+.status-glow-green {
+  box-shadow: 0 0 8px #22c55e;
+}
+
+/* 浮动标签样式 */
+.floating-label-group {
+  position: relative;
+}
+
+.floating-label-input {
+  padding-top: 1.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.floating-label {
+  position: absolute;
+  left: 0.75rem;
+  top: 1rem;
+  color: #94a3b8;
+  font-size: 0.875rem;
+  pointer-events: none;
+  transition: all 0.2s ease;
+}
+
+.floating-label-input:focus + .floating-label,
+.floating-label-input:not(:placeholder-shown) + .floating-label {
+  top: 0.25rem;
+  font-size: 0.7rem;
+  color: #81d8cf;
+}
+
+/* ============================================================
+   EnergyLab 注册页面专用样式
+   ============================================================ */
+
+/* 技术网格背景 - 32px 网格 */
+.technical-grid {
+  background-size: 32px 32px;
+  background-image:
+    linear-gradient(to right, rgba(129, 216, 207, 0.12) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(129, 216, 207, 0.12) 1px, transparent 1px);
+}
+
+/* 发光节点 - 32px 间距 */
+.glowing-nodes {
+  background-image: radial-gradient(rgba(129, 216, 207, 0.4) 1px, transparent 1.5px);
+  background-size: 32px 32px;
+}
+
+/* 径向光晕中心 */
+.radial-glow-center {
+  background: radial-gradient(circle at 50% 50%, rgba(129, 216, 207, 0.45) 0%, rgba(248, 250, 251, 1) 70%);
+}
+
+.dark .radial-glow-center {
+  background: radial-gradient(circle at 50% 50%, rgba(129, 216, 207, 0.25) 0%, rgba(15, 23, 42, 1) 70%);
+}
+
+/* 霓虹卡片发光 */
+.neon-card-glow {
+  box-shadow: 0 0 50px -5px rgba(129, 216, 207, 0.4), 0 0 80px -20px rgba(129, 216, 207, 0.2);
+}
+
+.dark .neon-card-glow {
+  box-shadow: 0 0 50px -5px rgba(129, 216, 207, 0.2), 0 0 80px -20px rgba(129, 216, 207, 0.1);
+}
+
+/* 玻璃面板亮色 */
+.glass-panel-light {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  border: 1px solid rgba(129, 216, 207, 0.35);
+}
+
+.dark .glass-panel-light {
+  background: rgba(30, 41, 59, 0.75);
+  border: 1px solid rgba(129, 216, 207, 0.2);
+}
+
+/* 输入框样式 */
+.input-instrument-light {
+  position: relative;
+}
+
+.input-instrument-light:focus-within {
+  box-shadow: inset 0 0 10px rgba(129, 216, 207, 0.1), 0 0 15px rgba(129, 216, 207, 0.2);
+}
+
+/* 社交按钮玻璃态 */
+.social-glass-icon-light {
+  background: rgba(129, 216, 207, 0.08);
+  border: 1px solid rgba(129, 216, 207, 0.2);
+}
+
+.social-glass-icon-light:hover:not(:disabled) {
+  background: rgba(129, 216, 207, 0.15);
+  border-color: rgba(129, 216, 207, 0.6);
+  box-shadow: 0 0 15px rgba(129, 216, 207, 0.2);
+  transform: translateY(-1px);
+}
+
+.dark .social-glass-icon-light {
+  background: rgba(129, 216, 207, 0.1);
+  border-color: rgba(129, 216, 207, 0.3);
+}
+
+.dark .social-glass-icon-light:hover:not(:disabled) {
+  background: rgba(129, 216, 207, 0.2);
+  border-color: rgba(129, 216, 207, 0.5);
+}
+
+/* 快速闪光按钮 */
+.fast-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.fast-shimmer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -150%;
+  width: 80%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+  transform: skewX(-30deg);
+  animation: fast-streak 1.8s infinite ease-in-out;
+}
+
+@keyframes fast-streak {
+  0% { left: -150%; }
+  100% { left: 150%; }
+}
+
+/* 发光按钮 */
+.btn-blinding-glow {
+  box-shadow: 0 0 20px rgba(129, 216, 207, 0.5), 0 0 40px rgba(129, 216, 207, 0.3);
+  background: linear-gradient(135deg, #81d8cf 0%, #59c3b8 100%);
+}
+
+.btn-blinding-glow:hover:not(:disabled) {
+  box-shadow: 0 0 30px rgba(129, 216, 207, 0.7), 0 0 60px rgba(129, 216, 207, 0.4);
+}
+
+/* 流光边框动画 */
+@keyframes light-run {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* 实验室颜色类 - 深海军蓝文本 */
+.text-lab-navy {
+  color: #1e293b;
+}
+
+.dark .text-lab-navy {
+  color: #f1f5f9;
+}
+
+.text-lab-navy\/60 {
+  color: rgba(30, 41, 59, 0.6);
+}
+
+.dark .text-lab-navy\/60 {
+  color: rgba(241, 245, 249, 0.6);
+}
+
+.text-lab-navy\/40 {
+  color: rgba(30, 41, 59, 0.4);
+}
+
+.dark .text-lab-navy\/40 {
+  color: rgba(241, 245, 249, 0.4);
+}
+
+.text-lab-navy\/80 {
+  color: rgba(30, 41, 59, 0.8);
+}
+
+.dark .text-lab-navy\/80 {
+  color: rgba(241, 245, 249, 0.8);
+}
+
+/* 实验室颜色类 - 浅色背景 */
+.bg-lab-light {
+  background-color: #F8FAFC;
+}
+
+.dark .bg-lab-light {
+  background-color: #0F172A;
 }

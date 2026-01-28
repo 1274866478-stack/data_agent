@@ -1,0 +1,264 @@
+# SalesOrders Cube - 销售订单语义层定义
+#
+# 此文件定义了销售订单相关的语义层，包括度量和维度
+# 基于 sales_orders 表，是销售分析的核心事实表
+#
+# 关键 Join 关系:
+#   - customer_id → Customers.id (many_to_one)
+#   - id → OrderItems.order_id (one_to_many)
+
+cube: SalesOrders
+  # 数据源配置
+  sql_table: |
+    SELECT
+      id,
+      order_code,
+      customer_id,
+      order_date,
+      status,
+      subtotal,
+      total_amount
+    FROM sales_orders
+
+  # 度量 (Measures) - 可聚合的数值
+  measures:
+    - name: order_count
+      description: "订单总数"
+      type: count
+      sql: ${id}
+
+    - name: total_sales
+      description: "销售总额（含税）"
+      type: sum
+      sql: ${total_amount}
+
+    - name: subtotal_sales
+      description: "销售小计（不含税）"
+      type: sum
+      sql: ${subtotal}
+
+    - name: avg_order_value
+      description: "平均订单金额"
+      type: avg
+      sql: ${total_amount}
+
+    - name: tax_amount
+      description: "税额总额（计算值：total_amount - subtotal）"
+      type: sum
+      sql: ${total_amount} - ${subtotal}
+
+    - name: pending_orders
+      description: "待处理订单数"
+      type: count
+      sql: |
+        CASE
+          WHEN ${status} = 'pending' THEN ${id}
+          ELSE NULL
+        END
+
+    - name: processing_orders
+      description: "处理中订单数"
+      type: count
+      sql: |
+        CASE
+          WHEN ${status} = 'processing' THEN ${id}
+          ELSE NULL
+        END
+
+    - name: shipped_orders
+      description: "已发货订单数"
+      type: count
+      sql: |
+        CASE
+          WHEN ${status} = 'shipped' THEN ${id}
+          ELSE NULL
+        END
+
+    - name: delivered_orders
+      description: "已送达订单数"
+      type: count
+      sql: |
+        CASE
+          WHEN ${status} = 'delivered' THEN ${id}
+          ELSE NULL
+        END
+
+    - name: cancelled_orders
+      description: "已取消订单数"
+      type: count
+      sql: |
+        CASE
+          WHEN ${status} = 'cancelled' THEN ${id}
+          ELSE NULL
+        END
+
+    - name: delivered_sales
+      description: "已送达订单的销售总额"
+      type: sum
+      sql: |
+        CASE
+          WHEN ${status} = 'delivered' THEN ${total_amount}
+          ELSE 0
+        END
+
+    - name: completion_rate
+      description: "订单完成率（已送达/总订单）"
+      type: count
+      sql: ${id}
+
+  # 维度 (Dimensions) - 用于分组和过滤
+  dimensions:
+    # 时间维度
+    - name: order_date
+      description: "订单日期时间"
+      type: time
+      sql: ${order_date}
+
+    - name: order_date_only
+      description: "订单日期（不含时间）"
+      type: time
+      sql: DATE_TRUNC('day', ${order_date})
+
+    - name: order_month
+      description: "订单月份"
+      type: time
+      sql: DATE_TRUNC('month', ${order_date})
+
+    - name: order_year
+      description: "订单年份"
+      type: time
+      sql: DATE_TRUNC('year', ${order_date})
+
+    - name: order_week
+      description: "订单周"
+      type: time
+      sql: DATE_TRUNC('week', ${order_date})
+
+    # 字符串维度
+    - name: order_code
+      description: "订单编号"
+      type: string
+      sql: ${order_code}
+
+    - name: status
+      description: "订单状态"
+      type: string
+      sql: ${status}
+      # 定义可能的值（用于前端过滤）
+      enumerations:
+        - pending
+        - processing
+        - shipped
+        - delivered
+        - cancelled
+
+    # 数值维度
+    - name: subtotal
+      description: "订单小计"
+      type: number
+      sql: ${subtotal}
+
+    - name: total_amount
+      description: "订单总额"
+      type: number
+      sql: ${total_amount}
+
+    - name: customer_id
+      description: "客户ID"
+      type: number
+      sql: ${customer_id}
+
+    - name: id
+      description: "订单ID"
+      type: number
+      sql: ${id}
+
+    # 布尔维度
+    - name: is_delivered
+      description: "是否已送达"
+      type: boolean
+      sql: ${status} = 'delivered'
+
+    - name: is_pending
+      description: "是否待处理"
+      type: boolean
+      sql: ${status} = 'pending'
+
+    - name: is_cancelled
+      description: "是否已取消"
+      type: boolean
+      sql: ${status} = 'cancelled'
+
+    # 计算维度
+    - name: order_size_category
+      description: "订单规模分类"
+      type: string
+      case:
+        when ${total_amount} < 500 then '小额订单'
+        when ${total_amount} < 2000 then '中等订单'
+        when ${total_amount} < 5000 then '大额订单'
+        else '超大订单'
+
+    - name: status_group
+      description: "订单状态分组"
+      type: string
+      case:
+        when ${status} IN ('pending', 'processing') then '进行中'
+        when ${status} IN ('shipped', 'delivered') then '已完成'
+        else '已取消'
+
+  # 预聚合（可选，用于提升性能）
+  pre_aggregations:
+    - name: sales_daily
+      refresh_key:
+        every: '1 hour'
+      measures:
+        - total_sales
+        - order_count
+        - avg_order_value
+      time_dimension: order_date
+      granularity: day
+      rollup: true
+
+    - name: sales_monthly
+      refresh_key:
+        every: '6 hours'
+      measures:
+        - total_sales
+        - order_count
+      time_dimension: order_date
+      granularity: month
+      rollup: true
+
+# 数据缓存配置
+cubes:
+  - name: SalesOrders
+    # 查询缓存 TTL（秒）
+    cache_max_queries: 2000
+    cache_max_import_duration: 1800
+
+    # 跨 Cube 联合（joins）定义
+    joins:
+      - name: Customers
+        sql: ${SalesOrders}.customer_id = ${Customers}.id
+        relationship: many_to_one
+        join_type: LEFT
+        metadata:
+          description: "订单所属的客户"
+          cardinality: "many_orders_to_one_customer"
+
+      - name: Regions
+        sql: ${SalesOrders}.customer_id = ${Customers}.id AND ${Customers}.region_id = ${Regions}.id
+        relationship: many_to_one
+        join_type: LEFT
+        metadata:
+          description: "订单客户所属地区（通过Customers关联）"
+          note: "间接关联，需先join Customers"
+
+      - name: OrderItems
+        sql: ${SalesOrders}.id = ${OrderItems}.order_id
+        relationship: one_to_many
+        join_type: LEFT
+        metadata:
+          description: "订单包含的明细项"
+          cardinality: "one_order_to_many_items"

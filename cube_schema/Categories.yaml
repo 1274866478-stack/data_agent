@@ -1,0 +1,56 @@
+# Categories Cube - 产品分类语义层定义
+#
+# 此文件定义了产品分类相关的语义层，包括度量和维度
+# 分类表用于产品类别分析，可与产品表关联进行分类销售分析
+
+cube: Categories
+  # 数据源配置
+  sql_table: |
+    SELECT
+      id,
+      category_code,
+      category_name
+    FROM categories
+
+  # 度量 (Measures) - 可聚合的数值
+  measures:
+    - name: category_count
+      description: "分类总数"
+      type: count
+      sql: ${id}
+
+  # 维度 (Dimensions) - 用于分组和过滤
+  dimensions:
+    # 字符串维度
+    - name: category_code
+      description: "分类代码"
+      type: string
+      sql: ${category_code}
+
+    - name: category_name
+      description: "分类名称"
+      type: string
+      sql: ${category_name}
+
+    # 数值维度
+    - name: id
+      description: "分类ID"
+      type: number
+      sql: ${id}
+
+# 数据缓存配置
+cubes:
+  - name: Categories
+    # 查询缓存 TTL（秒）
+    cache_max_queries: 500
+    cache_max_import_duration: 3600
+
+    # 跨 Cube 联合（joins）定义
+    joins:
+      - name: Products
+        sql: ${Categories}.id = ${Products}.category_id
+        relationship: one_to_many
+        join_type: LEFT
+        metadata:
+          description: "分类包含的产品"
+          cardinality: "one_category_to_many_products"
