@@ -226,12 +226,12 @@ GROUP BY category;
 **必须按日期分组**（生成时间序列数据）：
 ```sql
 SELECT
-    DATE_TRUNC('day', order_date) as date,
+    DATE_TRUNC('day', created_at) as date,
     COUNT(*) as orders,
     SUM(amount) as sales
 FROM orders
-WHERE order_date >= CURRENT_DATE - INTERVAL '30 days'
-GROUP BY DATE_TRUNC('day', order_date)
+WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
+GROUP BY DATE_TRUNC('day', created_at)
 ORDER BY date;
 ```
 
@@ -261,6 +261,69 @@ ORDER BY date;
 ```
 
 **🚨 任何检查失败，立即重新生成SQL！**
+
+---
+
+## 🔴 表名匹配规则（所有数据源通用）
+
+**必须先调用 list_tables**：
+- 查询前**必须**先调用 `list_tables()` 查看数据库中的实际表名
+- 使用 `list_tables()` 返回的**实际表名**进行查询
+- 不要假设表名是英文或中文
+
+**表名映射说明**：
+- 如果 `list_tables()` 返回中文表名（如"销售订单表"），请使用中文表名
+- 如果 `list_tables()` 返回英文表名（如"sales_orders"），请使用英文表名
+- 语义层文档中的表名仅供参考，**实际表名以 list_tables() 为准**
+
+**错误示例**：
+```
+❌ 错误：直接使用语义层中的英文表名
+SELECT * FROM sales_orders
+
+✅ 正确：先查看实际表名，再使用
+1. 调用 list_tables() -> 返回 ["销售订单表", "用户表", ...]
+2. 使用实际表名查询：SELECT * FROM 销售订单表
+```
+
+---
+
+## 🔄 智能表名回退规则（当表不存在时）
+
+**当用户询问的表名不存在时，不要直接放弃！**
+
+**处理流程**：
+1. 调用 `list_tables()` 查看所有可用表
+2. 根据业务语义找到相关表：
+   - 用户说"销售" → 查找包含"订单"、"销售"、"收入"的表
+   - 用户说"客户" → 查找包含"用户"、"客户"的表
+   - 用户说"产品" → 查找包含"商品"、"产品"的表
+3. 使用找到的相关表查询数据
+
+**常见业务术语映射**：
+```
+用户术语          →  可能的表名
+─────────────────────────────────────
+销售/销售额/收入    → 订单表、订单明细、月度销售汇总、📊月度销售汇总
+客户/用户         → 用户表、客户表、客户消费排行
+产品/商品         → 产品表、商品表
+订单             → 订单表、订单明细
+库存             → 库存表、商品表
+```
+
+**错误示例**：
+```
+❌ 错误：表不存在就直接放弃
+用户：查询2023年销售趋势
+AI：很抱歉，sales表不存在...
+
+✅ 正确：查找相关表并使用
+用户：查询2023年销售趋势
+AI：
+1. 调用 list_tables() → 返回 ["产品表", "订单表", "订单明细", "📊月度销售汇总", ...]
+2. 识别相关表：订单表、📊月度销售汇总
+3. 执行查询：SELECT * FROM 订单表 WHERE YEAR(订单日期) = 2023
+```
 
 ---
 

@@ -1,0 +1,72 @@
+[
+  {
+    "question_id": 1,
+    "question_name": "销售趋势分析",
+    "success": false,
+    "error": "column \"order_date\" does not exist",
+    "elapsed_seconds": 28.59173
+  },
+  {
+    "question_id": 2,
+    "question_name": "用户VIP等级分布",
+    "success": false,
+    "error": "Error code: 400 - {'error': {'message': \"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)\", 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}",
+    "elapsed_seconds": 0.25944
+  },
+  {
+    "question_id": 3,
+    "question_name": "商品类别销售排行",
+    "success": false,
+    "error": "Error code: 400 - {'error': {'message': \"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)\", 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}",
+    "elapsed_seconds": 0.101041
+  },
+  {
+    "question_id": 4,
+    "question_name": "商品价格与销量关系分析",
+    "success": false,
+    "error": "Error code: 400 - {'error': {'message': \"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)\", 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}",
+    "elapsed_seconds": 0.095952
+  },
+  {
+    "question_id": 5,
+    "question_name": "地区销售分布",
+    "success": false,
+    "error": "Error code: 400 - {'error': {'message': \"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)\", 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}",
+    "elapsed_seconds": 0.115836
+  },
+  {
+    "question_id": 6,
+    "question_name": "订单状态转化漏斗",
+    "success": false,
+    "error": "Error code: 400 - {'error': {'message': \"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)\", 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}",
+    "elapsed_seconds": 0.096684
+  },
+  {
+    "question_id": 7,
+    "question_name": "商品评分与销量关联分析",
+    "success": false,
+    "error": "Error code: 400 - {'error': {'message': \"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)\", 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}",
+    "elapsed_seconds": 0.096084
+  },
+  {
+    "question_id": 8,
+    "question_name": "用户复购行为分析",
+    "success": false,
+    "error": "Error code: 400 - {'error': {'message': \"Messages with role 'tool' must be a response to a preceding message with 'tool_calls'\", 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}",
+    "elapsed_seconds": 0.098799
+  },
+  {
+    "question_id": 9,
+    "question_name": "品牌市场份额分析",
+    "success": false,
+    "error": "Error code: 400 - {'error': {'message': \"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)\", 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}",
+    "elapsed_seconds": 0.092315
+  },
+  {
+    "question_id": 10,
+    "question_name": "评价满意度趋势",
+    "success": false,
+    "error": "Error code: 400 - {'error': {'message': \"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)\", 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_request_error'}}",
+    "elapsed_seconds": 0.096453
+  }
+]

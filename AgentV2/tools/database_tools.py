@@ -32,7 +32,7 @@ import hashlib
 import json
 import time
 from typing import Optional, List, Dict, Any, Tuple
-from functools import wraps
+from functools import wraps, lru_cache
 import logging
 
 # 使用 contextvars 替代 threading.local，支持异步/多线程环境
@@ -516,6 +516,102 @@ def _get_excel_file_path(database_url: str) -> str:
 
 
 # ============================================================================
+# 表名映射工具（Excel 工作表名映射）
+# ============================================================================
+
+# 备用工作表名称配置
+SHEET_ALTERNATIVES = {
+    "Products": ["产品表", "商品表", "products", "Products"],
+    "Customers": ["customers", "Customers", "用户表", "客户表"],
+    "Orders": ["订单表", "orders", "Orders"],
+    "Categories": ["分类表", "categories", "Categories"],
+    "OrderDetails": ["订单明细", "order_details", "OrderDetails", "订单详情"],
+}
+
+
+def _sheet_exists(file_path: str, sheet_name: str) -> bool:
+    """验证工作表是否存在于 Excel 文件中
+
+    Args:
+        file_path: Excel 文件路径
+        sheet_name: 工作表名称
+
+    Returns:
+        工作表是否存在
+    """
+    try:
+        import pandas as pd
+        xl = pd.ExcelFile(file_path)
+        return sheet_name in xl.sheet_names
+    except Exception as e:
+        logger.warning(f"验证工作表失败: {e}")
+        return False
+
+
+@lru_cache(maxsize=32)
+def _get_excel_sheet_mapping(english_table: str, file_path: str = None) -> Optional[str]:
+    """将英文表名映射到 Excel 工作表名（支持备用名称回退）
+
+    从语义层 YAML 文件读取 excel_sheet 配置，实现英文表名到中文工作表名的映射。
+    当主映射的工作表不存在时，自动尝试备用名称。
+
+    Args:
+        english_table: 英文表名（如 "Orders", "Products", "Customers"）
+        file_path: Excel 文件路径（可选，用于验证工作表存在性）
+
+    Returns:
+        映射后的工作表名，如果未找到映射则返回 None
+
+    示例:
+        _get_excel_sheet_mapping("Orders", "path/to/file.xlsx") -> "订单表"
+        _get_excel_sheet_mapping("Products", "path/to/file.xlsx") -> "商品表" 或 "产品表"
+        _get_excel_sheet_mapping("Customers", "path/to/file.xlsx") -> "customers"
+    """
+    try:
+        # 动态导入 SchemaLoader，避免循环导入
+        import sys
+        from pathlib import Path
+
+        # 添加 AgentV2 到 sys.path（如果尚未添加）
+        agentv2_path = Path(__file__).parent.parent
+        agentv2_str = str(agentv2_path)
+        if agentv2_str not in sys.path:
+            sys.path.insert(0, agentv2_str)
+
+        from AgentV2.schema_pruning import SchemaLoader
+
+        loader = SchemaLoader()
+        _, _, yaml_mappings = loader.load_from_yaml()
+
+        # 1. 从 YAML 获取主映射
+        primary = yaml_mappings.get(english_table)
+
+        # 2. 构建候选列表（主映射 + 备用名称）
+        candidates = [primary] if primary else []
+        candidates.extend(SHEET_ALTERNATIVES.get(english_table, []))
+
+        # 3. 去重并保持顺序
+        seen = set()
+        unique_candidates = [x for x in candidates if x and x not in seen and not seen.add(x)]
+
+        # 4. 如果有 file_path，返回第一个存在的工作表
+        if file_path:
+            for name in unique_candidates:
+                if _sheet_exists(file_path, name):
+                    logger.info(f"表名映射: {english_table} -> {name}")
+                    return name
+            # 所有候选都不存在，记录警告
+            logger.warning(f"工作表 '{english_table}' 的所有候选名称 {unique_candidates} 都不存在于文件 {file_path}")
+
+        # 5. 没有 file_path 或都没找到，返回主映射
+        return primary if primary else (unique_candidates[0] if unique_candidates else None)
+
+    except Exception as e:
+        logger.warning(f"获取表名映射失败: {e}，使用原表名")
+        return None
+
+
+# ============================================================================
 # Excel 查询工具
 # ============================================================================
 
@@ -852,18 +948,26 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
     if _is_excel_connection(database_url):
         logger.info(f"Detected Excel data source, using Excel query")
         file_path = _get_excel_file_path(database_url)
-        
+
         # 🔥 修复：从 SQL 查询中解析表名，而不是使用固定的 table_name
         # 尝试从 SQL 中提取表名
         extracted_table_name = _extract_table_name_from_query(cleaned_query)
-        
-        # 如果成功提取表名，使用它；否则回退到 connection_info.table_name
+
+        # 如果成功提取表名，应用表名映射
         if extracted_table_name:
-            sheet_name = extracted_table_name
-            logger.info(f"Using extracted table name from SQL: '{sheet_name}'")
+            # 🔥 新增：应用表名映射（英文表名 -> Excel 工作表名）
+            # 传递 file_path 以便验证工作表存在并支持备用名称回退
+            mapped_sheet = _get_excel_sheet_mapping(extracted_table_name, file_path)
+            if mapped_sheet:
+                sheet_name = mapped_sheet
+                logger.info(f"表名映射: {extracted_table_name} -> {sheet_name}")
+            else:
+                sheet_name = extracted_table_name
+                logger.info(f"使用提取的表名（无映射）: '{sheet_name}'")
         else:
+            # 回退到 connection_info.table_name 或默认值
             sheet_name = connection_info.table_name if connection_info else None
-            logger.warning(f"Could not extract table name from SQL, using default: '{sheet_name}'")
+            logger.warning(f"无法从 SQL 提取表名，使用默认值: '{sheet_name}'")
 
         result = execute_excel_query(cleaned_query, file_path, sheet_name)
 
@@ -1293,7 +1397,16 @@ def get_query_suggestion(error_msg: str, query: str) -> Optional[str]:
         match = re.search(r'relation "(.*?)" does not exist', error_msg)
         if match:
             table = match.group(1)
-            return f"表 '{table}' 不存在。请使用 list_tables 查看可用的表。"
+            return (f"🚨 表 '{table}' 不存在！\n\n"
+                    f"🔴 必须执行以下步骤重试：\n"
+                    f"1. 立即调用 list_tables() 查看所有可用表\n"
+                    f"2. 根据业务语义选择相关表（例如：sales→订单表/📊月度销售汇总）\n"
+                    f"3. 使用 list_tables() 返回的确切表名重新查询\n\n"
+                    f"📋 业务术语映射：\n"
+                    f"• 销售/销售额 → 订单表、订单明细、月度销售汇总、📊月度销售汇总\n"
+                    f"• 客户/用户 → 用户表、客户表、客户消费排行\n"
+                    f"• 产品/商品 → 产品表、商品表\n"
+                    f"• 订单 → 订单表、订单明细")
 
     if 'syntax error' in error_lower:
         return "SQL 语法错误。请确保查询格式正确，建议使用简单的 SELECT 语句。"
@@ -1845,12 +1958,17 @@ def get_database_tools(
             description=(
                 "✅ Execute SQL to get ACTUAL DATA from tables (NOT table names). "
                 ""
-                "Use this when user asks: 'what regions exist', '有哪些地区', 'list all cities', 'show users', etc. "
-                "This returns the BUSINESS DATA such as: ['华东', '华南', '华北'] for regions. "
+                "🔴 CRITICAL: You MUST call list_tables() FIRST to get the actual table names! "
+                "Use the EXACT table names returned by list_tables() - do not guess or translate. "
                 ""
-                "Examples of questions that need THIS tool (not list_tables): "
-                "- '有哪些地区？' → execute_query('SELECT * FROM regions') "
-                "- 'what users exist' → execute_query('SELECT * FROM users LIMIT 100') "
+                "Table Name Rules: "
+                "- If list_tables() returns Chinese names (销售订单表), use Chinese "
+                "- If list_tables() returns English names (orders), use English "
+                "- Do NOT assume table names - always check with list_tables() first "
+                ""
+                "Examples of questions that need THIS tool (after calling list_tables): "
+                "- '有哪些地区？' → execute_query('SELECT * FROM 地区表') "
+                "- 'what users exist' → execute_query('SELECT * FROM 用户表 LIMIT 100') "
                 ""
                 "Returns results in JSON format with columns and rows. "
                 "Args: query (str): The SQL SELECT query to execute"
@@ -1861,12 +1979,15 @@ def get_database_tools(
             name="list_tables",
             description=(
                 "🔴 CRITICAL: List all TABLE NAMES in the database (NOT the data within tables). "
-                "Returns meta-information like ['regions', 'users', 'orders']. "
                 ""
-                "ONLY use this tool when user asks: 'what tables exist', '数据库有哪些表', 'show database structure'. "
+                "📋 MANDATORY: You MUST call this tool BEFORE any execute_query call to get the correct table names! "
                 ""
-                "❌ DO NOT use this tool when user asks: 'what regions exist', '有哪些地区', 'list users', etc. "
-                "   For questions about business DATA, use execute_query instead. "
+                "Usage Rules: "
+                "- ALWAYS call list_tables() first when you need to query data "
+                "- Use the EXACT table names returned by list_tables() in your SQL "
+                "- Do NOT guess table names - they may be Chinese (销售订单表) or English (orders) "
+                ""
+                "Returns meta-information like ['销售订单表', '用户表', 'orders'] (actual table names). "
                 ""
                 "Args: None"
             )

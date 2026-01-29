@@ -77,7 +77,14 @@
 import asyncio
 import json
 import re
+import sys
+import os
 from typing import Annotated, Literal, Optional, Dict, Any
+
+# Fix Windows GBK encoding issue
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
@@ -370,14 +377,14 @@ WHERE status = 'active'
 **4. 禁止多次COUNT查询**（占比类问题！）：
 ```sql
 -- ❌ 错误：多次查询
-SELECT COUNT(*) FROM customers WHERE region_id = 5;
-SELECT COUNT(*) FROM customers;
+SELECT COUNT(*) FROM users WHERE city = '杭州';
+SELECT COUNT(*) FROM users;
 
 -- ✅ 正确：一次GROUP BY查询
 SELECT
-    CASE WHEN address LIKE '%杭州%' THEN '杭州' ELSE '其他' END as category,
+    CASE WHEN city LIKE '%杭州%' THEN '杭州' ELSE '其他' END as category,
     COUNT(*) as value
-FROM customers
+FROM users
 GROUP BY category;
 ```
 
@@ -389,10 +396,10 @@ GROUP BY category;
 **4. 禁止查询系统元数据表**：
 ```sql
 -- ❌ 错误
-SELECT * FROM data_source_connections WHERE name = '杭州客户'
+SELECT * FROM data_source_connections WHERE name = '杭州用户'
 
 -- ✅ 正确：查询业务数据表
-SELECT * FROM customers WHERE address LIKE '%杭州%'
+SELECT * FROM users WHERE city LIKE '%杭州%'
 ```
 
 ---
@@ -415,15 +422,29 @@ SELECT * FROM customers WHERE address LIKE '%杭州%'
 
 ## 🛠️ 可用工具
 
-### 数据库工具
-1. list_tables - 查看数据库表（必须先调用！）
-2. get_schema - 获取表结构（列名、类型）
-3. query - 执行SQL查询（仅SELECT）
+### 🔧 数据库表查询工具
+- ✅ **list_tables** - 必须先调用此工具查看可用表名
+- ✅ **get_schema** - 获取表结构信息
+- ✅ **query** - 执行SQL查询
+
+### 📋 表查询工作流程（必须遵守）
+1. **首先**调用 `list_tables()` 查看所有可用表
+2. 使用 `list_tables()` 返回的**确切表名**（可能是中文或英文）
+3. 如需了解字段信息，调用 `get_schema(表名)`
+4. 最后调用 `query()` 执行查询
 
 ### 图表工具
 - generate_bar_chart - 柱状图：[{"category": "名称", "value": 数值}]
 - generate_line_chart - 折线图：[{"time": "时间", "value": 数值}]
 - generate_pie_chart - 饼图：[{"category": "名称", "value": 数值}]
+- generate_scatter_chart - 散点图：[{"x": 数值, "y": 数值, "label": "名称"}]
+- generate_funnel_chart - 漏斗图：[{"category": "名称", "value": 数值}]
+
+### 双轴图/混合图表
+当用户要求"双轴图"、"双Y轴"、"折线+柱状"等混合图表时：
+- 请使用 **两个独立的图表工具** 分别生成柱状图和折线图
+- 例如：先调用 generate_bar_chart(柱状数据)，再调用 generate_line_chart(折线数据)
+- ❌ 不要使用 generate_echarts 工具（它需要复杂的JSON配置）
 
 ### 🔥 语义层工具（业务术语解析）
 
@@ -461,7 +482,10 @@ SELECT * FROM customers WHERE address LIKE '%杭州%'
 - 使用语义层工具获取正确的表名和字段名
 
 ### 工作流程
-1. list_tables → 2. get_schema → 3. query → 4. 调用图表工具（如需）
+1. 理解问题并分析需要的数据
+2. 使用语义层工具解析业务术语（如需要）
+3. 使用 query 工具执行SQL
+4. 调用图表工具生成可视化（如需）
 
 ---
 
@@ -525,12 +549,12 @@ GROUP BY category;
 **必须按日期分组**（生成时间序列数据）：
 ```sql
 SELECT
-    DATE_TRUNC('day', order_date) as date,
+    DATE_TRUNC('day', created_at) as date,
     COUNT(*) as orders,
     SUM(amount) as sales
 FROM orders
-WHERE order_date >= CURRENT_DATE - INTERVAL '30 days'
-GROUP BY DATE_TRUNC('day', order_date)
+WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
+GROUP BY DATE_TRUNC('day', created_at)
 ORDER BY date;
 ```
 
@@ -560,6 +584,88 @@ ORDER BY date;
 ```
 
 **🚨 任何检查失败，立即重新生成SQL！**
+
+---
+
+## 🔄 智能表名回退规则（当表不存在时）
+
+**当用户询问的表名不存在时，不要直接放弃！**
+
+**处理流程**：
+1. 调用 `list_tables()` 查看所有可用表
+2. 根据业务语义找到相关表
+3. 使用找到的相关表查询数据
+
+**常见业务术语映射**：
+```
+用户术语          →  可能的表名
+─────────────────────────────────────
+销售/销售额/收入    → 订单表、订单明细、月度销售汇总、📊月度销售汇总、orders
+客户/用户         → 用户表、客户表、客户消费排行、users、customers
+产品/商品         → 产品表、商品表、products
+订单             → 订单表、订单明细、orders
+库存             → 库存表、商品表、inventory
+```
+
+**正确示例**：
+```
+❌ 错误：表不存在就直接放弃
+用户：查询2023年销售趋势
+AI：很抱歉，sales表不存在...
+
+✅ 正确：查找相关表并使用
+用户：查询2023年销售趋势
+AI：
+1. 调用 list_tables() → 返回 ["产品表", "订单表", "订单明细", "📊月度销售汇总", ...]
+2. 识别相关表：订单表、📊月度销售汇总
+3. 执行查询：SELECT * FROM 订单表 WHERE YEAR(订单日期) = 2023
+```
+
+---
+
+## 📊 图表生成决策规则（🔴 强制执行）
+
+**⚠️ 执行查询后，必须根据数据特征和用户问题类型判断是否生成图表！**
+
+### 必须生成图表的场景
+
+| 用户问题类型 | 数据特征 | 必须调用的图表工具 |
+|-------------|----------|-------------------|
+| 趋势/变化/增长 | 含时间/日期字段 | `generate_line_chart` |
+| 对比/排名/Top N | 含分类字段 + 数值字段 | `generate_bar_chart` |
+| 占比/分布 | 含分组 + 计数/百分比 | `generate_pie_chart` |
+| 销售趋势/订单趋势 | 时间 + 数值 | `generate_line_chart` |
+| XX的排名/XX排行 | 分组 + 数值排序 | `generate_bar_chart` |
+| 每月/每年/每日 | 时间序列 | `generate_line_chart` |
+
+### 判断流程
+```
+查询返回数据 → 分析数据特征 → 匹配上表场景 → 调用对应图表工具 → 生成文字分析
+```
+
+### 示例
+```
+❌ 错误：只输出文字，不生成图表
+用户：查询2023年销售趋势
+AI：2023年销售额为XXX...（没有任何图表）
+
+✅ 正确：先调用图表工具，再分析
+用户：查询2023年销售趋势
+AI：
+1. 调用 query() 获取数据
+2. 调用 generate_line_chart() 生成趋势图
+3. 输出文字分析：📊 2023年销售趋势分析...
+```
+
+### 图表数据格式
+```json
+// 折线图/柱状图
+[{"time": "2023-01", "value": 1000}, {"time": "2023-02", "value": 1200}]
+// 或 [{"category": "产品A", "value": 100}, {"category": "产品B", "value": 200}]
+
+// 饼图
+[{"category": "北京", "value": 30}, {"category": "上海", "value": 50}]
+```
 
 ---
 
@@ -678,6 +784,99 @@ def get_system_prompt(db_type: str = "postgresql") -> str:
     try:
         from prompt_generator import generate_database_aware_system_prompt
         result = generate_database_aware_system_prompt(db_type, BASE_SYSTEM_PROMPT)
+
+        # 🔧 检测是否为测试数据库，注入正确的表结构信息
+        if 'ecommerce_test_db' in config.database_url:
+            test_db_schema = """
+
+## 🧪 测试数据库表结构（重要！使用以下表名和字段）
+
+**核心业务表**：
+1. **users** - 用户表（不是customers！）
+   - id: 用户ID
+   - username: 用户名
+   - vip_level: VIP等级（0=普通, 1=银卡, 2=金卡, 3=钻石）
+   - total_spent: 累计消费金额
+   - gender: 性别
+   - registration_date: 注册时间
+
+2. **orders** - 订单表
+   - id: 订单ID
+   - user_id: 用户ID（关联users.id，不是customer_id！）
+   - total_amount: 订单总金额
+   - final_amount: 实付金额
+   - status: 订单状态（pending/completed/cancelled）
+   - order_date: 订单日期（date类型）
+   - created_at: 创建时间
+
+3. **products** - 商品表
+   - id: 商品ID
+   - name: 商品名称
+   - category_id: 类别ID（关联categories.id）
+   - brand: 品牌
+   - price: 价格
+   - sales_count: 销量
+   - rating: 平均评分
+   - review_count: 评价数
+
+4. **reviews** - 评价表
+   - id: 评价ID
+   - product_id: 商品ID
+   - user_id: 用户ID（关联users.id）
+   - rating: 评分（1-5）
+   - content: 评价内容
+   - created_at: 创建时间
+
+5. **categories** - 商品类别表
+   - id: 类别ID
+   - name: 类别名称
+   - parent_id: 父类别ID
+
+6. **order_items** - 订单明细表
+   - order_id: 订单ID
+   - product_id: 商品ID
+   - quantity: 数量
+   - price: 单价
+   - subtotal: 小计
+
+7. **addresses** - 地址表
+   - user_id: 用户ID（关联users.id）
+   - city: 城市
+   - province: 省份
+
+## ⚠️⚠️⚠️ 重要：查询用户和订单关联时使用 user_id
+- ❌ 错误：customer_id, cid
+- ✅ 正确：user_id, u.user_id
+- 关联方式：FROM orders o JOIN users u ON o.user_id = u.id
+
+## 📋 用户复购分析专用SQL模板
+```sql
+-- 统计每个用户的下单次数
+SELECT user_id, COUNT(*) as order_count
+FROM orders
+GROUP BY user_id
+ORDER BY order_count DESC;
+
+-- 分析复购用户占比
+SELECT
+    CASE WHEN order_count >= 2 THEN '复购用户' ELSE '单次购买用户' END as user_type,
+    COUNT(*) as user_count,
+    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as percentage
+FROM (SELECT user_id, COUNT(*) as order_count FROM orders GROUP BY user_id) sub
+GROUP BY user_type;
+
+-- 用户订单数量分布（直方图）
+SELECT order_count, COUNT(*) as user_count
+FROM (SELECT user_id, COUNT(*) as order_count FROM orders GROUP BY user_id) sub
+GROUP BY order_count
+ORDER BY order_count;
+```
+   - user_id: 用户ID
+   - city: 城市
+   - province: 省份
+"""
+            result = result + test_db_schema
+
         # 在提示词末尾追加数据分析输出要求和时间上下文
         result = result + data_analysis_output_requirement + time_context
         print(f"🔍 [get_system_prompt] 成功生成提示词，长度={len(result)}")
@@ -1282,7 +1481,16 @@ def _get_mcp_config():
         )
     
     print(f"✅ npx 可用: {npx_path}")
-    
+
+    # 确保DATABASE_URL包含SSL参数
+    db_url = config.database_url
+    if "sslmode" not in db_url.lower():
+        if "?" in db_url:
+            db_url += "&sslmode=require"
+        else:
+            db_url += "?sslmode=require"
+        print(f"🔒 添加SSL参数到数据库连接")
+
     mcp_config = {
         "postgres": {
             "transport": "stdio",
@@ -1290,7 +1498,7 @@ def _get_mcp_config():
             "args": [
                 "-y",
                 "@modelcontextprotocol/server-postgres",
-                config.database_url
+                db_url
             ],
         }
     }
@@ -1606,8 +1814,46 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 
         if len(other_messages) > MAX_CONTEXT_MESSAGES:
             print(f"📊 [上下文优化] 原始消息数: {len(other_messages)}, 截断到: {MAX_CONTEXT_MESSAGES}")
-            # 保留最近的消息，但确保包含最后一条 HumanMessage
-            other_messages = other_messages[-MAX_CONTEXT_MESSAGES:]
+            # 🔧 智能截断：保留 AIMessage-ToolMessage 配对关系
+            # 从后往前扫描，确保每条 AIMessage 后面有完整的 ToolMessage 响应
+            from langchain_core.messages import AIMessage
+            selected_messages = []
+            tool_call_ids_to_include = set()
+
+            # 首先找到最近的 MAX_CONTEXT_MESSAGES 条消息
+            temp_selected = other_messages[-MAX_CONTEXT_MESSAGES:]
+
+            # 从后往前扫描，找出所有需要保留的 tool_call_id
+            for msg in reversed(temp_selected):
+                selected_messages.insert(0, msg)
+                if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    # 记录这个 AIMessage 的所有 tool_call_id
+                    for tc in msg.tool_calls:
+                        tool_call_ids_to_include.add(tc.get('id', ''))
+
+            # 🔥 关键修复：检查 selected_messages 中是否有 ToolMessage 的 tool_call_id
+            # 不在 tool_call_ids_to_include 中，如果是的话，这表示截断破坏了配对
+            # 需要找到完整的消息组重新构建
+            clean_messages = []
+            pending_tool_calls = {}  # tool_call_id -> AIMessage
+
+            for msg in selected_messages:
+                if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    # 记录待匹配的工具调用
+                    for tc in msg.tool_calls:
+                        pending_tool_calls[tc.get('id', '')] = msg
+                    clean_messages.append(msg)
+                elif isinstance(msg, ToolMessage):
+                    # 检查这个 ToolMessage 是否有对应的 AIMessage
+                    if msg.tool_call_id in pending_tool_calls:
+                        clean_messages.append(msg)
+                        del pending_tool_calls[msg.tool_call_id]
+                    # 如果 ToolMessage 的 tool_call_id 不在 pending_tool_calls 中，
+                    # 说明它的 AIMessage 被截断了，这个 ToolMessage 也要跳过
+                else:
+                    clean_messages.append(msg)
+
+            other_messages = clean_messages
             messages = system_messages + other_messages
 
         if not any(isinstance(m, SystemMessage) for m in messages):
@@ -1623,6 +1869,41 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
                 print(f"📝 [增强提示词] 包含图表数量指令: {chart_count} 个图表")
             else:
                 print(f"📝 [增强提示词] 包含拆分指令 (无具体数量)")
+
+        # 🔧 标准化消息内容：将 ToolMessage 的 list 格式转换为 string
+        # MCP 服务器返回的 ToolMessage.content 可能是 list 格式
+        # 但 LLM API 只接受 string 格式
+        normalized_messages = []
+        for msg in messages:
+            if isinstance(msg, ToolMessage) and isinstance(msg.content, list):
+                # 提取 list 中的 text 内容
+                text_parts = []
+                image_count = 0
+                for item in msg.content:
+                    if isinstance(item, dict):
+                        item_type = item.get('type', '')
+                        if item_type == 'image':
+                            # 图表成功生成，记录但不包含完整 base64 数据
+                            image_count += 1
+                            text_parts.append(f"[图表已生成: image/{item.get('id', 'unknown')}]")
+                        else:
+                            text = item.get('text', '')
+                            if text:
+                                # 截断过长的文本
+                                if len(text) > 10000:
+                                    text = text[:10000] + "...[内容过长已截断]"
+                                text_parts.append(text)
+                    elif isinstance(item, str):
+                        if len(item) > 10000:
+                            item = item[:10000] + "...[内容过长已截断]"
+                        text_parts.append(item)
+                # 创建新的 ToolMessage，content 为字符串
+                from langchain_core.messages import ToolMessage as TM
+                normalized_content = '\n'.join(text_parts) if text_parts else f"[工具返回了 {image_count} 个图像]"
+                normalized_messages.append(TM(content=normalized_content, tool_call_id=msg.tool_call_id))
+            else:
+                normalized_messages.append(msg)
+        messages = normalized_messages
 
         response = await llm_with_tools.ainvoke(messages)
 
@@ -1716,7 +1997,7 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 
         # 新增: 检查修复次数，防止无限循环
         tool_message_count = sum(1 for m in messages if isinstance(m, ToolMessage))
-        if tool_message_count > 5:  # 最多允许 5 次工具调用（约 10-15 步）
+        if tool_message_count > 10:  # 增加到10次以支持双轴图等复杂场景
             print(f"⚠️ 达到最大工具调用次数限制 ({tool_message_count})，结束执行")
             return END
 
@@ -1930,23 +2211,88 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 
         return "agent"
 
-    # 路由函数：决定是否需要重试
+    # 路由函数：决定是否重试
     def should_retry_after_reflection(state: MessagesState) -> Literal["agent", END]:
-        """反思后决定是否重试"""
+        """反思后决定是否重试或继续执行"""
         messages = state["messages"]
+
+        # 首先检查是否已经执行了SQL查询
+        has_query_result = False
+        has_sql_data = False
+        has_chart = False  # 🔧 新增：检查是否已生成图表
+
+        for msg in reversed(messages):
+            if isinstance(msg, ToolMessage):
+                content = str(msg.content)
+                # 检查是否是SQL查询返回的数据（有列名和行）
+                if '"columns"' in content or '"rows"' in content:
+                    has_sql_data = True
+                    break
+                # 🔧 检查是否生成了图表（image类型内容）
+                if isinstance(msg.content, list):
+                    for item in msg.content:
+                        if isinstance(item, dict) and item.get('type') == 'image':
+                            has_chart = True
+                            break
+                elif 'image' in content.lower() or '图表已生成' in content:
+                    has_chart = True
+                    break
+                # 检查是否是query工具的调用
+                for earlier_msg in messages:
+                    if isinstance(earlier_msg, AIMessage) and earlier_msg.tool_calls:
+                        for tc in earlier_msg.tool_calls:
+                            if tc.get('name') == 'query':
+                                has_query_result = True
+                                break
 
         # 检查反思结果
         for msg in reversed(messages):
             if isinstance(msg, AIMessage):
                 content = str(msg.content)
+                # 如果有错误且重试次数未超限
                 if "🔄 执行失败" in content and "正在重新生成查询" in content:
-                    # 需要重试
-                    return "agent"
-                if "❌ 检测到错误" in content:
-                    # 检查重试次数
                     retry_count = state.get("__retry_count__", 0)
                     if retry_count < 3:
                         return "agent"
+                    return END
+
+                if "❌ 检测到错误" in content:
+                    retry_count = state.get("__retry_count__", 0)
+                    if retry_count < 3:
+                        return "agent"
+                    return END
+
+                # 如果执行成功但还没有SQL数据，继续执行
+                if "✅ 执行成功" in content or "查询已成功执行" in content:
+                    # 🔧 检查分析是否完整（至少100字）
+                    analysis_length = len(content)
+                    if has_chart and analysis_length >= 100:
+                        print(f"✅ 已生成图表且分析完整({analysis_length}字)，结束执行")
+                        return END
+                    elif has_chart:
+                        print(f"🔄 已生成图表但分析过短({analysis_length}字)，继续生成分析...")
+                        return "agent"
+                    if not has_sql_data:
+                        print("🔄 工具执行成功，但还没有SQL查询结果，继续执行...")
+                        return "agent"
+                    # 有SQL数据了，可以结束
+                    print("✅ 已获取SQL查询结果，结束执行")
+                    return END
+
+        # 如果还没有SQL数据且没有错误，继续执行
+        if not has_sql_data:
+            # 检查是否有任何query工具调用
+            query_called = False
+            for msg in messages:
+                if isinstance(msg, AIMessage) and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        if tc.get('name') == 'query':
+                            query_called = True
+                            break
+
+            if not query_called:
+                print("🔄 还没有执行SQL查询，继续执行...")
+                return "agent"
 
         return END
 
@@ -1984,6 +2330,20 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 async def reset_agent():
     """重置 Agent 缓存（用于重新连接或配置变更）"""
     global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer, _cached_db_type
+
+    # 🔥 关闭 MCP 客户端连接
+    if _cached_mcp_client is not None:
+        try:
+            # 尝试关闭 MCP 客户端
+            if hasattr(_cached_mcp_client, 'close'):
+                await _cached_mcp_client.close()
+            elif hasattr(_cached_mcp_client, '__aenter__'):
+                # 如果是 async context manager，尝试清理
+                await _cached_mcp_client.__aexit__(None, None, None)
+            print("🔄 MCP 客户端已关闭")
+        except Exception as e:
+            print(f"⚠️ 关闭MCP客户端时出错: {e}")
+
     _cached_agent = None
     _cached_mcp_client = None
     _cached_tools = None

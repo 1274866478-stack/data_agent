@@ -4,13 +4,16 @@
 # Cube.js 会根据此定义自动生成优化的 SQL 查询
 
 cube: Orders
+  # Excel 工作表名映射（当使用 Excel 作为数据源时）
+  excel_sheet: 订单表
+
   # 数据源配置
   sql_table: |
     SELECT
       id,
       tenant_id,
       customer_id,
-      order_date,
+      created_at::date as order_date,
       status,
       amount,
       discount_amount,

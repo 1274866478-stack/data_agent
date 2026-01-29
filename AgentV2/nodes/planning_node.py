@@ -67,7 +67,7 @@ class ExecutionPlan:
     query: str                           # 原始查询
     intent: str                          # 查询意图
     steps: List[PlanStep] = field(default_factory=list)
-    business_terms: List[str] = field(default_factory_list)  # 识别的业务术语
+    business_terms: List[str] = field(default_factory=list)  # 识别的业务术语
     confidence: float = 1.0               # 置信度
     needs_clarification: bool = False    # 是否需要澄清
     reasoning: str = ""                  # 推理过程

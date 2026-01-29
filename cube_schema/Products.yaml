@@ -4,6 +4,9 @@
 # Cube.js 会根据此定义自动生成优化的 SQL 查询
 
 cube: Products
+  # Excel 工作表名映射（当使用 Excel 作为数据源时）
+  excel_sheet: 产品表
+
   # 数据源配置
   sql_table: |
     SELECT

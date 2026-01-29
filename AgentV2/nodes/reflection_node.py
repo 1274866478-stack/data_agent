@@ -43,7 +43,7 @@ class ErrorCategory(str, Enum):
 class ReflectionResult:
     """反思结果"""
     success: bool                        # 是否成功
-    error_category: Optional[ErrorCategory]  # 错误类别
+    error_category: Optional[ErrorCategory] = None  # 错误类别
     error_message: str = ""               # 错误消息
     fix_suggestion: str = ""              # 修复建议
     should_retry: bool = False            # 是否应该重试
@@ -189,8 +189,35 @@ class ReflectionNode:
         if not last_tool_message:
             return ReflectionResult(success=True)
 
-        content = str(last_tool_message.content)
+        # 提取工具返回内容
+        content = self._extract_tool_content(last_tool_message.content)
         return self._analyze_content(content)
+
+    def _extract_tool_content(self, content) -> str:
+        """从 ToolMessage.content 中提取实际文本内容
+
+        Args:
+            content: ToolMessage.content (可能是 str 或 list)
+
+        Returns:
+            提取的文本内容
+        """
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            # MCP 工具返回格式: [{'type': 'text', 'text': '...'}]
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get('text', '')
+                    if text:
+                        text_parts.append(text)
+                elif isinstance(item, str):
+                    text_parts.append(item)
+            return '\n'.join(text_parts) if text_parts else str(content)
+
+        return str(content)
 
     def _analyze_content(self, content: str) -> ReflectionResult:
         """分析工具返回内容
@@ -202,6 +229,14 @@ class ReflectionNode:
             反思结果
         """
         content_lower = content.lower()
+        content_stripped = content.strip()
+
+        # 首先检查是否是有效的JSON响应（表示工具成功执行）
+        if self._is_valid_json_response(content_stripped):
+            return ReflectionResult(
+                success=True,
+                confidence=1.0
+            )
 
         # 检查是否是空结果
         if self._is_empty_result(content):
@@ -233,6 +268,40 @@ class ReflectionNode:
             success=True,
             confidence=1.0
         )
+
+    def _is_valid_json_response(self, content: str) -> bool:
+        """判断是否是有效的JSON响应（工具成功执行的标志）
+
+        Args:
+            content: 内容
+
+        Returns:
+            是否是有效JSON响应
+        """
+        content_stripped = content.strip()
+
+        # 检查是否包含图像（图表生成成功）
+        if 'image' in content_stripped.lower() and 'base64' in content_stripped:
+            return True
+
+        # 尝试解析JSON
+        try:
+            data = json.loads(content_stripped)
+            # 如果能解析为JSON，且是dict或list，认为是有效响应
+            if isinstance(data, (dict, list)):
+                # 检查是否包含明显的错误信息
+                content_lower = content_stripped.lower()
+                error_keywords = ['error', 'failed', 'exception', 'traceback', 'syntax error']
+                # 只有当JSON中不包含错误关键词时才认为是成功
+                for keyword in error_keywords:
+                    if keyword in content_lower and len(content_stripped) < 500:
+                        # 短内容包含错误关键词可能是真正的错误
+                        return False
+                return True
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        return False
 
     def _is_empty_result(self, content: str) -> bool:
         """判断是否是空结果

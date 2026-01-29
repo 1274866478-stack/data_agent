@@ -60,7 +60,7 @@ class ClarificationQuestion:
     question_id: str                  # 问题 ID
     question_type: ClarificationType  # 问题类型
     question_text: str                # 问题文本
-    options: List[ClarificationOption] = field(default_factory_list)
+    options: List[ClarificationOption] = field(default_factory=list)
     allow_multiple: bool = False      # 是否允许多选
     allow_custom: bool = True         # 是否允许自定义输入
 
@@ -80,7 +80,7 @@ class ClarificationQuestion:
 class ClarificationResult:
     """澄清结果"""
     needs_clarification: bool         # 是否需要澄清
-    questions: List[ClarificationQuestion] = field(default_factory_list)
+    questions: List[ClarificationQuestion] = field(default_factory=list)
     confidence: float = 1.0            # 置信度
     reasoning: str = ""                # 推理过程
 

@@ -166,18 +166,20 @@ class SchemaLoader:
         else:
             self.schema_dir = Path(schema_dir)
 
-    def load_from_yaml(self) -> Tuple[List[MeasureSchema], List[DimensionSchema]]:
+    def load_from_yaml(self) -> Tuple[List[MeasureSchema], List[DimensionSchema], Dict[str, str]]:
         """从 YAML 文件加载 Schema
 
         Returns:
-            (度量列表, 维度列表)
+            (度量列表, 维度列表, 表名映射字典)
+            表名映射格式: {"Orders": "订单表", "Products": "产品表", ...}
         """
         measures: List[MeasureSchema] = []
         dimensions: List[DimensionSchema] = []
+        table_mappings: Dict[str, str] = {}
 
         if not self.schema_dir.exists():
             logger.warning(f"Schema 目录不存在: {self.schema_dir}")
-            return measures, dimensions
+            return measures, dimensions, table_mappings
 
         for yaml_file in self.schema_dir.glob("*.yaml"):
             try:
@@ -188,6 +190,12 @@ class SchemaLoader:
                     continue
 
                 cube_name = data.get('cube', yaml_file.stem)
+
+                # 🔥 新增：提取 Excel 工作表名映射
+                excel_sheet = data.get('excel_sheet')
+                if excel_sheet:
+                    table_mappings[cube_name] = excel_sheet
+                    logger.debug(f"表名映射: {cube_name} -> {excel_sheet}")
 
                 # 加载度量
                 for measure_data in data.get('measures', []):
@@ -220,8 +228,8 @@ class SchemaLoader:
             except Exception as e:
                 logger.warning(f"加载 {yaml_file} 失败: {e}")
 
-        logger.info(f"加载了 {len(measures)} 个度量和 {len(dimensions)} 个维度")
-        return measures, dimensions
+        logger.info(f"加载了 {len(measures)} 个度量和 {len(dimensions)} 个维度，{len(table_mappings)} 个表名映射")
+        return measures, dimensions, table_mappings
 
     def load_from_builtin(self) -> Tuple[List[MeasureSchema], List[DimensionSchema]]:
         """加载内置 Schema（作为回退方案）"""
@@ -289,14 +297,7 @@ class SchemaLoader:
                 cube="Orders",
                 name="created_at",
                 display_name="创建时间",
-                description="订单创建的时间戳",
-                data_type="time"
-            ),
-            DimensionSchema(
-                cube="Orders",
-                name="order_date",
-                display_name="订单日期",
-                description="订单的日期",
+                description="订单创建的时间戳，可用于时间分组分析",
                 data_type="time"
             ),
             DimensionSchema(
@@ -392,14 +393,14 @@ class SchemaPruningService:
         # 加载 Schema
         loader = SchemaLoader()
         if measures is None:
-            self.measures = loader.load_from_yaml()[0]
+            self.measures, _, _ = loader.load_from_yaml()
             if not self.measures:
                 self.measures = loader.load_from_builtin()[0]
         else:
             self.measures = measures
 
         if dimensions is None:
-            self.dimensions = loader.load_from_yaml()[1]
+            _, self.dimensions, _ = loader.load_from_yaml()
             if not self.dimensions:
                 self.dimensions = loader.load_from_builtin()[1]
         else:

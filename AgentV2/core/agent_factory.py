@@ -30,7 +30,7 @@ from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 
 # Local imports - AgentV2 config
-from ..config import agent_config as config
+from ..agent_config_module import agent_config as config
 
 # ============================================================================
 # AgentFactory

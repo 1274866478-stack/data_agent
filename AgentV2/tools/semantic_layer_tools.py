@@ -377,6 +377,17 @@ class SemanticLayerService:
                             dimension.get('name', ''),
                             dimension.get('description', '')
                         ):
+                            # 处理维度SQL：如果sql字段使用${column}语法，需要解析
+                            dim_sql = dimension.get('sql', '')
+                            if dim_sql and '${' in dim_sql:
+                                # 对于${column}语法，提取实际的列名
+                                # 例如: ${order_date} -> order_date, ${created_at}::date -> created_at
+                                match = re.search(r'\$\{([^}]+)\}', dim_sql)
+                                if match:
+                                    col_ref = match.group(1)
+                                    # 如果有::date或::timestamp等类型转换，保留它
+                                    dim_sql = dim_sql.replace('${', '').replace('}', '')
+
                             results.append({
                                 "source": "yaml",
                                 "cube": cube_name,
@@ -385,6 +396,7 @@ class SemanticLayerService:
                                 "display_name": dimension.get('display_name', dimension.get('name', '')),
                                 "data_type": dimension.get('type', 'string'),
                                 "enumerations": dimension.get('enumerations', []),
+                                "sql": dim_sql,  # 添加sql字段用于实际查询
                                 "description": dimension.get('description', '')
                             })
 
