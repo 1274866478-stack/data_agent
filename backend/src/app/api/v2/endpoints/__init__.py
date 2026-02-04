@@ -10,5 +10,6 @@ API v2 端点包
 """
 
 from .query_v2 import router as query_router
+from .query_stream_v2 import router as query_stream_router
 
-__all__ = ["query_router"]
+__all__ = ["query_router", "query_stream_router"]

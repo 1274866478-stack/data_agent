@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 import logging
+import uuid
 
 # AgentV2 imports
 import sys
@@ -162,6 +163,7 @@ class QueryResponseV2(BaseModel):
 
     # 元数据
     tenant_id: str
+    session_id: Optional[str] = None  # 🔧 新增：会话ID，用于日志追踪
     processing_time_ms: int = 0
     from_cache: bool = False  # 是否来自缓存
 
@@ -175,6 +177,7 @@ class QueryResponseV2(BaseModel):
                 "row_count": 10,
                 "processing_steps": ["解析查询", "生成SQL", "执行查询"],
                 "tenant_id": "tenant_123",
+                "session_id": "xxx-xxx-xxx",
                 "processing_time_ms": 1234
             }
         }
@@ -242,6 +245,7 @@ async def create_query_v2(
     - SQL 安全：自动拦截危险 SQL
     - SubAgent：智能任务委派
     - 可解释性：完整的推理过程记录
+    - 日志持久化：双通道写入（数据库 + 文件）
 
     ## 请求示例
     ```json
@@ -260,13 +264,18 @@ async def create_query_v2(
         "sql": "SELECT * FROM products ...",
         "data": [...],
         "processing_steps": ["解析查询", "生成SQL"],
-        "tenant_id": "tenant_123"
+        "tenant_id": "tenant_123",
+        "session_id": "xxx-xxx-xxx"
     }
     ```
     """
     import time
 
     start_time = time.time()
+
+    # 🔧 新增：生成或使用 session_id 用于日志追踪
+    session_id = request.session_id or str(uuid.uuid4())
+    logger.info(f"[V2] 开始处理查询，session_id={session_id}")
 
     try:
         # 1. 验证租户
@@ -285,11 +294,11 @@ async def create_query_v2(
             logger.info(f"  - 有 wrap_model_call: {hasattr(mid_module.TenantIsolationMiddleware, 'wrap_model_call')}")
             logger.info(f"  - 所有方法: {[a for a in dir(mid_module.TenantIsolationMiddleware) if not a.startswith('_')]}")
 
-            logger.info(f"[DEBUG] 开始创建 agent... connection_id={request.connection_id}")
+            logger.info(f"[DEBUG] 开始创建 agent... connection_id={request.connection_id}, session_id={session_id}")
             agent = agent_factory.get_or_create_agent(
                 tenant_id=tenant_id,
                 user_id=user_id,
-                session_id=request.session_id,
+                session_id=session_id,
                 connection_id=request.connection_id,
                 db_session=db
             )
@@ -337,12 +346,57 @@ async def create_query_v2(
                 cached_response["from_cache"] = True
                 return QueryResponseV2(**cached_response)
 
+        # 5.8. 🔧 强制预调用 list_tables() 确保获取实际表名
+        # 这解决了AI跳过list_tables()直接猜测表名的问题
+        if AGENTV2_AVAILABLE and request.connection_id:
+            try:
+                from AgentV2.tools.database_tools import list_tables
+                logger.info(f"[V2] 强制预调用 list_tables() 获取表名...")
+                tables_result = await asyncio.to_thread(
+                    list_tables,
+                    connection_id=request.connection_id,
+                    db_session=db,
+                    tenant_id=tenant_id
+                )
+                if tables_result and "tables" in tables_result:
+                    table_names = tables_result["tables"]
+                    logger.info(f"[V2] 预获取表名成功: {table_names}")
+                    # 缓存表名到AgentFactory
+                    from AgentV2.core.agent_factory_v2 import AgentFactory
+                    AgentFactory.set_cached_table_names(
+                        tenant_id=tenant_id,
+                        table_names=table_names,
+                        connection_id=request.connection_id
+                    )
+                    logger.info(f"[V2] 表名已缓存到AgentFactory")
+            except Exception as e:
+                logger.warning(f"[V2] 预调用list_tables()失败，继续执行: {e}")
+
         # 6. 执行真实查询（使用同步调用在异步上下文中运行）
         logger.info(f"[V2] 执行查询: {request.query}")
         # 注意：由于中间件暂未实现异步方法，使用 to_thread 运行同步调用
         import asyncio
-        result = await asyncio.to_thread(agent.invoke, agent_input)
-        logger.info(f"[V2] 查询完成，结果类型: {type(result)}")
+
+        # 🔧 添加超时保护，防止 Agent 调用无限期挂起
+        QUERY_TIMEOUT = 120.0  # 120秒超时
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(agent.invoke, agent_input),
+                timeout=QUERY_TIMEOUT
+            )
+            logger.info(f"[V2] 查询完成，结果类型: {type(result)}")
+        except asyncio.TimeoutError:
+            logger.error(f"[V2] 查询超时（{QUERY_TIMEOUT}秒）: {request.query}")
+            raise HTTPException(
+                status_code=status.HTTP_408_REQUEST_TIMEOUT,
+                detail={
+                    "success": False,
+                    "error": "查询超时，请简化查询条件或稍后重试",
+                    "error_type": "timeout_error",
+                    "tenant_id": tenant_id,
+                    "timeout_seconds": QUERY_TIMEOUT
+                }
+            )
 
         # 7. 解析返回结果
         processing_time = int((time.time() - start_time) * 1000)
@@ -513,25 +567,104 @@ async def create_query_v2(
             else:
                 answer = str(last_message)
 
-        # 构建处理步骤
-        processing_steps = [
-            "接收查询",
-            "租户隔离验证",
-            "AgentV2 处理",
-            "DeepSeek LLM 调用",
-        ]
+        # 🔧 新增：构建完整的处理步骤（6步流程）
+        # 根据实际执行的工具调用推断处理步骤
+        processing_steps = []
+        step_number = 1
 
-        # 如果启用了数据验证，添加相应步骤
-        if DATA_VALIDATION_AVAILABLE and extracted_data:
-            processing_steps.extend([
-                "数据一致性验证",
-                "智能字段映射",
-                "图表配置生成",
-            ])
+        # 步骤1: 分析查询意图
+        processing_steps.append({
+            "step": step_number,
+            "name": "分析查询意图",
+            "status": "completed",
+            "detail": f"分析查询: {request.query[:50]}{'...' if len(request.query) > 50 else ''}"
+        })
+        step_number += 1
 
-        processing_steps.append("返回结果")
+        # 步骤2: 理解数据结构
+        tables_found = []
+        if hasattr(result, '__dict__'):
+            # 尝试从结果中提取表信息
+            result_dict = result.__dict__ if hasattr(result, '__dict__') else result
+            if 'messages' in result_dict:
+                for msg in result_dict['messages']:
+                    if hasattr(msg, 'tool_calls'):
+                        for tc in msg.tool_calls:
+                            if tc.get('name') == 'list_tables':
+                                tables_found = tc.get('args', {}).get('tables', [])
+                                break
 
-        logger.info(f"[V2] 回答长度: {len(answer)} 字符")
+        processing_steps.append({
+            "step": step_number,
+            "name": "理解数据结构",
+            "status": "completed",
+            "detail": f"识别到 {len(tables_found) if tables_found else '多个'} 个相关表"
+        })
+        step_number += 1
+
+        # 步骤3: 生成SQL查询
+        if extracted_sql:
+            processing_steps.append({
+                "step": step_number,
+                "name": "生成SQL查询",
+                "status": "completed",
+                "detail": f"生成 {len(extracted_sql)} 字符的 SQL 查询",
+                "content_type": "sql",
+                "content_data": {"sql": extracted_sql}
+            })
+        else:
+            processing_steps.append({
+                "step": step_number,
+                "name": "生成SQL查询",
+                "status": "completed",
+                "detail": "SQL查询生成"
+            })
+        step_number += 1
+
+        # 步骤4: 执行查询
+        row_count = len(extracted_data) if extracted_data else 0
+        processing_steps.append({
+            "step": step_number,
+            "name": "执行查询",
+            "status": "completed",
+            "detail": f"返回 {row_count} 行数据"
+        })
+        step_number += 1
+
+        # 步骤5: 生成图表
+        if chart_config:
+            processing_steps.append({
+                "step": step_number,
+                "name": "生成图表",
+                "status": "completed",
+                "detail": f"生成 {chart_config.get('chart_type', '未知')} 图表"
+            })
+        else:
+            processing_steps.append({
+                "step": step_number,
+                "name": "生成图表",
+                "status": "skipped",
+                "detail": "无需图表或数据不适合可视化"
+            })
+        step_number += 1
+
+        # 步骤6: 数据分析
+        if extracted_data and len(extracted_data) > 0:
+            processing_steps.append({
+                "step": step_number,
+                "name": "数据分析",
+                "status": "completed",
+                "detail": "生成数据分析报告"
+            })
+        else:
+            processing_steps.append({
+                "step": step_number,
+                "name": "数据分析",
+                "status": "skipped",
+                "detail": "无数据可用于分析"
+            })
+
+        logger.info(f"[V2] 回答长度: {len(answer)} 字符，处理步骤数: {len(processing_steps)}")
 
         # 计算行数
         row_count = len(extracted_data) if extracted_data else 0
@@ -554,6 +687,7 @@ async def create_query_v2(
             },
             chart_config=chart_config,  # 返回图表配置
             tenant_id=tenant_id,
+            session_id=session_id,  # 🔧 新增：返回session_id用于日志追踪
             processing_time_ms=processing_time
         )
 
@@ -585,6 +719,7 @@ async def create_query_v2(
                 "error": str(e),
                 "error_type": "internal_error",
                 "tenant_id": tenant_id,
+                "session_id": session_id,  # 🔧 新增：错误响应也包含session_id
                 "processing_time_ms": processing_time
             }
         )

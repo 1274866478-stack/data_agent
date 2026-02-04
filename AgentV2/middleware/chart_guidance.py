@@ -106,7 +106,10 @@ CHART_GUIDANCE_TEMPLATE = """
 - "XX中YY的占比"
 - "库存不足"、"缺货"、"状态"
 
-**SQL 生成规则**：
+**🚨🚨🚨【最高优先级】占比类问题 SQL 生成规则（违反将导致饼图变成"独眼"实心圆！）🚨🚨🚨**
+
+**核心规则：必须使用一次 GROUP BY 查询获取所有分类数据！**
+
 占比类问题必须使用 `CASE WHEN` 进行分类统计，返回 `category` 和 `value` 两列用于饼图。
 
 **示例 1**：用户问"产品库存不足的占比是多少？"
@@ -144,14 +147,21 @@ GROUP BY status;
 -- ❌ 错误1：只返回某一类的总数，无法计算占比
 SELECT COUNT(*) FROM inventory WHERE quantity <= 0;
 
--- ❌ 错误2：执行多次COUNT查询来获取各类总数（绝对禁止！）
--- 第一次查询：SELECT COUNT(*) FROM customers WHERE region_id = 5;
--- 第二次查询：SELECT COUNT(*) FROM customers WHERE region_id = 3;
--- 这样做效率低且容易出错！必须用一次GROUP BY查询！
+-- ❌❌❌ 错误2：执行多次COUNT查询来获取各类总数（绝对禁止！！！）
+-- ⚠️⚠️⚠️ 这是导致"饼图变成独眼实心圆"的根本原因！⚠️⚠️⚠️
+-- ❌ 第一次查询：SELECT COUNT(*) FROM customers WHERE region_id = 5;
+-- ❌ 第二次查询：SELECT COUNT(*) FROM customers WHERE region_id = 3;
+-- ❌ 这样做效率低且容易出错！必须用一次GROUP BY查询！
 
 -- ❌ 错误3：只返回单一分类，没有完整分布
 SELECT COUNT(*) FROM inventory WHERE quantity <= reorder_point;
 ```
+
+**🔴🔴🔴【严重后果】多次 COUNT 查询导致的问题🔴🔴🔴**：
+1. **饼图只有一个数据点**：变成"独眼"实心圆，不是完整的分布图
+2. **数据与结论断层**：图表显示 1000，文字说 10%，无法对应
+3. **SQL 执行效率低**：分步执行两次查询，而不是单次 GROUP BY
+4. **用户体验极差**：看不到完整的占比分布
 
 **✅ 正确做法：使用一次 GROUP BY 查询**：
 ```sql

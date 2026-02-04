@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """测试数据库的简化语义层定义"""
+import re
 from typing import Dict, List, Any
 
 # 测试数据库表别名映射
@@ -162,6 +163,43 @@ TEST_DIMENSIONS = {
     },
 }
 
+def is_safe_table_name(table_name: str) -> bool:
+    """
+    验证表名是否安全（只包含字母、数字、下划线）
+
+    Args:
+        table_name: 要验证的表名
+
+    Returns:
+        True 如果表名安全，False 否则
+    """
+    if not table_name or not isinstance(table_name, str):
+        return False
+    # 表名必须以字母或下划线开头，只包含字母、数字、下划线
+    return bool(re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table_name))
+
+
+def safe_replace_table(sql: str, old_table: str, new_table: str) -> str:
+    """
+    安全的表名替换，防止 SQL 注入
+
+    Args:
+        sql: 原始 SQL
+        old_table: 旧表名
+        new_table: 新表名
+
+    Returns:
+        替换后的 SQL
+
+    Raises:
+        ValueError: 如果表名不安全
+    """
+    if not is_safe_table_name(old_table) or not is_safe_table_name(new_table):
+        raise ValueError(f"Unsafe table name: {old_table} or {new_table}")
+    # 使用 re.escape 转义旧表名中的特殊字符（虽然已验证安全性）
+    return re.sub(r'\b' + re.escape(old_table) + r'\b', new_table, sql, flags=re.IGNORECASE)
+
+
 def translate_sql_for_test_db(sql: str) -> str:
     """将语义层SQL转换为测试数据库SQL
 
@@ -171,10 +209,10 @@ def translate_sql_for_test_db(sql: str) -> str:
     Returns:
         转换后的SQL
     """
-    # 表名转换
+    import re
+    # 表名转换 - 使用安全的替换函数
     for old_table, new_table in TABLE_ALIASES.items():
-        import re
-        # 匹配单词边界，避免部分匹配
-        sql = re.sub(r'\b' + old_table + r'\b', new_table, sql, flags=re.IGNORECASE)
+        # 使用安全的替换函数
+        sql = safe_replace_table(sql, old_table, new_table)
 
     return sql

@@ -18,12 +18,12 @@
  */
 'use client'
 
-import { CertificatePlan, PlanType } from './types'
+import { CertificatePlan, CertificatePlanType, PlanType } from './types'
 
 interface PricingCertificateCardProps {
   plan: CertificatePlan
   billingPeriod: 'monthly' | 'yearly'
-  onSubscribe?: (planType: PlanType) => void
+  onSubscribe?: (planType: CertificatePlanType) => void
 }
 
 /**
@@ -142,28 +142,4 @@ export function PricingCertificateCard({
       </div>
     </div>
   )
-}
-
-/**
- * 证书套餐配置接口
- */
-export interface CertificatePlan {
-  /** 套餐类型 */
-  type: PlanType
-  /** 序列号 */
-  serial: string
-  /** 套餐名称 */
-  name: string
-  /** Material Symbol 图标名称 */
-  icon: string
-  /** 月付价格 */
-  monthlyPrice: number
-  /** 年付价格 */
-  yearlyPrice: number
-  /** 功能列表 */
-  features: string[]
-  /** 是否高亮 */
-  highlighted?: boolean
-  /** CTA 按钮文字 */
-  ctaText: string
 }

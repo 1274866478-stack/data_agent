@@ -31,6 +31,55 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
+# JOIN 条件安全验证
+# ============================================================================
+
+def validate_join_condition(join_sql: str) -> bool:
+    """
+    验证 JOIN 条件是否安全
+
+    防止通过 JOIN 条件注入恶意 SQL。
+
+    Args:
+        join_sql: JOIN 条件 SQL 表达式
+
+    Returns:
+        True 如果安全，False 否则
+
+    安全规则：
+        - 不允许危险关键字（DROP, DELETE, INSERT, UPDATE, EXEC, EXECUTE）
+        - 不允许 SQL 注入模式（--, /*, */）
+        - 不允许多语句（分号）
+        - 只允许合法的 JOIN 条件结构（表名.字段 = 表名.字段）
+    """
+    if not join_sql or not isinstance(join_sql, str):
+        return False
+
+    join_upper = join_sql.upper().strip()
+
+    # 检查危险关键字
+    dangerous_keywords = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'EXEC', 'EXECUTE', 'TRUNCATE', 'ALTER']
+    for keyword in dangerous_keywords:
+        if keyword in join_upper:
+            logger.warning(f"[SECURITY] JOIN condition contains dangerous keyword: {keyword}")
+            return False
+
+    # 检查 SQL 注入模式
+    injection_patterns = ['--', '/*', '*/', ';', '1=1', '1 = 1']
+    for pattern in injection_patterns:
+        if pattern in join_sql:
+            logger.warning(f"[SECURITY] JOIN condition contains injection pattern: {pattern}")
+            return False
+
+    # 检查是否包含基本的连接符（JOIN 条件通常包含 =）
+    if not any(op in join_sql for op in ['=', '<', '>', '<=', '>=', '<>']):
+        logger.warning("[SECURITY] JOIN condition missing comparison operator")
+        return False
+
+    return True
+
+
+# ============================================================================
 # 数据模型
 # ============================================================================
 
@@ -542,6 +591,11 @@ class JoinSQLGenerator:
                     from_alias=from_alias,
                     to_alias=to_alias
                 )
+
+                # 🔒 安全验证：检查 JOIN 条件是否安全
+                if not validate_join_condition(join_sql):
+                    logger.error(f"[SECURITY] Unsafe JOIN condition rejected: {join.sql[:50]}...")
+                    continue
 
                 join_clause = f"{join.join_type.value} JOIN {join.name}"
                 if to_alias:

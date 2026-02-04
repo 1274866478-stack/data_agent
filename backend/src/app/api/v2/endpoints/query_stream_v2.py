@@ -28,6 +28,9 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
+# 🔧 导入正则表达式模块的别名（用于备用解析）
+import re as re_module
+
 # 缓存服务导入
 from src.app.services.cache_service import (
     get_cache_manager,
@@ -115,6 +118,18 @@ def extract_chart_config_from_answer(answer: str) -> Optional[str]:
         json_str = marker_match.group(1).strip()
         try:
             parsed = json.loads(json_str)
+
+            # 🔧 优先检查是否为 MCP 简化格式并转换
+            if all(key in parsed for key in ['chart_type', 'title', 'data']):
+                logger.info(f"[图表提取] 检测到 MCP 简化格式，尝试转换为 ECharts 格式")
+                converted = convert_mcp_chart_to_echarts(json_str)
+                if converted:
+                    logger.info(f"[图表提取] ✅ MCP格式转换成功")
+                    return converted
+                else:
+                    logger.warning(f"[图表提取] MCP格式转换失败，返回原始格式")
+                    return json.dumps(parsed, ensure_ascii=False)
+
             # ECharts 配置通常包含 series, xAxis, yAxis, title 等字段
             if any(key in parsed for key in ['series', 'xAxis', 'yAxis', 'title', 'legend', 'grid', 'tooltip']):
                 logger.info(f"[图表提取] 成功从 [CHART_START]...[CHART_END] 格式提取 ECharts 配置")
@@ -157,6 +172,617 @@ def extract_chart_config_from_answer(answer: str) -> Optional[str]:
                     return json.dumps(parsed, ensure_ascii=False)
             except json.JSONDecodeError:
                 pass
+
+    return None
+
+
+def _is_valid_chart_config(chart_json: str) -> bool:
+    """验证图表配置是否有效（支持多种格式）
+
+    Args:
+        chart_json: JSON 字符串格式的图表配置
+
+    Returns:
+        True 如果配置有效，False 否则
+    """
+    try:
+        config = json.loads(chart_json)
+
+        # 🔧 新增：支持 MCP ECharts 工具的简化格式
+        # 格式: {"chart_type": "line", "title": "...", "data": [...]}
+        if all(key in config for key in ['chart_type', 'title', 'data']):
+            data = config.get("data")
+            if isinstance(data, list) and len(data) > 0:
+                logger.info(f"[图表验证] ✅ MCP ECharts 简化格式有效, type={config.get('chart_type')}")
+                return True
+
+        # 标准格式：必须有 series 字段
+        if "series" not in config or not config["series"]:
+            logger.info(f"[图表验证] 失败: 缺少 series 字段")
+            return False
+
+        series = config["series"]
+        if not isinstance(series, list) or len(series) == 0:
+            logger.info(f"[图表验证] 失败: series 不是非空数组")
+            return False
+
+        first_series = series[0]
+        if not isinstance(first_series, dict):
+            logger.info(f"[图表验证] 失败: series[0] 不是对象")
+            return False
+
+        series_type = first_series.get("type", "")
+
+        # 饼图特殊验证
+        if series_type == "pie":
+            if "data" not in first_series or not first_series["data"]:
+                logger.info(f"[图表验证] 失败: 饼图缺少 data 字段")
+                return False
+            # 验证饼图数据格式
+            pie_data = first_series["data"]
+            if not isinstance(pie_data, list) or len(pie_data) == 0:
+                logger.info(f"[图表验证] 失败: 饼图 data 不是非空数组")
+                return False
+        elif series_type in ["gauge", "indicator"]:
+            # 仪表盘类图表只需要有数值即可
+            if "data" not in first_series:
+                logger.info(f"[图表验证] 失败: {series_type} 图表缺少 data 字段")
+                return False
+        else:
+            # 其他图表类型（line, bar）需要有 data 和 xAxis
+            if "data" not in first_series or not first_series["data"]:
+                logger.info(f"[图表验证] 失败: series 缺少 data 字段")
+                return False
+
+            # 检查数据是否为空数组
+            series_data = first_series["data"]
+            if isinstance(series_data, list) and len(series_data) == 0:
+                logger.info(f"[图表验证] 失败: series.data 是空数组")
+                return False
+
+            # 检查是否有 xAxis（坐标轴类图表需要）
+            if "xAxis" in config:
+                xAxis = config["xAxis"]
+                if isinstance(xAxis, dict) and "data" not in xAxis:
+                    logger.info(f"[图表验证] 警告: xAxis 存在但缺少 data 字段")
+                    # 不返回 False，因为可能由 series.data 提供
+
+        # 验证通过
+        logger.info(f"[图表验证] ✅ 图表配置有效, type={series_type}")
+        return True
+
+    except json.JSONDecodeError as e:
+        logger.warning(f"[图表验证] JSON 解析失败: {e}")
+        return False
+    except Exception as e:
+        logger.warning(f"[图表验证] 验证过程出错: {e}")
+        return False
+
+
+def convert_mcp_chart_to_echarts(chart_json: str) -> Optional[str]:
+    """将 MCP ECharts 简化格式转换为标准 ECharts 格式
+
+    MCP ECharts 工具返回的格式:
+    {"chart_type": "line", "title": "...", "data": [{"time": "...", "value": 123}, ...]}
+
+    标准ECharts格式:
+    {"title": {"text": "..."}, "xAxis": {...}, "yAxis": {...}, "series": [...]}
+
+    Args:
+        chart_json: MCP ECharts 简化格式的 JSON 字符串
+
+    Returns:
+        标准格式的 ECharts 配置 JSON 字符串，如果转换失败则返回 None
+    """
+    try:
+        config = json.loads(chart_json)
+
+        # 检查是否是 MCP 简化格式
+        if not all(key in config for key in ['chart_type', 'title', 'data']):
+            return None  # 不是 MCP 格式
+
+        chart_type = config.get("chart_type", "line")
+        title = config.get("title", "数据图表")
+        data = config.get("data", [])
+
+        if not data:
+            logger.warning("[图表转换] MCP 格式中没有数据")
+            return None
+
+        # 提取 x 和 y 数据
+        x_data = []
+        y_data = []
+
+        for item in data:
+            if isinstance(item, dict):
+                # 尝试不同的字段名
+                x_val = item.get("time") or item.get("category") or item.get("name") or item.get("x")
+                y_val = item.get("value") or item.get("y") or item.get("amount")
+
+                if x_val is not None:
+                    x_data.append(x_val)
+                if y_val is not None:
+                    y_data.append(y_val)
+
+        # 构建 ECharts 配置
+        echarts_config = {
+            "title": {"text": title, "left": "center"},
+            "tooltip": {"trigger": "axis"},
+            "legend": {"data": [title]},
+            "xAxis": {
+                "type": "category",
+                "data": x_data,
+                "axisLabel": {"rotate": 45 if len(x_data) > 10 else 0}
+            },
+            "yAxis": {"type": "value", "name": "数值"},
+            "series": [{
+                "name": title,
+                "type": chart_type,
+                "data": y_data,
+                "smooth": chart_type == "line"
+            }]
+        }
+
+        logger.info(f"[图表转换] ✅ MCP格式转ECharts成功: {len(x_data)}个数据点")
+        return json.dumps(echarts_config, ensure_ascii=False)
+
+    except Exception as e:
+        logger.warning(f"[图表转换] 转换失败: {e}")
+        return None
+
+
+def generate_default_chart_config_from_table(
+    columns: List[str],
+    rows: List[Any],  # 🔧 修改：支持列表格式或字典列表
+    query: str = ""
+) -> Optional[str]:
+    """从表格数据自动生成默认的 ECharts 图表配置
+
+    Args:
+        columns: 表格列名列表
+        rows: 表格行数据（支持字典列表或数组列表）
+        query: 原始查询（用于判断图表类型）
+
+    Returns:
+        JSON 字符串格式的 ECharts 配置，如果无法生成则返回 None
+    """
+    if not columns or not rows:
+        return None
+
+    try:
+        # 🔧 修复：检测数据格式并统一处理
+        # 如果 rows 是列表格式（数组数组），转换为字典列表
+        if rows and isinstance(rows[0], list):
+            # 数组数组格式: [[val1, val2], ...] + columns
+            logger.info(f"[图表生成] 检测到数组格式，将转换为字典格式")
+            dict_rows = []
+            for row in rows:
+                dict_row = {}
+                for i, col in enumerate(columns):
+                    if i < len(row):
+                        dict_row[col] = row[i]
+                dict_rows.append(dict_row)
+            rows = dict_rows  # 使用转换后的字典列表
+        elif not isinstance(rows[0], dict):
+            logger.warning(f"[图表生成] 不支持的行格式: {type(rows[0])}")
+            return None
+
+        # 数据分析：检测列类型和数据特征
+        from datetime import datetime
+        import re
+
+        # 查找可能的类别列和数值列
+        category_col = None
+        value_cols = []
+        time_col = None
+
+        for col in columns:
+            # 检查第一行的值类型
+            if rows and len(rows) > 0:
+                first_val = rows[0].get(col)
+                if first_val is None:
+                    continue
+
+                # 检测时间列（包含 date, time, year, month, day 等关键词）
+                if any(keyword in col.lower() for keyword in ['date', 'time', 'year', 'month', 'day', '日期', '时间', '年', '月', '日']):
+                    time_col = col
+                    continue
+
+                # 检测数值列
+                try:
+                    float(first_val)
+                    value_cols.append(col)
+                except (ValueError, TypeError):
+                    # 不是数值，可能是类别
+                    if category_col is None:
+                        category_col = col
+
+        # 如果没有找到类别列，使用第一列
+        if category_col is None and columns:
+            category_col = columns[0]
+
+        # 如果没有数值列，跳过
+        if not value_cols:
+            logger.info("[图表生成] 没有找到数值列，无法生成图表")
+            return None
+
+        # 限制数据行数（避免图表过于复杂）
+        chart_rows = rows[:100]
+
+        # 🔧 改进：更准确的时间列检测
+        time_keywords = ['date', 'time', 'year', 'month', 'day', 'quarter', '日期', '时间', '年', '月', '日', '季度']
+        has_time_column = any(kw in col.lower() for col in columns for kw in time_keywords)
+
+        # 🔧 新增：分析用户查询意图来选择图表类型
+        query_lower = query.lower()
+        is_trend_query = any(kw in query_lower for kw in ['趋势', '变化', '每月', '每年', '增长', '下降', 'trend', '时间序列'])
+        is_proportion_query = any(kw in query_lower for kw in ['占比', '分布', '比例', 'percent', 'ratio', '百分比'])
+
+        # 判断图表类型
+        chart_type = "bar"  # 默认柱状图
+        is_time_series = False
+
+        # 🔧 改进的图表类型选择逻辑
+        if is_proportion_query:
+            chart_type = "pie"
+            logger.info(f"[图表生成] 检测到占比查询，使用饼图")
+        elif is_trend_query or has_time_column:
+            chart_type = "line"
+            is_time_series = True
+            if time_col:
+                category_col = time_col
+            logger.info(f"[图表生成] 检测到趋势查询或时间列，使用折线图")
+        else:
+            chart_type = "bar"
+            logger.info(f"[图表生成] 使用默认柱状图")
+
+        # 提取类别数据
+        categories = [str(row.get(category_col, "")) for row in chart_rows if row.get(category_col) is not None]
+
+        # 提取数值数据（只取第一个数值列）
+        value_col = value_cols[0]
+        values = []
+        for row in chart_rows:
+            val = row.get(value_col)
+            try:
+                values.append(float(val) if val is not None else 0)
+            except (ValueError, TypeError):
+                values.append(0)
+
+        # 生成图表配置
+        if chart_type == "pie":
+            # 饼图配置
+            data = [{"value": v, "name": c} for c, v in zip(categories, values) if v > 0]
+            chart_config = {
+                "title": {"text": f"{category_col}分布图", "left": "center"},
+                "tooltip": {"trigger": "item", "formatter": "{b}: {c} ({d}%)"},
+                "legend": {"orient": "vertical", "left": "left"},
+                "series": [{
+                    "name": value_col,
+                    "type": "pie",
+                    "radius": "50%",
+                    "data": data,
+                    "emphasis": {
+                        "itemStyle": {
+                            "shadowBlur": 10,
+                            "shadowOffsetX": 0,
+                            "shadowColor": "rgba(0, 0, 0, 0.5)"
+                        }
+                    }
+                }]
+            }
+        else:
+            # 折线图或柱状图配置
+            chart_config = {
+                "title": {"text": f"{category_col}-{value_col}{'趋势' if is_time_series else '对比'}"},
+                "tooltip": {"trigger": "axis"},
+                "legend": {"data": [value_col]},
+                "xAxis": {
+                    "type": "category",
+                    "data": categories,
+                    "axisLabel": {"rotate": 45 if len(categories) > 10 else 0}
+                },
+                "yAxis": {"type": "value", "name": value_col},
+                "series": [{
+                    "name": value_col,
+                    "type": chart_type,
+                    "data": values,
+                    "smooth": chart_type == "line"
+                }]
+            }
+
+        logger.info(f"[图表生成] 自动生成{chart_type}图: {len(categories)}个数据点")
+        return json.dumps(chart_config, ensure_ascii=False)
+
+    except Exception as e:
+        logger.warning(f"[图表生成] 自动生成图表配置失败: {e}")
+        return None
+
+
+# ============================================================================
+# 占比查询辅助函数
+# ============================================================================
+
+def is_proportion_query(query: str) -> bool:
+    """检测是否为占比类查询
+
+    Args:
+        query: 用户查询文本
+
+    Returns:
+        True 如果是占比类查询，False 否则
+    """
+    if not query:
+        return False
+    query_lower = query.lower()
+    proportion_keywords = ['占比', '比例', '分布', '多少', 'percent', 'ratio', '%']
+    return any(kw in query_lower for kw in proportion_keywords)
+
+
+def _extract_numeric_value(rows: list) -> Optional[float]:
+    """从行数据中提取数值
+
+    Args:
+        rows: 表格行数据
+
+    Returns:
+        提取到的数值，如果未找到则返回 None
+    """
+    if not rows:
+        return None
+    for row in rows:
+        if isinstance(row, list):
+            for v in row:
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    return float(v)
+        elif isinstance(row, dict):
+            for v in row.values():
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    return float(v)
+    return None
+
+
+def _extract_category_from_query(query: str) -> Optional[str]:
+    """从查询中提取类别名称（如"安徽"）
+
+    Args:
+        query: SQL 查询语句
+
+    Returns:
+        提取到的类别名称，如果未找到则返回 None
+    """
+    import re
+    # 匹配 WHERE province = '安徽' 或 WHERE province = "安徽"
+    match = re.search(r"(?:where|and)\s+\w+\s*=\s*['\"]([^'\"]+)['\"]", query, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    # 尝试其他常见模式
+    match = re.search(r"(?:where|and)\s+(\w+)\s*=\s*['\"]?([^'\"]+)['\"]?", query, re.IGNORECASE)
+    if match:
+        return match.group(2)
+    return None
+
+
+def _check_table_consistency(query_history: list) -> tuple[bool, str]:
+    """检查占比查询中分子分母是否来自同一张表
+
+    解决问题：当用户询问"XX的客户占比"时，AI 可能从 users 表查询分子，
+    从 addresses 表查询分母，导致数据口径不一致。
+
+    Args:
+        query_history: 查询历史列表，每项包含 query (SQL) 和 rows
+
+    Returns:
+        (is_consistent, error_message)
+        - is_consistent: True 表示表一致，False 表示检测到跨表问题
+        - error_message: 不一致时的错误提示信息
+    """
+    if not query_history or len(query_history) < 2:
+        return True, ""
+
+    # 提取所有查询中使用的表名
+    tables_used = []
+    for h in query_history:
+        sql = h.get("query", "")
+        if not sql:
+            continue
+
+        # 提取 FROM 子句中的表名
+        # 匹配 FROM tablename 或 FROM "tablename" 或 FROM 'tablename'
+        from_match = re.search(r'FROM\s+"?([\w]+)"?', sql, re.IGNORECASE)
+        if from_match:
+            table_name = from_match.group(1)
+            # 过滤掉系统表和子查询
+            if table_name and not table_name.startswith('('):
+                tables_used.append(table_name.lower())
+
+    # 检查是否使用了多个不同的表
+    unique_tables = list(set(tables_used))
+    if len(unique_tables) > 1:
+        # 检查是否是 users 和 addresses 的组合（常见错误模式）
+        has_users = any(t in ["users", "user"] for t in unique_tables)
+        has_addresses = any(t in ["addresses", "address"] for t in unique_tables)
+
+        if has_users and has_addresses:
+            error_msg = (
+                f"⚠️ 检测到跨表查询问题：查询同时使用了 users 和 addresses 表。"
+                f"这会导致分子分母数据口径不一致！"
+                f"\n\n建议：对于省份/城市占比查询，请只使用 addresses 表，"
+                f"使用一次 GROUP BY 查询获取所有分类的分布数据。"
+            )
+            logger.warning(f"[表一致性检查] 检测到跨表问题: {unique_tables}")
+            return False, error_msg
+
+        error_msg = (
+            f"⚠️ 查询涉及多个表：{', '.join(unique_tables)}。"
+            f"占比查询的分子分母必须来自同一张表，否则会导致数据口径不一致。"
+        )
+        logger.warning(f"[表一致性检查] 检测到多表查询: {unique_tables}")
+        return False, error_msg
+
+    logger.info(f"[表一致性检查] ✅ 表一致: {unique_tables}")
+    return True, ""
+
+
+def _validate_and_fix_percentage(
+    answer: str,
+    query_history: list
+) -> tuple[str, bool]:
+    """动态验证和修复百分比计算
+
+    根据多次查询结果动态计算正确的百分比，并修复AI回答中的错误数值。
+
+    Args:
+        answer: AI 生成的回答文本
+        query_history: 查询历史列表
+
+    Returns:
+        (修复后的回答, 是否进行了修复)
+    """
+    if not query_history or len(query_history) < 2:
+        return answer, False
+
+    # 提取所有查询中的数值
+    values = []
+    for h in query_history:
+        rows = h.get("rows", [])
+        val = _extract_numeric_value(rows)
+        if val is not None:
+            values.append(val)
+
+    if len(values) < 2:
+        return answer, False
+
+    # 动态计算正确百分比
+    # 假设：第一个值是子集（如安徽），第二个值是全集（如总数）
+    subset_val, total_val = values[0], values[1]
+
+    if total_val <= 0:
+        logger.warning(f"[数值验证] 分母为零，无法计算百分比")
+        return answer, False
+
+    correct_percentage = round((subset_val / total_val) * 100, 2)
+    logger.info(f"[数值验证] 计算得出正确百分比: {subset_val}/{total_val} = {correct_percentage}%")
+
+    # 提取AI声明的百分比
+    percentage_patterns = [
+        r'(\d+\.?\d*)%',
+        r'占比\s*(?:为)?\s*(\d+\.?\d*)',
+        r'比例\s*(?:为)?\s*(\d+\.?\d*)',
+        r'占.*?(\d+\.?\d*)\s*%',
+    ]
+
+    needs_fix = False
+    fixed_answer = answer
+    ai_percentage = None
+
+    for pattern in percentage_patterns:
+        matches = re.findall(pattern, answer)
+        if matches:
+            try:
+                ai_percentage = float(matches[0])
+                # 允许1%的误差，超过则需要修复
+                if abs(ai_percentage - correct_percentage) > 1:
+                    needs_fix = True
+                    logger.info(f"[数值验证] 检测到错误: AI说{ai_percentage}%，实际应为{correct_percentage}%")
+                    break
+            except (ValueError, TypeError):
+                continue
+
+    if needs_fix and ai_percentage is not None:
+        # 动态替换为正确的百分比
+        # 先尝试精确匹配AI的百分比格式
+        for pattern in percentage_patterns:
+            fixed_answer = re.sub(
+                pattern.replace(r'(\d+\.?\d*)', str(ai_percentage)).replace(str(ai_percentage), r'(\d+\.?\d*)'),
+                f'{correct_percentage}%',
+                fixed_answer,
+                count=1
+            )
+        # 如果上述替换失败，使用简单替换
+        if f"{ai_percentage}%" in fixed_answer:
+            fixed_answer = fixed_answer.replace(f"{ai_percentage}%", f"{correct_percentage}%")
+        elif f"{ai_percentage}" in fixed_answer:
+            fixed_answer = fixed_answer.replace(f"{ai_percentage}", f"{correct_percentage}")
+
+        logger.info(f"[数值验证] ✅ 修复百分比: {ai_percentage}% -> {correct_percentage}%")
+        return fixed_answer, True
+
+    return answer, False
+
+
+def generate_proportion_chart_from_history(
+    query_history: list,
+    user_query: str
+) -> Optional[str]:
+    """基于查询历史生成占比饼图
+
+    示例：
+    - 第一次查询：COUNT(*) WHERE province='安徽' → 1000
+    - 第二次查询：COUNT(*) → 1000
+    - 生成：饼图显示 "安徽: 1000 (100%)"
+
+    Args:
+        query_history: 查询历史列表
+        user_query: 原始用户查询
+
+    Returns:
+        JSON 字符串格式的 ECharts 配置，如果无法生成则返回 None
+    """
+    if not query_history or len(query_history) < 2:
+        return None
+
+    try:
+        # 提取数值构建图表数据
+        chart_data = {
+            "title": {"text": "客户占比分布", "left": "center"},
+            "tooltip": {"trigger": "item", "formatter": "{b}: {c} ({d}%)"},
+            "legend": {"orient": "vertical", "left": "left"},
+            "series": [{
+                "type": "pie",
+                "radius": "50%",
+                "data": []
+            }]
+        }
+
+        # 从查询历史中提取数据
+        # 假设第一个是条件查询（如安徽），第二个是总数查询
+        first_query = query_history[0]
+        second_query = query_history[1]
+
+        first_val = _extract_numeric_value(first_query.get("rows", []))
+        second_val = _extract_numeric_value(second_query.get("rows", []))
+
+        if first_val is not None and second_val is not None:
+            # 确定类别名称（从查询中提取）
+            category_name = _extract_category_from_query(first_query.get("query", ""))
+            if not category_name:
+                category_name = "目标类别"
+
+            # 添加主数据
+            if second_val > 0:
+                percentage = round((first_val / second_val) * 100, 1)
+            else:
+                percentage = 0
+
+            chart_data["series"][0]["data"].append({
+                "value": first_val,
+                "name": f"{category_name} ({percentage}%)"
+            })
+
+            # 如果占比小于100%，添加"其他"类别
+            if percentage < 99:
+                other_val = second_val - first_val
+                chart_data["series"][0]["data"].append({
+                    "value": other_val,
+                    "name": f"其他 ({round(100 - percentage, 1)}%)"
+                })
+
+            logger.info(f"[图表生成] 基于查询历史生成饼图: {category_name}={first_val}, 总数={second_val}, 占比={percentage}%")
+            return json.dumps(chart_data, ensure_ascii=False)
+
+    except Exception as e:
+        logger.warning(f"[图表生成] 基于历史生成图表失败: {e}")
 
     return None
 
@@ -245,6 +871,15 @@ async def create_stream_query_v2(
     async def event_generator() -> AsyncGenerator[str, None]:
         """SSE 事件生成器"""
 
+        # 🔧 表格数据收集（用于自动生成图表配置的兜底方案）
+        # 支持累积结构，用于占比类查询
+        collected_table_data = {
+            "query_history": [],  # 累积所有查询结果（用于占比计算）
+            "columns": None,
+            "rows": None,
+            "has_data": False
+        }
+
         def send_event(event_type: str, data: Dict[str, Any]):
             """发送 SSE 事件（同步生成器）"""
             event_data = json.dumps(data, ensure_ascii=False)
@@ -311,9 +946,25 @@ async def create_stream_query_v2(
 
             step_timings["cache_check"] = (time.time() - step_start) * 1000
 
+            # 🔧 占比查询强制跳过缓存（因为需要实时计算）
+            # 占比查询的结果依赖于实时数据计算，缓存可能导致显示过时的百分比
+            if is_proportion_query(request.query):
+                cache_hit = False
+                cached_data = None
+                logger.info(f"[占比查询] 检测到占比查询，跳过缓存强制重新执行: {request.query[:50]}")
+
             if cache_hit and cached_data:
                 # 缓存命中 - 流式返回缓存结果
                 step_timings["agent_execution"] = 0
+
+                # 🔧 修复：发送"从缓存加载"步骤开始事件
+                for event in send_event("step", {
+                    "step": 1,
+                    "message": "从缓存加载",
+                    "detail": f"使用缓存的查询结果",
+                    "status": "running"
+                }):
+                    yield event
 
                 # 从缓存数据中提取答案
                 cached_answer = cached_data.get("answer", "")
@@ -336,6 +987,16 @@ async def create_stream_query_v2(
                         yield event
 
                 step_timings["answer_streaming"] = (time.time() - step_start) * 1000
+
+                # 🔧 修复：发送缓存步骤完成事件
+                for event in send_event("step", {
+                    "step": 1,
+                    "message": "从缓存加载",
+                    "detail": f"已从缓存加载结果",
+                    "status": "completed",
+                    "duration": round((time.time() - overall_start) * 1000, 2)
+                }):
+                    yield event
 
                 # 计算总处理时间
                 total_processing_time_ms = (time.time() - overall_start) * 1000
@@ -409,204 +1070,601 @@ async def create_stream_query_v2(
                         last_progress_update = time.time()
                         current_tool_call = None  # 跟踪当前工具调用
 
-                        async for event in agent.astream_events(
-                            agent_input,
-                            config={"configurable": {"thread_id": request.session_id}},
-                            version="v2"
-                        ):
-                            event_kind = event.get("event", "")
-                            event_data = event.get("data", {})
+                        # 🔧 新增：诊断计数器
+                        tool_start_events = 0
+                        tool_end_events = 0
+                        llm_stream_events = 0
 
-                            # 🔧 处理 LLM 流式输出 (token 级别)
-                            if event_kind == "on_chat_model_stream":
-                                chunk = event_data.get("chunk")
-                                if chunk and hasattr(chunk, "content") and chunk.content:
-                                    # 累积答案
-                                    accumulated_answer += chunk.content
-                                    
-                                    # 计算进度 (30% -> 80%)
-                                    step_count += 1
-                                    progress = 30 + min(int((step_count / 100) * 50), 50)
-                                    
-                                    # 实时发送每个 token
-                                    for sse in send_event("data", {
-                                        "chunk": chunk.content,
-                                        "progress": progress
-                                    }):
-                                        yield sse
-                                    
-                                    # 定期发送进度更新（每 0.5 秒）
-                                    now = time.time()
-                                    if now - last_progress_update > 0.5:
-                                        for sse in send_event("progress", {"value": progress}):
+                        # 🔧 添加超时保护
+                        STREAM_TIMEOUT = 120.0  # 120秒超时
+                        agent_start_time = time.time()
+
+                        # 🔧 包装 astream_events 以捕获异常和超时
+                        try:
+                            async for event in agent.astream_events(
+                                agent_input,
+                                config={
+                                    "configurable": {"thread_id": request.session_id},
+                                    "recursion_limit": 50  # 🔧 提高递归限制，避免复杂工作流达到限制
+                                },
+                                version="v2"
+                            ):
+                                # 🔧 检查超时
+                                elapsed = time.time() - agent_start_time
+                                if elapsed > STREAM_TIMEOUT:
+                                    logger.error(f"[V2 Stream] Agent 执行超时: {elapsed:.1f}秒")
+                                    raise asyncio.TimeoutError(f"Agent execution exceeded {STREAM_TIMEOUT} seconds")
+
+                                event_kind = event.get("event", "")
+                                event_data = event.get("data", {})
+
+                                # 🔧 处理 LLM 流式输出 (token 级别)
+                                if event_kind == "on_chat_model_stream":
+                                    llm_stream_events += 1
+                                    chunk = event_data.get("chunk")
+                                    if chunk and hasattr(chunk, "content") and chunk.content:
+                                        # 累积答案
+                                        accumulated_answer += chunk.content
+
+                                        # 计算进度 (30% -> 80%)
+                                        step_count += 1
+                                        progress = 30 + min(int((step_count / 100) * 50), 50)
+
+                                        # 实时发送每个 token
+                                        for sse in send_event("data", {
+                                            "chunk": chunk.content,
+                                            "progress": progress
+                                        }):
                                             yield sse
-                                        last_progress_update = now
 
-                            # 🔧 处理工具调用开始
-                            elif event_kind == "on_tool_start":
-                                tool_name = event.get("name", "unknown")
-                                tool_input = event_data.get("input", {})
-                                
-                                processing_step_number += 1
-                                step_data = {
-                                    "step": processing_step_number,
-                                    "message": f"调用工具: {tool_name}",
-                                    "status": "running",
-                                    "duration": 0
-                                }
-                                
-                                # 根据工具类型添加内容详情
-                                if "sql" in tool_name.lower() or "query" in tool_name.lower():
-                                    sql_query = tool_input.get("query") or tool_input.get("sql", "")
-                                    if sql_query:
-                                        step_data["content_type"] = "sql"
-                                        step_data["content_data"] = {"sql": sql_query}
-                                        step_data["detail"] = f"执行查询: {sql_query[:100]}..."
-                                elif "schema" in tool_name.lower():
-                                    step_data["message"] = "获取数据库结构"
-                                    step_data["detail"] = f"表: {tool_input.get('table_name', 'unknown')}"
-                                elif "list" in tool_name.lower() and "table" in tool_name.lower():
-                                    step_data["message"] = "列出数据库表"
-                                    step_data["detail"] = "正在获取表列表..."
-                                elif "chart" in tool_name.lower():
-                                    step_data["message"] = "生成图表"
-                                    step_data["detail"] = "正在生成可视化图表..."
-                                
-                                current_tool_call = step_data
-                                for sse in send_event("step", step_data):
-                                    yield sse
+                                        # 定期发送进度更新（每 0.5 秒）
+                                        now = time.time()
+                                        if now - last_progress_update > 0.5:
+                                            for sse in send_event("progress", {"value": progress}):
+                                                yield sse
+                                            last_progress_update = now
 
-                            # 🔧 处理工具调用结束
-                            elif event_kind == "on_tool_end":
-                                if current_tool_call:
+                                # 🔧 处理工具调用开始
+                                elif event_kind == "on_tool_start":
+                                    tool_start_events += 1
+                                    tool_name = event.get("name", "unknown")
+                                    tool_input = event_data.get("input", {})
+                                    logger.info(f"[V2 Stream] 🔧 on_tool_start: tool={tool_name}, count={tool_start_events}")
+
+                                    processing_step_number += 1
+                                    step_data = {
+                                        "step": processing_step_number,
+                                        "message": f"调用工具: {tool_name}",
+                                        "status": "running",
+                                        "duration": 0
+                                    }
+
+                                    # 根据工具类型添加内容详情
+                                    if "sql" in tool_name.lower() or "query" in tool_name.lower():
+                                        sql_query = tool_input.get("query") or tool_input.get("sql", "")
+                                        if sql_query:
+                                            step_data["content_type"] = "sql"
+                                            step_data["content_data"] = {"sql": sql_query}
+                                            step_data["detail"] = f"执行查询: {sql_query[:100]}..."
+                                    elif "schema" in tool_name.lower():
+                                        step_data["message"] = "获取数据库结构"
+                                        step_data["detail"] = f"表: {tool_input.get('table_name', 'unknown')}"
+                                    elif "list" in tool_name.lower() and "table" in tool_name.lower():
+                                        step_data["message"] = "列出数据库表"
+                                        step_data["detail"] = "正在获取表列表..."
+                                    elif "chart" in tool_name.lower():
+                                        step_data["message"] = "生成图表"
+                                        step_data["detail"] = "正在生成可视化图表..."
+
+                                    # 🔧 保存 tool_input 用于后续查询历史记录
+                                    step_data["_tool_input"] = tool_input
+                                    step_data["_tool_name"] = tool_name
+                                    current_tool_call = step_data
+                                    for sse in send_event("step", step_data):
+                                        yield sse
+
+                                # 🔧 处理工具调用结束
+                                elif event_kind == "on_tool_end":
+                                    tool_end_events += 1
+
+                                    # 🆕 检测循环检测的终止信号
                                     raw_output = event_data.get("output", "")
-                                    
-                                    # 🔧 修复：LangGraph 的 on_tool_end 返回的是 ToolMessage 对象
-                                    # 需要从 content 属性获取实际的字符串输出
-                                    if hasattr(raw_output, 'content'):
-                                        tool_output = raw_output.content
-                                        logger.info(f"[V2 Stream] on_tool_end: ToolMessage detected, content_len={len(tool_output) if tool_output else 0}")
-                                    else:
-                                        tool_output = raw_output if isinstance(raw_output, str) else str(raw_output)
-                                        logger.info(f"[V2 Stream] on_tool_end: raw output, type={type(raw_output).__name__}")
-                                    
-                                    current_tool_call["status"] = "completed"
-                                    current_tool_call["duration"] = 100  # 估算时间
-                                    
-                                    # 🔧 增强：根据工具类型提取有用信息到 detail
-                                    tool_message = current_tool_call.get("message", "")
-                                    if tool_output and isinstance(tool_output, str):
-                                        try:
-                                            import json as json_module
-                                            output_data = json_module.loads(tool_output)
-                                            
-                                            # 列出数据库表 - 显示表名列表
-                                            if "列出数据库表" in tool_message or "list" in tool_message.lower():
-                                                if isinstance(output_data, list):
-                                                    table_names = [t.get("table_name", t.get("name", str(t))) if isinstance(t, dict) else str(t) for t in output_data[:10]]
-                                                    current_tool_call["detail"] = f"找到 {len(output_data)} 张表: {', '.join(table_names)}"
-                                                    if len(output_data) > 10:
-                                                        current_tool_call["detail"] += "..."
-                                            
-                                            # 获取数据库结构 - 显示列信息
-                                            elif "获取数据库结构" in tool_message or "schema" in tool_message.lower():
+                                    if hasattr(raw_output, 'additional_kwargs'):
+                                        additional_kwargs = raw_output.additional_kwargs
+                                        if additional_kwargs.get('_loop_detected') or additional_kwargs.get('_force_terminate'):
+                                            logger.warning("[V2 Stream] 检测到循环终止信号，中断 Agent 执行")
+                                            # 发送终止事件
+                                            error_content = raw_output.content if hasattr(raw_output, 'content') else str(raw_output)
+                                            for sse in send_event("error", {
+                                                "error": "检测到循环，已终止",
+                                                "error_type": "loop_detected",
+                                                "detail": error_content
+                                            }):
+                                                yield sse
+
+                                            # 发送完成事件（确保前端能够完成处理）
+                                            total_processing_time_ms = (time.time() - overall_start) * 1000
+                                            for sse in send_event("done", {
+                                                "success": False,
+                                                "answer": error_content,
+                                                "processing_steps": [],
+                                                "processing_time_ms": round(total_processing_time_ms, 2),
+                                                "terminated": True,
+                                                "termination_reason": "loop_detected"
+                                            }):
+                                                yield sse
+                                            return  # 终止事件生成器
+
+                                    if current_tool_call:
+                                        raw_output = event_data.get("output", "")
+                                        tool_name = event.get("name", "unknown")
+
+                                        # 🔧 修复：LangGraph 的 on_tool_end 返回的是 ToolMessage 对象
+                                        # 需要从 content 属性获取实际的字符串输出
+                                        if hasattr(raw_output, 'content'):
+                                            tool_output = raw_output.content
+                                            logger.info(f"[V2 Stream] on_tool_end: tool={tool_name}, ToolMessage detected, content_len={len(tool_output) if tool_output else 0}")
+                                        else:
+                                            tool_output = raw_output if isinstance(raw_output, str) else str(raw_output)
+                                            logger.info(f"[V2 Stream] on_tool_end: tool={tool_name}, raw output, type={type(raw_output).__name__}")
+
+                                        # 🔧 新增：记录工具输出的前200个字符用于诊断
+                                        if tool_output and isinstance(tool_output, str):
+                                            logger.info(f"[V2 Stream] on_tool_end: tool={tool_name}, output_preview={tool_output[:200]}")
+                                        else:
+                                            logger.warning(f"[V2 Stream] on_tool_end: tool={tool_name}, 无输出或输出格式异常, type={type(tool_output)}")
+
+                                        current_tool_call["status"] = "completed"
+                                        current_tool_call["duration"] = 100  # 估算时间
+
+                                        # 🔧 增强：根据工具类型提取有用信息到 detail
+                                        tool_message = current_tool_call.get("message", "")
+                                        if tool_output and isinstance(tool_output, str):
+                                            try:
+                                                import json as json_module
+                                                output_data = json_module.loads(tool_output)
+
+                                                # 列出数据库表 - 显示表名列表
+                                                if "列出数据库表" in tool_message or "list" in tool_message.lower():
+                                                    if isinstance(output_data, list):
+                                                        table_names = [t.get("table_name", t.get("name", str(t))) if isinstance(t, dict) else str(t) for t in output_data[:10]]
+                                                        current_tool_call["detail"] = f"找到 {len(output_data)} 张表: {', '.join(table_names)}"
+                                                        if len(output_data) > 10:
+                                                            current_tool_call["detail"] += "..."
+
+                                                # 获取数据库结构 - 显示列信息
+                                                elif "获取数据库结构" in tool_message or "schema" in tool_message.lower():
+                                                    if isinstance(output_data, dict):
+                                                        columns = output_data.get("columns", [])
+                                                        if columns:
+                                                            col_names = [c.get("name", str(c)) if isinstance(c, dict) else str(c) for c in columns[:5]]
+                                                            current_tool_call["detail"] = f"包含 {len(columns)} 列: {', '.join(col_names)}"
+                                                            if len(columns) > 5:
+                                                                current_tool_call["detail"] += "..."
+                                            except (json_module.JSONDecodeError, TypeError):
+                                                pass
+
+                                        for sse in send_event("step", current_tool_call):
+                                            yield sse
+
+                                        # 🔧 从工具输出中提取表格数据 - 增强版
+                                        if tool_output and isinstance(tool_output, str):
+                                            # 🔧 优先检查：如果工具名称包含query/execute，说明是查询工具
+                                            is_query_tool = any(keyword in tool_name.lower() for keyword in
+                                                ['query', 'execute', 'select', 'sql', 'run_query'])
+
+                                            # 尝试解析为 JSON 表格数据
+                                            try:
+                                                import json as json_module
+                                                output_data = json_module.loads(tool_output)
+                                                logger.info(f"[V2 Stream] 工具输出解析成功，类型: {type(output_data).__name__}, tool={tool_name}")
+
+                                                # 检测是否为表格格式（包含 columns 和 data/rows）
                                                 if isinstance(output_data, dict):
                                                     columns = output_data.get("columns", [])
-                                                    if columns:
-                                                        col_names = [c.get("name", str(c)) if isinstance(c, dict) else str(c) for c in columns[:5]]
-                                                        current_tool_call["detail"] = f"包含 {len(columns)} 列: {', '.join(col_names)}"
-                                                        if len(columns) > 5:
-                                                            current_tool_call["detail"] += "..."
-                                        except (json_module.JSONDecodeError, TypeError):
-                                            pass
-                                    
-                                    for sse in send_event("step", current_tool_call):
-                                        yield sse
-                                    
-                                    # 🔧 从工具输出中提取表格数据
-                                    if tool_output and isinstance(tool_output, str):
-                                        # 尝试解析为 JSON 表格数据
-                                        try:
-                                            import json as json_module
-                                            output_data = json_module.loads(tool_output)
-                                            logger.info(f"[V2 Stream] 工具输出解析成功，类型: {type(output_data).__name__}")
-                                            
-                                            # 检测是否为表格格式（包含 columns 和 data/rows）
-                                            if isinstance(output_data, dict):
-                                                columns = output_data.get("columns", [])
-                                                rows = output_data.get("data", output_data.get("rows", []))
-                                                row_count = output_data.get("row_count", len(rows) if isinstance(rows, list) else 0)
-                                                logger.info(f"[V2 Stream] 检测表格数据: columns={len(columns)}, rows={len(rows) if rows else 0}, row_count={row_count}")
-                                                
-                                                if columns and rows:
-                                                    # 发送表格数据步骤
-                                                    processing_step_number += 1
-                                                    table_step = {
-                                                        "step": processing_step_number,
-                                                        "message": "查询结果",
-                                                        "status": "completed",
-                                                        "duration": 50,
-                                                        "content_type": "table",
-                                                        "content_data": {
-                                                            "table": {
-                                                                "columns": columns,
-                                                                "rows": rows[:50],  # 限制前50行
-                                                                "row_count": row_count
-                                                            }
-                                                        }
-                                                    }
-                                                    for sse in send_event("step", table_step):
-                                                        yield sse
-                                                    logger.info(f"[V2 Stream] 发送表格数据: {row_count} 行, {len(columns)} 列")
-                                            
-                                            # 检测是否为列表格式（直接是行数组）
-                                            elif isinstance(output_data, list) and len(output_data) > 0:
-                                                if isinstance(output_data[0], dict):
-                                                    columns = list(output_data[0].keys())
-                                                    rows = output_data
-                                                    row_count = len(rows)
-                                                    
-                                                    # 发送表格数据步骤
-                                                    processing_step_number += 1
-                                                    table_step = {
-                                                        "step": processing_step_number,
-                                                        "message": "查询结果",
-                                                        "status": "completed",
-                                                        "duration": 50,
-                                                        "content_type": "table",
-                                                        "content_data": {
-                                                            "table": {
-                                                                "columns": columns,
-                                                                "rows": rows[:50],
-                                                                "row_count": row_count
-                                                            }
-                                                        }
-                                                    }
-                                                    for sse in send_event("step", table_step):
-                                                        yield sse
-                                                    logger.info(f"[V2 Stream] 发送表格数据 (列表): {row_count} 行")
-                                        except (json_module.JSONDecodeError, TypeError):
-                                            # 不是 JSON 格式，跳过
-                                            pass
-                                    
-                                    current_tool_call = None
+                                                    rows = output_data.get("data", output_data.get("rows", []))
+                                                    row_count = output_data.get("row_count", len(rows) if isinstance(rows, list) else 0)
+                                                    logger.info(f"[V2 Stream] 检测表格数据: columns={len(columns)}, rows={len(rows) if rows else 0}, row_count={row_count}")
 
-                            # 🔧 处理 LLM 调用结束（收集最终消息）
-                            elif event_kind == "on_chat_model_end":
-                                output = event_data.get("output")
-                                if output:
-                                    all_messages.append(output)
+                                                    # 🔧 过滤元数据查询：只对真正的数据查询发送表格步骤
+                                                    # 检查工具名称，排除 list_tables 和 get_schema 等元数据工具
+                                                    is_metadata_tool = any(keyword in tool_message.lower() for keyword in
+                                                        ['list_tables', 'get_schema', '列出数据库表', '获取数据库结构',
+                                                         'list tables', 'database tables', 'schema'])
+
+                                                    if columns and rows and not is_metadata_tool:
+                                                        # 发送表格数据步骤
+                                                        processing_step_number += 1
+                                                        table_step = {
+                                                            "step": processing_step_number,
+                                                            "message": "查询结果",
+                                                            "status": "completed",
+                                                            "duration": 50,
+                                                            "content_type": "table",
+                                                            "content_data": {
+                                                                "table": {
+                                                                    "columns": columns,
+                                                                    "rows": rows[:50],  # 限制前50行
+                                                                    "row_count": row_count
+                                                                }
+                                                            }
+                                                        }
+                                                        for sse in send_event("step", table_step):
+                                                            yield sse
+                                                        logger.info(f"[V2 Stream] 发送表格数据: {row_count} 行, {len(columns)} 列")
+                                                        # 🔧 保存表格数据用于自动生成图表（累积模式）
+                                                        # 获取当前查询的SQL（如果可用）
+                                                        current_query = ""
+                                                        if current_tool_call and "_tool_input" in current_tool_call:
+                                                            current_query = current_tool_call["_tool_input"].get("query", "")
+
+                                                        # 累积查询历史（用于占比计算）
+                                                        collected_table_data["query_history"].append({
+                                                            "query": current_query,
+                                                            "columns": columns,
+                                                            "rows": rows[:100],
+                                                            "row_count": row_count,
+                                                            "timestamp": time.time()
+                                                        })
+                                                        logger.info(f"[V2 Stream] 累积查询历史: 当前历史记录数={len(collected_table_data['query_history'])}")
+
+                                                        # 更新当前数据（用于兼容性）
+                                                        collected_table_data["columns"] = columns
+                                                        collected_table_data["rows"] = rows[:100]
+                                                        collected_table_data["has_data"] = True
+
+                                                # 检测是否为列表格式（直接是行数组）
+                                                elif isinstance(output_data, list) and len(output_data) > 0:
+                                                    if isinstance(output_data[0], dict):
+                                                        columns = list(output_data[0].keys())
+                                                        rows = output_data
+                                                        row_count = len(rows)
+
+                                                        # 🔧 过滤元数据查询：只对真正的数据查询发送表格步骤
+                                                        is_metadata_tool = any(keyword in tool_message.lower() for keyword in
+                                                            ['list_tables', 'get_schema', '列出数据库表', '获取数据库结构',
+                                                             'list tables', 'database tables', 'schema'])
+
+                                                        # 发送表格数据步骤（仅非元数据查询）
+                                                        if not is_metadata_tool:
+                                                            processing_step_number += 1
+                                                            table_step = {
+                                                                "step": processing_step_number,
+                                                                "message": "查询结果",
+                                                                "status": "completed",
+                                                                "duration": 50,
+                                                                "content_type": "table",
+                                                                "content_data": {
+                                                                    "table": {
+                                                                        "columns": columns,
+                                                                        "rows": rows[:50],
+                                                                        "row_count": row_count
+                                                                    }
+                                                                }
+                                                            }
+                                                            for sse in send_event("step", table_step):
+                                                                yield sse
+                                                            logger.info(f"[V2 Stream] 发送表格数据 (列表): {row_count} 行")
+                                                            # 🔧 保存表格数据用于自动生成图表（累积模式）
+                                                            # 获取当前查询的SQL（如果可用）
+                                                            current_query = ""
+                                                            if current_tool_call and "_tool_input" in current_tool_call:
+                                                                current_query = current_tool_call["_tool_input"].get("query", "")
+
+                                                            # 累积查询历史（用于占比计算）
+                                                            collected_table_data["query_history"].append({
+                                                                "query": current_query,
+                                                                "columns": columns,
+                                                                "rows": rows[:100],
+                                                                "row_count": row_count,
+                                                                "timestamp": time.time()
+                                                            })
+                                                            logger.info(f"[V2 Stream] 累积查询历史(列表): 当前历史记录数={len(collected_table_data['query_history'])}")
+
+                                                            # 更新当前数据（用于兼容性）
+                                                            collected_table_data["columns"] = columns
+                                                            collected_table_data["rows"] = rows[:100]
+                                                            collected_table_data["has_data"] = True
+                                            except (json_module.JSONDecodeError, TypeError) as json_err:
+                                                # 🔧 JSON 解析失败，尝试备用方案
+                                                logger.warning(f"[V2 Stream] JSON解析失败: {json_err}, tool={tool_name}, 尝试备用解析")
+
+                                                # 备用方案1: 尝试从字符串化数据中提取表格信息
+                                                # 某些MCP工具返回的是字符串格式的JSON
+                                                try:
+                                                    # 清理可能的转义字符
+                                                    cleaned_output = tool_output.strip()
+                                                    if cleaned_output.startswith('"') and cleaned_output.endswith('"'):
+                                                        # 去除外层引号
+                                                        cleaned_output = cleaned_output[1:-1]
+                                                        # 处理转义
+                                                        cleaned_output = cleaned_output.replace('\\"', '"').replace('\\\\', '\\')
+
+                                                    # 再次尝试解析
+                                                    output_data = json_module.loads(cleaned_output)
+                                                    logger.info(f"[V2 Stream] 备用解析成功，类型: {type(output_data).__name__}")
+
+                                                    # 重新进入表格检测逻辑
+                                                    if isinstance(output_data, dict):
+                                                        columns = output_data.get("columns", [])
+                                                        rows = output_data.get("data", output_data.get("rows", []))
+                                                        row_count = output_data.get("row_count", len(rows) if isinstance(rows, list) else 0)
+
+                                                        is_metadata_tool = any(keyword in tool_message.lower() for keyword in
+                                                            ['list_tables', 'get_schema', '列出数据库表', '获取数据库结构',
+                                                             'list tables', 'database tables', 'schema'])
+
+                                                        if columns and rows and not is_metadata_tool:
+                                                            processing_step_number += 1
+                                                            table_step = {
+                                                                "step": processing_step_number,
+                                                                "message": "查询结果",
+                                                                "status": "completed",
+                                                                "duration": 50,
+                                                                "content_type": "table",
+                                                                "content_data": {
+                                                                    "table": {
+                                                                        "columns": columns,
+                                                                        "rows": rows[:50],
+                                                                        "row_count": row_count
+                                                                    }
+                                                                }
+                                                            }
+                                                            for sse in send_event("step", table_step):
+                                                                yield sse
+                                                            logger.info(f"[V2 Stream] 备用解析发送表格数据: {row_count} 行")
+                                                            # 🔧 累积查询历史（备用解析方案）
+                                                            current_query = ""
+                                                            if current_tool_call and "_tool_input" in current_tool_call:
+                                                                current_query = current_tool_call["_tool_input"].get("query", "")
+                                                            collected_table_data["query_history"].append({
+                                                                "query": current_query,
+                                                                "columns": columns,
+                                                                "rows": rows[:100],
+                                                                "row_count": row_count,
+                                                                "timestamp": time.time()
+                                                            })
+                                                            collected_table_data["columns"] = columns
+                                                            collected_table_data["rows"] = rows[:100]
+                                                            collected_table_data["has_data"] = True
+
+                                                except Exception as backup_err:
+                                                    logger.warning(f"[V2 Stream] 备用解析也失败: {backup_err}")
+
+                                                # 备用方案2: 尝试从纯文本表格中提取数据（针对MCP PostgreSQL工具的文本格式）
+                                                # PostgreSQL MCP 工具可能返回格式化文本表格
+                                                if is_query_tool and len(tool_output) > 0:
+                                                    logger.info(f"[V2 Stream] 检测到查询工具，尝试解析文本格式输出")
+
+                                                    lines = tool_output.strip().split('\n')
+                                                    if len(lines) >= 3:
+                                                        # 尝试解析文本表格（假设有表头分隔符）
+                                                        # 格式通常是：
+                                                        # | col1 | col2 | col3 |
+                                                        # |------|------|------|
+                                                        # | val1 | val2 | val3 |
+                                                        import re as re_module
+                                                        header_line = None
+                                                        data_start_idx = None
+
+                                                        for idx, line in enumerate(lines):
+                                                            if '|' in line:
+                                                                if header_line is None:
+                                                                    header_line = line
+                                                                elif data_start_idx is None and re.match(r'^\|[\s\-:]+\|$', line.strip()):
+                                                                    data_start_idx = idx + 1
+
+                                                        if header_line and data_start_idx:
+                                                            # 解析表头
+                                                            columns = [col.strip() for col in header_line.split('|') if col.strip()]
+                                                            logger.info(f"[V2 Stream] 文本表格解析: columns={columns}")
+
+                                                            # 解析数据行
+                                                            rows = []
+                                                            for line in lines[data_start_idx:]:
+                                                                if '|' in line and not line.strip().startswith('+') and not line.strip().startswith('-'):
+                                                                    values = [val.strip() for val in line.split('|') if val.strip()]
+                                                                    if len(values) == len(columns):
+                                                                        rows.append(values)
+
+                                                            if rows:
+                                                                logger.info(f"[V2 Stream] 文本表格解析成功: {len(rows)} 行")
+                                                                processing_step_number += 1
+                                                                table_step = {
+                                                                    "step": processing_step_number,
+                                                                    "message": "查询结果",
+                                                                    "status": "completed",
+                                                                    "duration": 50,
+                                                                    "content_type": "table",
+                                                                    "content_data": {
+                                                                        "table": {
+                                                                            "columns": columns,
+                                                                            "rows": rows[:50],
+                                                                            "row_count": len(rows)
+                                                                        }
+                                                                    }
+                                                                }
+                                                                for sse in send_event("step", table_step):
+                                                                    yield sse
+                                                                # 🔧 累积查询历史（文本表格解析）
+                                                                current_query = ""
+                                                                if current_tool_call and "_tool_input" in current_tool_call:
+                                                                    current_query = current_tool_call["_tool_input"].get("query", "")
+                                                                collected_table_data["query_history"].append({
+                                                                    "query": current_query,
+                                                                    "columns": columns,
+                                                                    "rows": rows[:100],
+                                                                    "row_count": len(rows),
+                                                                    "timestamp": time.time()
+                                                                })
+                                                                collected_table_data["columns"] = columns
+                                                                collected_table_data["rows"] = rows[:100]
+                                                                collected_table_data["has_data"] = True
+
+                                        current_tool_call = None
+
+                                # 🔧 处理 LLM 调用结束（收集最终消息）
+                                elif event_kind == "on_chat_model_end":
+                                    output = event_data.get("output")
+                                    if output:
+                                        all_messages.append(output)
+
+                        except asyncio.TimeoutError as te:
+                            # 🔧 处理超时错误
+                            logger.error(f"[V2 Stream] 查询超时: {te}")
+
+                            # 发送超时错误事件
+                            for event in send_event("error", {
+                                "error": "查询超时",
+                                "error_type": "timeout",
+                                "detail": f"查询时间超过 {int(STREAM_TIMEOUT)} 秒，请简化查询条件"
+                            }):
+                                yield event
+
+                            # 🔧 新增：发送步骤1完成事件（让前端完成步骤显示）
+                            step1_duration = round((time.time() - overall_start) * 1000, 2)
+                            for event in send_event("step", {
+                                "step": 1,
+                                "message": "理解问题",
+                                "detail": f"已分析: {request.query[:50]}...",
+                                "status": "completed",
+                                "duration": step1_duration
+                            }):
+                                yield event
+
+                            # 🔧 发送done事件（确保前端能够完成处理）
+                            for event in send_event("done", {
+                                "success": False,
+                                "answer": f"查询超时（超过 {int(STREAM_TIMEOUT)} 秒），请简化查询条件或稍后重试",
+                                "processing_steps": [
+                                    {"step": 1, "title": "理解问题", "status": "completed", "duration": step1_duration},
+                                    {"step": 2, "title": "查询执行", "status": "error"}
+                                ],
+                            }):
+                                yield event
+
+                            return  # 确保不再继续执行
+
+                        except Exception as agent_error:
+                            # 🔧 处理 Agent 执行过程中的其他异常
+                            logger.error(f"[V2 Stream] Agent 执行错误: {agent_error}")
+                            import traceback
+                            traceback.print_exc()
+                            total_processing_time_ms = (time.time() - overall_start) * 1000
+
+                            # 发送错误事件
+                            for event in send_event("error", {
+                                "error": str(agent_error),
+                                "error_type": "agent_error",
+                                "detail": "AI 执行过程中出现错误"
+                            }):
+                                yield event
+
+                            # 🔧 新增：发送步骤1完成事件（让前端完成步骤显示）
+                            step1_duration = round(total_processing_time_ms, 2)
+                            for event in send_event("step", {
+                                "step": 1,
+                                "message": "理解问题",
+                                "detail": f"已分析: {request.query[:50]}...",
+                                "status": "completed",
+                                "duration": step1_duration
+                            }):
+                                yield event
+
+                            # 🔧 新增：发送done事件（确保前端能够完成处理）
+                            for event in send_event("done", {
+                                "success": False,
+                                "answer": f"查询执行失败：{str(agent_error)}",
+                                "processing_steps": [
+                                    {"step": 1, "title": "理解问题", "status": "completed", "duration": step1_duration},
+                                    {"step": 2, "title": "执行查询", "status": "error"}
+                                ],
+                                "processing_time_ms": round(total_processing_time_ms, 2),
+                            }):
+                                yield event
+
+                            return  # 确保不再继续执行
 
                         step_timings["agent_execution"] = (time.time() - step_start) * 1000
+
+                        # 🔧 新增：诊断日志 - 输出工具调用统计
+                        logger.info(f"[V2 Stream] 🔧 诊断统计: tool_start_events={tool_start_events}, tool_end_events={tool_end_events}, llm_stream_events={llm_stream_events}")
+                        if tool_start_events == 0:
+                            logger.warning(f"[V2 Stream] ⚠️ 没有收到任何工具调用事件！LLM可能没有调用工具，直接生成了回答。")
+                        else:
+                            logger.info(f"[V2 Stream] ✅ 收到 {tool_start_events} 个工具调用开始事件")
 
                         # 从流式消息中提取最终答案
                         answer = accumulated_answer
 
+                        # 🔧 新增：兜底机制 - 如果 answer 为空，检查是否有工具结果
+                        if not answer or not answer.strip():
+                            logger.warning("[V2 Stream] accumulated_answer 为空，尝试兜底处理")
+
+                            # 检查是否至少有工具调用（说明执行了但未生成文字）
+                            if processing_step_number > 1:
+                                answer = "查询已执行，但 AI 未生成文字说明。请查看上方的处理步骤了解详情。"
+                                logger.info(f"[V2 Stream] 生成兜底响应（有工具调用）")
+                            else:
+                                answer = "查询处理中遇到问题，未返回任何结果。请检查后端日志或重试。"
+                                logger.warning(f"[V2 Stream] 生成兜底响应（无工具调用）")
+
+                        # 🔧 新增：如果兜底后仍为空，基于 collected_table_data 生成回答
+                        if not answer or not answer.strip():
+                            logger.warning("[V2 Stream] answer 仍为空，基于 collected_table_data 生成兜底响应")
+
+                            if collected_table_data["has_data"]:
+                                rows = collected_table_data["rows"]
+                                columns = collected_table_data["columns"]
+
+                                # 尝试生成简单的数据总结
+                                if len(rows) == 1 and len(columns) == 2:
+                                    # 单行两列数据，可能是类别-数值对
+                                    category = str(rows[0][0]) if len(rows[0]) > 0 else ""
+                                    value = rows[0][1] if len(rows[0]) > 1 else 0
+                                    answer = f"查询结果：{category} = {value}"
+                                elif len(rows) > 0:
+                                    answer = f"查询返回 {len(rows)} 行数据"
+                                else:
+                                    answer = "查询已完成，请查看上方的处理步骤。"
+                            else:
+                                answer = "查询处理完成，但未返回数据。"
+
+                        # 确保answer不为空
+                        if not answer:
+                            answer = "查询已处理完成。"
+
                         # 🔧 始终尝试提取图表配置（如果存在）
                         # 不再检查 include_chart 标志，因为 AI 可能会根据问题类型自主决定生成图表
+                        logger.info(f"[图表提取] AI 回答长度: {len(answer)}, 包含 [CHART_START]: {'[CHART_START]' in answer}")
                         chart_config = extract_chart_config_from_answer(answer)
+
+                        # 🔧 使用验证函数检查提取的图表配置是否有效
+                        if chart_config and _is_valid_chart_config(chart_config):
+                            logger.info(f"[图表提取] ✅ AI 生成的图表配置有效: {chart_config[:100]}...")
+                        elif chart_config:
+                            # AI 生成了配置但无效，尝试使用兜底方案
+                            logger.warning(f"[图表提取] ⚠️ AI 生成的图表配置无效，将尝试兜底方案")
+                            chart_config = None
+
+                        # 🔧 兜底方案：如果没有图表配置但有表格数据，自动生成
+                        if not chart_config and collected_table_data["has_data"] and collected_table_data["columns"] and collected_table_data["rows"]:
+                            logger.info(f"[图表自动生成] 📊 表格数据可用: 列数={len(collected_table_data['columns'])}, 行数={len(collected_table_data['rows'])}")
+                            chart_config = generate_default_chart_config_from_table(
+                                columns=collected_table_data["columns"],
+                                rows=collected_table_data["rows"],
+                                query=request.query
+                            )
+                            if chart_config and _is_valid_chart_config(chart_config):
+                                logger.info(f"[图表自动生成] ✅ 自动生成图表配置成功: {chart_config[:100]}...")
+                            else:
+                                logger.warning(f"[图表自动生成] ❌ 自动生成失败或配置无效")
+
+                        # 🔧 最终图表配置状态日志
                         if chart_config:
-                            logger.info(f"[V2 Stream] 成功提取图表配置: {chart_config[:100]}...")
+                            logger.info(f"[图表配置] ✅ 最终图表配置长度: {len(chart_config)} 字符")
+                        else:
+                            logger.warning(f"[图表配置] ❌ 未生成有效的图表配置")
 
                         # 计算总处理时间
                         total_processing_time_ms = (time.time() - overall_start) * 1000
@@ -648,9 +1706,58 @@ async def create_stream_query_v2(
                             await cache_manager.cache.set(cache_key, cache_data, ttl=600)
                             logger.debug(f"查询结果已缓存: {cache_key}")
 
+                        # 🔧 修复：确保 done 事件中的 answer 字段有内容
+                        # 如果前端没有通过 data 事件累积到 answer，这里提供兜底
+                        final_answer = answer if answer else "查询已处理完成，请查看上方处理步骤。"
+
+                        # 🔧 修复：发送步骤1完成事件（理解问题步骤）
+                        # 使用 overall_start 计算准确的持续时间
+                        step1_duration = round((time.time() - overall_start) * 1000, 2)
+                        for event in send_event("step", {
+                            "step": 1,
+                            "message": "理解问题",
+                            "detail": f"已分析: {request.query[:50]}...",
+                            "status": "completed",
+                            "duration": step1_duration
+                        }):
+                            yield event
+
+                        # 🔧 新增：占比查询的一致性检查（先检查表一致性，再验证数值）
+                        query_history = collected_table_data.get("query_history", [])
+                        if is_proportion_query(request.query) and len(query_history) >= 2:
+                            # Step 1: 检查分子分母是否来自同一张表
+                            is_consistent, consistency_error = _check_table_consistency(query_history)
+                            if not is_consistent:
+                                # 检测到跨表问题，添加警告信息到回答
+                                logger.warning(f"[表一致性] 检测到跨表问题，添加警告")
+                                final_answer = f"⚠️ {consistency_error}\n\n{final_answer}"
+                                answer = final_answer
+
+                            # Step 2: 动态数值验证
+                            logger.info(f"[数值验证] 检测到占比查询且有{len(query_history)}条历史记录，进行动态验证")
+                            validated_answer, needs_fix = _validate_and_fix_percentage(
+                                final_answer,
+                                query_history
+                            )
+                            if needs_fix:
+                                final_answer = validated_answer
+                                # 同时更新 accumulated_answer 以便后续使用
+                                answer = validated_answer
+
+                        # 🔧 新增：使用查询历史生成占比图表（优先级更高）
+                        if not chart_config and is_proportion_query(request.query) and len(query_history) >= 2:
+                            logger.info(f"[图表生成] 检测到占比查询且有{len(query_history)}条历史记录，尝试生成占比图表")
+                            history_chart = generate_proportion_chart_from_history(
+                                query_history,
+                                request.query
+                            )
+                            if history_chart and _is_valid_chart_config(history_chart):
+                                chart_config = history_chart
+                                logger.info(f"[图表生成] ✅ 基于查询历史生成占比图表成功")
+
                         for event in send_event("done", {
                             "success": True,
-                            "answer": answer,
+                            "answer": final_answer,  # 🔧 修复：发送实际答案而非空字符串
                             "chart_config": chart_config,  # 🔧 添加图表配置
                             "processing_steps": processing_steps,
                             "tenant_id": tenant_id,

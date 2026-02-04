@@ -15,7 +15,11 @@ AgentFactory - DeepAgents 工厂类
 """
 
 import os
+import logging
 from typing import Optional, List, Dict, Any
+
+# 配置日志
+logger = logging.getLogger(__name__)
 
 # DeepAgents imports
 from deepagents import create_deep_agent
@@ -130,8 +134,7 @@ class AgentFactory:
             tools.extend(db_tools)
         except Exception as e:
             # 如果数据库工具加载失败，继续但不添加工具
-            import logging
-            logging.warning(f"Failed to load database tools: {e}")
+            logger.warning(f"Failed to load database tools: {e}")
 
         return tools
 

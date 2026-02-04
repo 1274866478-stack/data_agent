@@ -79,10 +79,25 @@ class SemanticLayerService:
 
     BASE_PATH = Path(__file__).parent.parent.parent / "cube_schema"
 
+    # Cube 名称到实际数据库表名的映射
+    # 语义层使用英文名称（如 Orders），但实际数据库表名是中文（如 订单表）
+    CUBE_TO_TABLE_MAPPING = {
+        "Orders": "订单表",
+        "Customers": "用户表",
+        "Products": "产品表",
+        "SalesOrders": "销售订单表",
+        "OrderItems": "订单明细表",
+        "Inventory": "库存表",
+        "Regions": "地区表",
+        "Categories": "分类表",
+    }
+
     # 内置的业务术语映射（当 YAML 文件不存在时的回退方案）
+    # 注意：每个度量定义都包含 actual_table_name 字段，指向实际的数据库表名
     BUILTIN_MEASURES = {
         "总收入": {
             "cube": "Orders",
+            "actual_table_name": "订单表",  # 🔑 实际数据库表名
             "name": "total_revenue",
             "display_name": "订单总收入",
             "type": "sum",
@@ -91,6 +106,7 @@ class SemanticLayerService:
         },
         "净收入": {
             "cube": "Orders",
+            "actual_table_name": "订单表",  # 🔑 实际数据库表名
             "name": "net_revenue",
             "display_name": "订单净收入",
             "type": "sum",
@@ -99,6 +115,7 @@ class SemanticLayerService:
         },
         "销售额": {
             "cube": "Orders",
+            "actual_table_name": "订单表",  # 🔑 实际数据库表名
             "name": "sales_amount",
             "display_name": "销售额",
             "type": "sum",
@@ -107,14 +124,25 @@ class SemanticLayerService:
         },
         "营收": {
             "cube": "Orders",
+            "actual_table_name": "订单表",  # 🔑 实际数据库表名
             "name": "revenue",
             "display_name": "营业收入",
             "type": "sum",
             "sql": "SUM(total_amount)",
             "description": "营业收入"
         },
+        "销售": {
+            "cube": "Orders",
+            "actual_table_name": "订单表",  # 🔑 实际数据库表名
+            "name": "sales",
+            "display_name": "销售",
+            "type": "sum",
+            "sql": "SUM(total_amount)",
+            "description": "销售总额"
+        },
         "订单数": {
             "cube": "Orders",
+            "actual_table_name": "订单表",  # 🔑 实际数据库表名
             "name": "order_count",
             "display_name": "订单数量",
             "type": "count",
@@ -123,14 +151,25 @@ class SemanticLayerService:
         },
         "客户数": {
             "cube": "Customers",
+            "actual_table_name": "用户表",  # 🔑 实际数据库表名
             "name": "customer_count",
             "display_name": "客户数量",
             "type": "count",
-            "sql": "COUNT(DISTINCT customer_id)",
+            "sql": "COUNT(*)",
             "description": "去重后的客户总数"
+        },
+        "用户数": {
+            "cube": "Customers",
+            "actual_table_name": "用户表",  # 🔑 实际数据库表名
+            "name": "user_count",
+            "display_name": "用户数量",
+            "type": "count",
+            "sql": "COUNT(*)",
+            "description": "用户总数"
         },
         "平均订单金额": {
             "cube": "Orders",
+            "actual_table_name": "订单表",  # 🔑 实际数据库表名
             "name": "avg_order_amount",
             "display_name": "平均订单金额",
             "type": "avg",
@@ -139,14 +178,25 @@ class SemanticLayerService:
         },
         "商品数": {
             "cube": "Products",
+            "actual_table_name": "产品表",  # 🔑 实际数据库表名
             "name": "product_count",
             "display_name": "商品数量",
             "type": "count",
             "sql": "COUNT(*)",
             "description": "商品总数"
         },
+        "产品数": {
+            "cube": "Products",
+            "actual_table_name": "产品表",  # 🔑 实际数据库表名
+            "name": "product_count_v2",
+            "display_name": "产品数量",
+            "type": "count",
+            "sql": "COUNT(*)",
+            "description": "产品总数"
+        },
         "毛利": {
             "cube": "Orders",
+            "actual_table_name": "订单表",  # 🔑 实际数据库表名
             "name": "gross_profit",
             "display_name": "毛利润",
             "type": "sum",
@@ -155,6 +205,7 @@ class SemanticLayerService:
         },
         "转化率": {
             "cube": "Orders",
+            "actual_table_name": "订单表",  # 🔑 实际数据库表名
             "name": "conversion_rate",
             "display_name": "转化率",
             "type": "ratio",
@@ -162,6 +213,18 @@ class SemanticLayerService:
             "description": "访客转化为客户的百分比"
         },
     }
+
+    @classmethod
+    def get_actual_table_name(cls, cube_name: str) -> str:
+        """获取 Cube 对应的实际数据库表名
+
+        Args:
+            cube_name: Cube 名称（如 "Orders"）
+
+        Returns:
+            实际数据库表名（如 "订单表"），如果未找到则返回原 Cube 名称
+        """
+        return cls.CUBE_TO_TABLE_MAPPING.get(cube_name, cube_name)
 
     # 状态值映射
     STATUS_VALUE_MAPPING = {
@@ -313,25 +376,29 @@ class SemanticLayerService:
         # 1. 首先检查内置术语表
         if term in self.BUILTIN_MEASURES:
             builtin = self.BUILTIN_MEASURES[term]
+            actual_table = builtin.get("actual_table_name") or self.get_actual_table_name(builtin["cube"])
             results.append({
                 "source": "builtin",
                 "cube": builtin["cube"],
+                "actual_table_name": actual_table,  # 🔑 添加实际表名
                 "type": "measure",
                 "name": builtin["name"],
                 "display_name": builtin["display_name"],
                 "sql": builtin["sql"],
                 "description": builtin["description"]
             })
-            logger.info(f"从内置术语表匹配到: {term} -> {builtin['name']}")
+            logger.info(f"从内置术语表匹配到: {term} -> {builtin['name']} (表名: {actual_table})")
             return results
 
         # 2. 模糊匹配内置术语表
-        for builtin_term, definition in self.BUILTIN_MEASURES.items():
+        for definition in self.BUILTIN_MEASURES.values():
             if self._match_term(term, definition["display_name"], definition["name"], definition.get("description", "")):
                 if not any(r["name"] == definition["name"] for r in results):
+                    actual_table = definition.get("actual_table_name") or self.get_actual_table_name(definition["cube"])
                     results.append({
                         "source": "builtin",
                         "cube": definition["cube"],
+                        "actual_table_name": actual_table,  # 🔑 添加实际表名
                         "type": "measure",
                         "name": definition["name"],
                         "display_name": definition["display_name"],
@@ -350,6 +417,8 @@ class SemanticLayerService:
                         continue
 
                     cube_name = cube_def.get('cube', yaml_file.stem)
+                    # 获取实际表名（优先使用 YAML 中的 excel_sheet 或 sql_table，否则使用映射）
+                    actual_table = cube_def.get('excel_sheet') or self.get_actual_table_name(cube_name)
 
                     # 匹配 measures
                     for measure in cube_def.get('measures', []):
@@ -362,6 +431,7 @@ class SemanticLayerService:
                             results.append({
                                 "source": "yaml",
                                 "cube": cube_name,
+                                "actual_table_name": actual_table,  # 🔑 添加实际表名
                                 "type": "measure",
                                 "name": measure.get('name', ''),
                                 "display_name": measure.get('display_name', measure.get('name', '')),
@@ -391,6 +461,7 @@ class SemanticLayerService:
                             results.append({
                                 "source": "yaml",
                                 "cube": cube_name,
+                                "actual_table_name": actual_table,  # 🔑 添加实际表名
                                 "type": "dimension",
                                 "name": dimension.get('name', ''),
                                 "display_name": dimension.get('display_name', dimension.get('name', '')),

@@ -48,6 +48,25 @@ from .python_sandbox_tools import (
     summary_statistics
 )
 
+# 通用工具（处理不需要数据库的简单查询）
+from .general_tools import (
+    get_general_tools,
+    get_current_date,
+    get_current_time,
+    get_relative_date,
+    get_date_range_info,
+    evaluate_math_expression,
+    get_system_info
+)
+
+# 表推荐工具
+from .table_recommendation_tools import (
+    get_table_recommendation_tools,
+    get_recommended_tables_for_query,
+    get_table_description_by_name,
+    list_high_priority_tables
+)
+
 __all__ = [
     # MCP 工具
     "get_mcp_tools",
@@ -78,4 +97,17 @@ __all__ = [
     "trend_analysis",
     "correlation_analysis",
     "summary_statistics",
+    # 通用工具
+    "get_general_tools",
+    "get_current_date",
+    "get_current_time",
+    "get_relative_date",
+    "get_date_range_info",
+    "evaluate_math_expression",
+    "get_system_info",
+    # 表推荐工具
+    "get_table_recommendation_tools",
+    "get_recommended_tables_for_query",
+    "get_table_description_by_name",
+    "list_high_priority_tables",
 ]

@@ -6,6 +6,7 @@ import { useMemo } from 'react'
 interface PlainTextProps {
   content: string
   className?: string
+  isLoading?: boolean  // 新增：加载状态
 }
 
 /**
@@ -69,7 +70,7 @@ function stripMarkdownFormatting(content: string): string {
  * PlainText 组件 - 将Markdown格式内容转换为纯文本显示
  * 移除所有Markdown格式符号，保留段落结构
  */
-export function PlainText({ content, className }: PlainTextProps) {
+export function PlainText({ content, className, isLoading = false }: PlainTextProps) {
   const plainContent = useMemo(() => stripMarkdownFormatting(content), [content])
 
   // 将内容按段落分割，为每个段落创建 <p> 标签
@@ -91,7 +92,19 @@ export function PlainText({ content, className }: PlainTextProps) {
         </p>
       ))}
       {paragraphs.length === 0 && (
-        <p className="text-gray-400 italic">暂无内容</p>
+        <p className={cn(
+          "italic",
+          isLoading
+            ? "text-gray-400 animate-pulse"
+            : "text-gray-500"
+        )}>
+          {isLoading
+            ? "AI 正在思考..."
+            : (content && content.trim())
+              ? "暂无内容"
+              : "查询已完成，请查看上方的处理步骤。"
+          }
+        </p>
       )}
     </div>
   )

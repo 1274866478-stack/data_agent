@@ -336,6 +336,8 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
               {message.role === 'assistant' && message.metadata?.processing_steps &&
                message.metadata.processing_steps.length > 0 && (
                 <ProcessingSteps
+                  // 🔧 第四次修复：添加 key 强制重新挂载，确保进度更新时 UI 刷新
+                  key={`${message.id}-${message.metadata.progress || 0}`}
                   steps={message.metadata.processing_steps}
                   defaultExpanded={message.status === 'sending'}
                 />

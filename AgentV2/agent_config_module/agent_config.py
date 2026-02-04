@@ -85,7 +85,7 @@ class MiddlewareConfig:
     enable_skills: bool = True
     enable_sql_security: bool = True
     enable_tenant_isolation: bool = True
-    enable_xai_logging: bool = False
+    enable_xai_logging: bool = True  # 🔧 全量埋点：默认启用 XAI 日志
 
 
 @dataclass

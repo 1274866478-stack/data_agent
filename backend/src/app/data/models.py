@@ -1012,6 +1012,75 @@ class RepairHistory(Base):
         }
 
 
+# ============================================================================
+# Agent 日志系统相关数据模型
+# ============================================================================
+
+class AgentLogMessageType(str, enum.Enum):
+    """Agent 日志消息类型枚举"""
+    AI_MESSAGE = "ai_message"        # AI 消息
+    TOOL_CALL = "tool_call"          # 工具调用
+    ERROR = "error"                  # 错误
+    INFO = "info"                    # 信息
+    WARNING = "warning"              # 警告
+    DEBUG = "debug"                  # 调试
+
+
+class AgentLog(Base):
+    """
+    Agent 执行日志模型
+    记录 Agent V2 每一步的输出，支持审计和调试。
+    """
+    __tablename__ = "agent_logs"
+
+    # 主键
+    id = Column(BigInteger, primary_key=True, autoincrement=True, index=True)
+
+    # 租户关联（强制要求）
+    tenant_id = Column(String(255), ForeignKey("tenants.id"), nullable=False, index=True)
+
+    # 会话信息
+    session_id = Column(String(255), nullable=False, index=True)  # 存储为字符串
+    user_id = Column(String(255), nullable=True, index=True)
+
+    # 执行步骤
+    step_number = Column(Integer, nullable=True)
+    node_name = Column(String(100), nullable=True, index=True)
+
+    # 消息类型和内容
+    message_type = Column(String(50), nullable=False, index=True)
+    content = Column(JSONB, nullable=True)  # 结构化数据
+    raw_message = Column(Text, nullable=True)  # 人类可读文本
+
+    # 元数据（耗时、token等）- 使用 log_metadata 避免 SQLAlchemy 保留字冲突
+    log_metadata = Column("metadata", JSONB, nullable=True)  # 数据库列名仍为 metadata
+
+    # 时间戳
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+    # 关系
+    tenant = relationship("Tenant")
+
+    def __repr__(self):
+        return f"<AgentLog(id={self.id}, tenant_id='{self.tenant_id}', session_id='{self.session_id}', node='{self.node_name}')>"
+
+    def to_dict(self) -> dict:
+        """转换为字典格式"""
+        return {
+            "id": self.id,
+            "tenant_id": self.tenant_id,
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "step_number": self.step_number,
+            "node_name": self.node_name,
+            "message_type": self.message_type,
+            "content": self.content,
+            "raw_message": self.raw_message,
+            "metadata": self.log_metadata,  # 使用 log_metadata 属性
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+
+
 # 更新 Tenant 模型的关系
 Tenant.successful_queries = relationship("SuccessfulQuery", back_populates="tenant", cascade="all, delete-orphan")
 Tenant.repair_histories = relationship("RepairHistory", back_populates="tenant", cascade="all, delete-orphan")

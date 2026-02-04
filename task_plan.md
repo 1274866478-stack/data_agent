@@ -1,123 +1,95 @@
-# Task Plan: [Brief Description]
-<!-- 
-  WHAT: This is your roadmap for the entire task. Think of it as your "working memory on disk."
-  WHY: After 50+ tool calls, your original goals can get forgotten. This file keeps them fresh.
-  WHEN: Create this FIRST, before starting any work. Update after each phase completes.
+# Task Plan: ChatBI 占比查询跨表问题修复
+<!--
+  WHAT: 修复 ChatBI 系统中占比查询时跨表跳跃导致的数据口径不一致问题
+  WHY: 用户查询"安徽的客户占比"时，AI 在 users 和 addresses 表之间跳跃，分子分母口径不一致
 -->
 
 ## Goal
-<!-- 
-  WHAT: One clear sentence describing what you're trying to achieve.
-  WHY: This is your north star. Re-reading this keeps you focused on the end state.
-  EXAMPLE: "Create a Python CLI todo app with add, list, and delete functionality."
--->
-[One sentence describing the end state]
+修复 ChatBI 系统占比查询时的表选择混乱问题，确保分子分母来自同一张表，返回完整的数据分布。
 
 ## Current Phase
-<!-- 
-  WHAT: Which phase you're currently working on (e.g., "Phase 1", "Phase 3").
-  WHY: Quick reference for where you are in the task. Update this as you progress.
--->
-Phase 1
+Phase 1: 根本原因分析（已完成）
+
+## 问题根因分析
+
+| 问题 | 描述 | 严重程度 |
+|------|------|----------|
+| 表选择混乱 | AI 不知道 users.province 可能为空，应优先用 addresses 表 | 🔴 P0 |
+| 分子分母不一致 | 分子查 users 表，分母查 addresses 表 | 🔴 P0 |
+| 多次查询 | 没有使用一次 GROUP BY 查询获取完整分布 | 🟡 P1 |
+| 省份名称 | 使用"安徽"而非"安徽省"导致匹配失败 | 🟡 P1 |
+
+### 截图中的错误流程
+```
+步骤6: SELECT COUNT(*) FROM users WHERE province = '安徽'     ← 分子
+步骤7: SELECT COUNT(*) FROM addresses WHERE province = '安徽' ← 又换表
+步骤9: SELECT COUNT(*) FROM addresses                        ← 分母
+```
+
+### 正确流程
+```sql
+-- 一次查询获取所有省份分布
+SELECT province, COUNT(*) as count
+FROM addresses
+GROUP BY province
+ORDER BY count DESC;
+```
 
 ## Phases
-<!-- 
-  WHAT: Break your task into 3-7 logical phases. Each phase should be completable.
-  WHY: Breaking work into phases prevents overwhelm and makes progress visible.
-  WHEN: Update status after completing each phase: pending → in_progress → complete
--->
 
-### Phase 1: Requirements & Discovery
-<!-- 
-  WHAT: Understand what needs to be done and gather initial information.
-  WHY: Starting without understanding leads to wasted effort. This phase prevents that.
--->
-- [ ] Understand user intent
-- [ ] Identify constraints and requirements
-- [ ] Document findings in findings.md
+### Phase 1: 根本原因分析 ✅
+- [x] 分析截图中的问题流程
+- [x] 探索相关代码文件
+- [x] 确定问题根因
+- **Status:** complete
+
+### Phase 2: 解决方案设计
+- [x] 设计 Prompt 增强方案
+- [x] 设计表推荐机制
+- [x] 设计一致性验证机制
 - **Status:** in_progress
-<!-- 
-  STATUS VALUES:
-  - pending: Not started yet
-  - in_progress: Currently working on this
-  - complete: Finished this phase
--->
 
-### Phase 2: Planning & Structure
-<!-- 
-  WHAT: Decide how you'll approach the problem and what structure you'll use.
-  WHY: Good planning prevents rework. Document decisions so you remember why you chose them.
--->
-- [ ] Define technical approach
-- [ ] Create project structure if needed
-- [ ] Document decisions with rationale
+### Phase 3: 实施修复
+- [ ] 修改 AgentV2/prompt_simplified.txt
+- [ ] 修改 AgentV2/tools/database_tools.py
+- [ ] 修改 backend/src/app/api/v2/endpoints/query_stream_v2.py
 - **Status:** pending
 
-### Phase 3: Implementation
-<!-- 
-  WHAT: Actually build/create/write the solution.
-  WHY: This is where the work happens. Break into smaller sub-tasks if needed.
--->
-- [ ] Execute the plan step by step
-- [ ] Write code to files before executing
-- [ ] Test incrementally
+### Phase 4: 测试验证
+- [ ] 测试 "安徽的客户占比如何"
+- [ ] 测试 "各省份客户分布"
+- [ ] 验证饼图显示完整数据
 - **Status:** pending
 
-### Phase 4: Testing & Verification
-<!-- 
-  WHAT: Verify everything works and meets requirements.
-  WHY: Catching issues early saves time. Document test results in progress.md.
--->
-- [ ] Verify all requirements met
-- [ ] Document test results in progress.md
-- [ ] Fix any issues found
-- **Status:** pending
-
-### Phase 5: Delivery
-<!-- 
-  WHAT: Final review and handoff to user.
-  WHY: Ensures nothing is forgotten and deliverables are complete.
--->
-- [ ] Review all output files
-- [ ] Ensure deliverables are complete
-- [ ] Deliver to user
+### Phase 5: 部署和文档
+- [ ] 重启服务
+- [ ] 更新相关文档
 - **Status:** pending
 
 ## Key Questions
-<!-- 
-  WHAT: Important questions you need to answer during the task.
-  WHY: These guide your research and decision-making. Answer them as you go.
-  EXAMPLE: 
-    1. Should tasks persist between sessions? (Yes - need file storage)
-    2. What format for storing tasks? (JSON file)
--->
-1. [Question to answer]
-2. [Question to answer]
+1. **为什么 AI 选择了 users 表而不是 addresses 表？**
+   - 答：AI 不知道 users.province 可能为空，需要明确表选择规则
+2. **如何让 AI 知道应该优先查询 addresses 表？**
+   - 答：在 Prompt 中添加表关系说明
+3. **如何防止分子分母来自不同表？**
+   - 答：添加一致性验证逻辑
+4. **省份名称"安徽" vs "安徽省"如何处理？**
+   - 答：已添加智能匹配映射，需要在 Prompt 中强调使用完整名称
 
 ## Decisions Made
-<!-- 
-  WHAT: Technical and design decisions you've made, with the reasoning behind them.
-  WHY: You'll forget why you made choices. This table helps you remember and justify decisions.
-  WHEN: Update whenever you make a significant choice (technology, approach, structure).
-  EXAMPLE:
-    | Use JSON for storage | Simple, human-readable, built-in Python support |
--->
 | Decision | Rationale |
 |----------|-----------|
-|          |           |
+| 增强 Prompt 而非修改 Agent 逻辑 | Prompt 修改更快速，LLM 可以理解表关系 |
+| 添加表选择规则 | 明确告诉 AI 哪个表包含完整省份信息 |
+| 添加一致性验证 | 防止 AI 从不同表获取分子分母 |
+| 保持省份智能匹配 | 已有代码可处理简称→完整名称映射 |
 
 ## Errors Encountered
-<!-- 
-  WHAT: Every error you encounter, what attempt number it was, and how you resolved it.
-  WHY: Logging errors prevents repeating the same mistakes. This is critical for learning.
-  WHEN: Add immediately when an error occurs, even if you fix it quickly.
-  EXAMPLE:
-    | FileNotFoundError | 1 | Check if file exists, create empty list if not |
-    | JSONDecodeError | 2 | Handle empty file case explicitly |
--->
 | Error | Attempt | Resolution |
 |-------|---------|------------|
-|       | 1       |            |
+| 跨表口径不一致 | 1 | 添加表选择规则到 Prompt |
+| 分子分母表不同 | 1 | 添加一致性验证逻辑 |
+| 省份名称简称匹配失败 | 1 | 已有智能匹配代码，需强调使用完整名称 |
 
 ## Notes
 <!-- 

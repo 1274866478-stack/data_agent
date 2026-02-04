@@ -12,12 +12,15 @@ SQL Security Middleware - SQL 安全校验中间件
     - 只允许只读查询 (SELECT, WITH, SHOW, EXPLAIN)
 
 作者: BMad Master
-版本: 2.0.0 (基于 V1 sql_validator.py)
+版本: 2.1.0 (Bug修复: 实现 wrap_model_call 安全检查)
 """
 
 import re
+import logging
 from typing import Any, Dict, Optional, Callable, Awaitable
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # LangChain/LangGraph imports for deepagents compatibility
 from langgraph.prebuilt.tool_node import ToolCallRequest
@@ -103,12 +106,26 @@ class SQLSecurityMiddleware(AgentMiddleware):
         # 违规记录
         self._violations: list = []
 
-    def validate(self, sql: str) -> tuple[bool, Optional[str]]:
+    # 趋势查询关键词列表
+    TREND_KEYWORDS = [
+        '趋势', '变化', '增长', '下降', '走势',
+        '每月', '每年', '每季度', '每天', '按月', '按年',
+        '统计', '汇总', '分析'
+    ]
+
+    def validate(
+        self,
+        sql: str,
+        user_query: str = "",
+        check_trend_query: bool = True
+    ) -> tuple[bool, Optional[str]]:
         """
         校验 SQL 安全性
 
         Args:
             sql: 要校验的 SQL 语句
+            user_query: 用户原始查询（可选，用于趋势查询检测）
+            check_trend_query: 是否检查趋势查询（默认 True）
 
         Returns:
             tuple: (is_safe, error_message)
@@ -164,6 +181,46 @@ class SQLSecurityMiddleware(AgentMiddleware):
                     "Performance Alert: Query must include a LIMIT clause "
                     "to prevent excessive result sets."
                 )
+
+        # 6. 🔧 趋势查询检测：检测趋势查询中缺少聚合的错误模式
+        if check_trend_query and user_query:
+            is_trend_query = any(
+                kw in user_query.lower() for kw in self.TREND_KEYWORDS
+            )
+
+            if is_trend_query:
+                has_group_by = "GROUP BY" in sql_upper
+                # 检查是否有聚合函数（更全面的检测）
+                aggregate_patterns = [
+                    r'\bSUM\s*\(',
+                    r'\bCOUNT\s*\(',
+                    r'\bAVG\s*\(',
+                    r'\bMAX\s*\(',
+                    r'\bMIN\s*\(',
+                ]
+                has_aggregate = any(re.search(p, sql_upper) for p in aggregate_patterns)
+
+                # 🔥 趋势查询必须有聚合，否则就是错误的
+                if not has_group_by or not has_aggregate:
+                    # 检测是否是 SELECT * 模式
+                    has_select_star = bool(re.search(r'SELECT\s+\*\s+FROM', sql, re.IGNORECASE))
+                    select_pattern = r'SELECT\s+(.+?)\s+FROM'
+                    select_match = re.search(select_pattern, sql, re.IGNORECASE)
+                    selected_columns = select_match.group(1).strip() if select_match else ""
+
+                    error_msg = "🚫 趋势查询错误：必须使用聚合函数和 GROUP BY。\n\n"
+                    error_msg += "用户问的是'趋势'，需要按时间维度聚合数据。\n\n"
+                    error_msg += "❌ 当前SQL缺少聚合，会返回数千行原始数据！\n\n"
+                    error_msg += "✅ 正确格式示例：\n"
+                    error_msg += "SELECT\n"
+                    error_msg += "    DATE_TRUNC('month', order_date) as month,\n"
+                    error_msg += "    SUM(total_amount) as total_sales\n"
+                    error_msg += "FROM orders\n"
+                    error_msg += "WHERE EXTRACT(YEAR FROM order_date) = 2023\n"
+                    error_msg += "GROUP BY DATE_TRUNC('month', order_date)\n"
+                    error_msg += "ORDER BY month"
+
+                    return False, error_msg
 
         return True, None
 
@@ -254,21 +311,44 @@ class SQLSecurityMiddleware(AgentMiddleware):
         """清除违规记录"""
         self._violations.clear()
 
-    def sanitize_for_logging(self, sql: str, max_length: int = 200) -> str:
+    def sanitize_for_logging(self, sql: str, max_length: int = 50) -> str:
         """
-        清理 SQL 用于日志记录（截断过长的查询）
+        清理 SQL 用于日志记录（脱敏 + 截断）
+
+        防止日志中暴露敏感信息：
+        - 移除字符串字面量中的内容
+        - 替换数字为 ***
+        - 替换 UUID/哈希值
+        - 截断过长的查询
 
         Args:
             sql: 原始 SQL
-            max_length: 最大长度
+            max_length: 最大长度（默认 50，更安全）
 
         Returns:
-            str: 截断后的 SQL
+            str: 脱敏并截断后的 SQL
+
+        Examples:
+            >>> sanitize_for_logging("SELECT * FROM users WHERE name = 'John' AND id = 123")
+            "SELECT * FROM users WHERE name = '' AND id = ***"
         """
-        sql_clean = ' '.join(sql.split())  # 移除多余空白
-        if len(sql_clean) > max_length:
-            return sql_clean[:max_length] + "..."
-        return sql_clean
+        # 移除字符串字面量中的内容
+        sanitized = re.sub(r"'[^']*'", "''", sql)
+
+        # 替换数字为 ***
+        sanitized = re.sub(r'\b\d+\b', '***', sanitized)
+
+        # 替换 UUID/哈希值模式（长十六进制字符串）
+        sanitized = re.sub(r'\b[a-f0-9]{8,}\b', '***', sanitized, flags=re.IGNORECASE)
+
+        # 移除多余空白
+        sanitized = ' '.join(sanitized.split())
+
+        # 截断长度
+        if len(sanitized) > max_length:
+            sanitized = sanitized[:max_length] + "..."
+
+        return sanitized
 
     def wrap_tool_call(
         self,
@@ -372,8 +452,41 @@ class SQLSecurityMiddleware(AgentMiddleware):
         Returns:
             ModelResponse 对象
         """
-        # TODO: 正确实现 SQL 安全检查
-        # 目前暂时直接调用 handler，不做任何检查
+        # 提取模型输入中的 SQL 内容进行检查
+        # ModelRequest 结构可能包含 messages, prompt 等字段
+        model_input = None
+
+        # 尝试从不同类型的请求中提取内容
+        if hasattr(request, 'messages'):
+            model_input = request.messages
+        elif hasattr(request, 'prompt'):
+            model_input = request.prompt
+        elif hasattr(request, 'input'):
+            model_input = request.input
+        elif isinstance(request, dict):
+            model_input = request.get('messages') or request.get('prompt') or request.get('input')
+
+        # 检查输入内容中的 SQL
+        if model_input:
+            sql_to_check = self._extract_sql_from_input(model_input)
+            if sql_to_check:
+                is_safe, error_msg = self.validate(sql_to_check)
+                if not is_safe:
+                    if self.log_violations:
+                        self._violations.append({
+                            "type": "model_call",
+                            "sql": self.sanitize_for_logging(sql_to_check),
+                            "error": error_msg,
+                            "timestamp": None  # TODO: 添加时间戳
+                        })
+                    # 返回错误响应或抛出异常
+                    if self.strict_mode:
+                        raise ValueError(f"SQL Security Violation in model output: {error_msg}")
+                    else:
+                        # 在非严格模式下，记录警告但继续执行
+                        logger.warning(f"SQL Security Warning (non-strict mode): {error_msg}")
+
+        # 调用处理器
         return handler(request)
 
     async def awrap_model_call(
@@ -391,27 +504,121 @@ class SQLSecurityMiddleware(AgentMiddleware):
         Returns:
             ModelCallResult 对象
         """
-        # TODO: 正确实现 SQL 安全检查
-        # 目前暂时直接调用 handler，不做任何检查
+        # 提取模型输入中的 SQL 内容进行检查
+        model_input = None
+
+        # 尝试从不同类型的请求中提取内容
+        if hasattr(request, 'messages'):
+            model_input = request.messages
+        elif hasattr(request, 'prompt'):
+            model_input = request.prompt
+        elif hasattr(request, 'input'):
+            model_input = request.input
+        elif isinstance(request, dict):
+            model_input = request.get('messages') or request.get('prompt') or request.get('input')
+
+        # 检查输入内容中的 SQL
+        if model_input:
+            sql_to_check = self._extract_sql_from_input(model_input)
+            if sql_to_check:
+                is_safe, error_msg = self.validate(sql_to_check)
+                if not is_safe:
+                    if self.log_violations:
+                        self._violations.append({
+                            "type": "async_model_call",
+                            "sql": self.sanitize_for_logging(sql_to_check),
+                            "error": error_msg,
+                            "timestamp": None  # TODO: 添加时间戳
+                        })
+                    # 返回错误响应或抛出异常
+                    if self.strict_mode:
+                        raise ValueError(f"SQL Security Violation in model output: {error_msg}")
+                    else:
+                        # 在非严格模式下，记录警告但继续执行
+                        logger.warning(f"SQL Security Warning (non-strict mode): {error_msg}")
+
+        # 调用异步处理器
         return await handler(request)
+
+    def _extract_sql_from_input(self, input_data: Any) -> Optional[str]:
+        """
+        从模型输入中提取 SQL 语句
+
+        Args:
+            input_data: 模型输入数据（可能是字符串、列表、字典等）
+
+        Returns:
+            提取的 SQL 语句，如果没有找到则返回 None
+        """
+        if isinstance(input_data, str):
+            # 直接检查字符串
+            return self._find_sql_in_text(input_data)
+        elif isinstance(input_data, list):
+            # 检查列表中的每个元素（如 messages）
+            for item in reversed(input_data):  # 从最新的消息开始检查
+                if isinstance(item, dict):
+                    content = item.get('content') or item.get('text')
+                    if content and isinstance(content, str):
+                        sql = self._find_sql_in_text(content)
+                        if sql:
+                            return sql
+                elif isinstance(item, str):
+                    sql = self._find_sql_in_text(item)
+                    if sql:
+                        return sql
+        elif isinstance(input_data, dict):
+            # 检查字典中的 content 字段
+            content = input_data.get('content') or input_data.get('text')
+            if content and isinstance(content, str):
+                return self._find_sql_in_text(content)
+
+        return None
+
+    def _find_sql_in_text(self, text: str) -> Optional[str]:
+        """
+        在文本中查找 SQL 语句
+
+        Args:
+            text: 要搜索的文本
+
+        Returns:
+            找到的 SQL 语句，如果没有找到则返回 None
+        """
+        # SQL 关键字模式
+        sql_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE"]
+        text_upper = text.upper()
+
+        for keyword in sql_keywords:
+            if keyword in text_upper:
+                # 简单启发式：认为包含 SQL 关键字的文本就是 SQL
+                # 在实际应用中，可能需要更复杂的提取逻辑
+                return text
+
+        return None
 
 
 # ============================================================================
 # 便捷函数
 # ============================================================================
 
-def validate_sql(sql: str) -> tuple[bool, Optional[str]]:
+def validate_sql(
+    sql: str,
+    user_query: str = "",
+    check_trend_query: bool = True
+) -> tuple[bool, Optional[str]]:
     """
     校验 SQL 安全性的便捷函数
 
     Args:
         sql: 要校验的 SQL 语句
+        user_query: 用户原始查询（可选，用于趋势查询检测）
+        check_trend_query: 是否检查趋势查询（默认 True）
 
     Returns:
         tuple: (is_safe, error_message)
     """
     middleware = SQLSecurityMiddleware()
-    return middleware.validate(sql)
+    return middleware.validate(sql, user_query, check_trend_query)
 
 
 def assert_sql_safe(sql: str) -> None:

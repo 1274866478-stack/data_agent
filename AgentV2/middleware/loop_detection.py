@@ -195,14 +195,23 @@ class LoopDetectionMiddleware(AgentMiddleware):
             logger.warning(f"LoopDetection: {loop_error}")
             # 返回错误消息而不是抛出异常
             error_content = (
-                f"⚠️ 检测到工具调用循环，已自动终止。\n"
-                f"原因: {loop_error}\n\n"
-                f"建议：请尝试重新表述您的问题，或提供更具体的查询要求。"
+                f"⚠️ **检测到工具调用循环，已自动终止查询**\n\n"
+                f"**原因**: {loop_error}\n\n"
+                f"📋 **建议操作**:\n"
+                f"1. 请尝试重新表述您的问题\n"
+                f"2. 使用更具体的查询条件\n"
+                f"3. 如果是 Excel 数据源，确保只查询单个工作表\n\n"
+                f"❌ 本次查询已被系统终止，请勿重试相同问题。"
             )
             error_message = ToolMessage(
                 content=error_content,
                 name=tool_name,
-                tool_call_id=tool_call.get("id")
+                tool_call_id=tool_call.get("id"),
+                # 🆕 添加额外的元数据标记
+                additional_kwargs={
+                    "_loop_detected": True,
+                    "_force_terminate": True
+                }
             )
             return Command(update={"messages": [error_message]})
 
@@ -267,16 +276,33 @@ class LoopDetectionMiddleware(AgentMiddleware):
 
         if loop_error:
             logger.warning(f"LoopDetection: {loop_error}")
+
+            # 🆕 设置一个特殊标志，强制终止 Agent 执行
             error_content = (
-                f"⚠️ 检测到工具调用循环，已自动终止。\n"
-                f"原因: {loop_error}\n\n"
-                f"建议：请尝试重新表述您的问题，或提供更具体的查询要求。"
+                f"⚠️ **检测到工具调用循环，已自动终止查询**\n\n"
+                f"**原因**: {loop_error}\n\n"
+                f"📋 **建议操作**:\n"
+                f"1. 请尝试重新表述您的问题\n"
+                f"2. 使用更具体的查询条件\n"
+                f"3. 如果是 Excel 数据源，确保只查询单个工作表\n\n"
+                f"❌ 本次查询已被系统终止，请勿重试相同问题。"
             )
+
+            # 🆕 使用特殊的 content 结构，让前端识别为终止状态
             error_message = ToolMessage(
                 content=error_content,
                 name=tool_name,
-                tool_call_id=tool_call.get("id")
+                tool_call_id=tool_call.get("id"),
+                # 🆕 添加额外的元数据标记
+                additional_kwargs={
+                    "_loop_detected": True,
+                    "_force_terminate": True
+                }
             )
+
+            # 🆕 返回带有终止标志的 Command
+            # 注意：LangGraph 的 Command 不直接支持 terminate 参数
+            # 我们通过 additional_kwargs 传递信号
             return Command(update={"messages": [error_message]})
 
         # 添加到历史

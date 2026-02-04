@@ -16,7 +16,7 @@
 
 import re
 import logging
-from typing import Dict, Any, List, Optional, Callable, Awaitable, Any
+from typing import Dict, Any, List, Optional, Callable, Awaitable
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -247,15 +247,19 @@ class SemanticPriorityMiddleware(AgentMiddleware):
 
 ⚠️ 重要：请按以下步骤操作：
 
-1. **首先调用 resolve_business_term 解析每个业务术语**
+1. **首先调用 list_tables() 获取实际表名**
+   - 必须在调用语义层工具之前完成
+   - 获取数据库中的实际表名（如 "订单表"、"用户表"）
+
+2. **然后调用 resolve_business_term 解析业务术语**
    - 输入: 业务术语（如 "总收入"）
-   - 输出: 语义定义（包含 SQL 表达式）
+   - 输出: 语义定义（包含 cube、actual_table_name、SQL 表达式）
 
-2. **使用返回的 SQL 表达式构建查询**
-   - 不要自行编写 SQL
-   - 使用语义层提供的标准定义
+3. **使用 actual_table_name 构建查询**
+   - ❌ 不要使用 `cube` 字段（如 "Orders"）作为表名
+   - ✅ 必须使用 `actual_table_name` 字段（如 "订单表"）作为表名
 
-3. **可用的语义层工具**:
+4. **可用的语义层工具**:
    - `resolve_business_term(term)` - 解析业务术语
    - `get_semantic_measure(cube, measure)` - 获取度量详情
    - `normalize_status_value(status)` - 规范化状态值
@@ -264,17 +268,23 @@ class SemanticPriorityMiddleware(AgentMiddleware):
 
 📋 使用示例：
 
-用户: "订单总收入是多少？"
+用户: "2023年的销售趋势"
 正确流程:
-    1. 调用: resolve_business_term("总收入")
-    2. 返回: {{"cube": "Orders", "sql": "SUM(total_amount)", ...}}
-    3. 使用: SELECT SUM(total_amount) FROM orders
+    1. list_tables() → ["订单表", "用户表", "产品表"]
+    2. get_schema("订单表") → [订单日期, 金额, 状态...]
+    3. resolve_business_term("销售") → {{"cube": "Orders", "actual_table_name": "订单表", "sql": "SUM(total_amount)"}}
+    4. 使用: SELECT SUM(total_amount) FROM 订单表 WHERE EXTRACT(YEAR FROM 订单日期) = 2023
 
 用户: "已完成的订单有多少？"
 正确流程:
-    1. 调用: normalize_status_value("已完成")
-    2. 返回: {{"normalized": "completed", ...}}
-    3. 使用: SELECT COUNT(*) FROM orders WHERE status = 'completed'
+    1. list_tables() → ["订单表", ...]
+    2. normalize_status_value("已完成") → {{"normalized": "completed", ...}}
+    3. 使用: SELECT COUNT(*) FROM 订单表 WHERE status = 'completed'
+
+🚨 关键提醒：
+- resolve_business_term 返回的 `cube` 是语义层名称（如 "Orders"）
+- resolve_business_term 返回的 `actual_table_name` 才是实际表名（如 "订单表"）
+- 生成 SQL 时必须使用 `actual_table_name`，绝对不能使用 `cube`！
 """
 
         return guidance

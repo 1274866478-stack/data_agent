@@ -124,7 +124,7 @@ TEST_QUESTIONS = [
     },
 ]
 
-async def test_single_question(q_data, timeout=120):
+async def test_single_question(q_data, timeout=60):
     """测试单个问题"""
     print(f"\n{'=' * 80}")
     print(f"问题 {q_data['id']}: {q_data['name']}")

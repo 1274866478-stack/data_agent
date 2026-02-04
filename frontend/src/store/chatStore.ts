@@ -74,6 +74,7 @@
  */
 
 import { api, apiClient, ChatCompletionRequest, ChatQueryRequest } from '@/lib/api-client'
+import logger from '@/lib/logger'
 import { cacheMessage, cacheSession, getCachedSession, getCachedSessions, messageCacheService, syncMessages } from '@/services/messageCacheService'
 import { ProcessingStep, StreamCallbacks, V2SessionState, V2StreamCallbacks } from '@/types/chat'
 import { create } from 'zustand'
@@ -401,10 +402,19 @@ export const useChatStore = create<ChatState>()(
       // 发送消息
       sendMessage: async (content: string, dataSourceIds?: string | string[], useStream: boolean = true) => {
         const state = get()
-        console.log('[ChatStore] sendMessage 调用, currentSession:', state.currentSession?.id, 'isLoading:', state.isLoading, 'isOnline:', state.isOnline, 'dataSourceIds:', dataSourceIds)
+        logger.info('ChatStore', 'sendMessage called', {
+          sessionId: state.currentSession?.id,
+          isLoading: state.isLoading,
+          isOnline: state.isOnline,
+          dataSourceIds,
+          contentLength: content.length,
+        })
 
         if (!state.currentSession || state.isLoading) {
-          console.warn('[ChatStore] 无法发送消息: currentSession 或 isLoading 状态不正确')
+          logger.warn('ChatStore', 'Cannot send message: invalid state', {
+            hasSession: !!state.currentSession,
+            isLoading: state.isLoading,
+          })
           return
         }
 
@@ -476,7 +486,15 @@ export const useChatStore = create<ChatState>()(
 
       // 内部方法：在线发送消息
       _sendOnlineMessage: async (content: string, sessionId: string, dataSourceIds?: string | string[], useStream: boolean = true) => {
+        const endTimer = logger.startTimer('_sendOnlineMessage')
         const state = get()
+
+        logger.info('ChatStore', '_sendOnlineMessage started', {
+          sessionId,
+          dataSourceIds,
+          useStream,
+        })
+
         console.log('[ChatStore] _sendOnlineMessage 开始, sessionId:', sessionId)
 
         const normalizedDataSourceIds = dataSourceIds
@@ -659,7 +677,15 @@ export const useChatStore = create<ChatState>()(
                   currentProgress = 0
                 },
                 onStep: (data) => {
-                  console.log('[ChatStore V2] 步骤:', data)
+                  // 🔧 修复：添加详细的状态调试日志
+                  console.log('[ChatStore V2] 步骤事件:', {
+                    step: data.step,
+                    message: data.message,
+                    status: data.status,
+                    hasStatusField: "status" in data,
+                    statusValue: data.status,
+                    statusType: typeof data.status
+                  })
 
                   // 🔧 扩展：转换为 ProcessingStep 格式（支持 V1 兼容字段）
                   const step: ProcessingStep = {
@@ -681,8 +707,11 @@ export const useChatStore = create<ChatState>()(
                     processingSteps[existingIndex] = {
                       ...processingSteps[existingIndex],
                       ...step,
-                      // 如果后端明确提供了状态，使用后端的状态；否则保持现有状态
-                      status: data.status || processingSteps[existingIndex].status,
+                      // 🔧 修复：明确检查 status 是否为有效的非空字符串
+                      // 空字符串 "" 不是 undefined，但也不应该作为有效状态
+                      status: (typeof data.status === 'string' && data.status.length > 0)
+                          ? data.status
+                          : processingSteps[existingIndex].status,
                     }
                   } else {
                     processingSteps.push(step)
@@ -759,6 +788,89 @@ export const useChatStore = create<ChatState>()(
                 onDone: (data) => {
                   console.log('[ChatStore V2] 完成:', data)
                   console.log('[ChatStore V2] chart_config:', data.chart_config)
+                  console.log('[ChatStore V2] 当前 processingSteps 数量:', processingSteps.length)
+
+                  // 🔧 第六次修复：记录初始状态
+                  console.log('[ChatStore V2] 🔍 onDone 开始时 processingSteps:', processingSteps.map(s => ({
+                    step: s.step,
+                    title: s.title,
+                    status: s.status,
+                    statusType: typeof s.status
+                  })))
+
+                  // 🔧 兜底逻辑：如果没有步骤1，先添加一个running状态的步骤1
+                  if (processingSteps.length === 0 || !processingSteps.some(s => s.step === 1)) {
+                    console.warn('[ChatStore V2] ⚠️ processingSteps中没有步骤1，添加步骤1')
+                    processingSteps.push({
+                      step: 1,
+                      title: '理解问题',
+                      description: '正在分析问题...',
+                      status: 'running' as const,
+                    })
+                  }
+
+                  // 🔧 第六次修复：合并所有 map 操作为一次，确保不可变性
+                  // 1. 强制完成所有 running 步骤
+                  // 2. 清理 streaming 和 content_preview
+                  // 3. 确保步骤 0 的 content_preview 被清除（防止文案重复）
+                  processingSteps = processingSteps.map((step) => {
+                    const baseUpdate = {
+                      ...step,
+                      streaming: false,
+                      content_preview: undefined,
+                    }
+                    // 如果步骤是 running 状态，强制改为 completed
+                    if (step.status === 'running') {
+                      console.log(`[ChatStore V2] 🔧 强制步骤 ${step.step} 从 running 更新为 completed`)
+                      return {
+                        ...baseUpdate,
+                        status: 'completed',
+                      }
+                    }
+                    return baseUpdate
+                  })
+
+                  console.log('[ChatStore V2] ✅ 已更新所有步骤（completed + 清理字段）')
+                  console.log('[ChatStore V2] 🔍 更新后 processingSteps:', processingSteps.map(s => ({
+                    step: s.step,
+                    status: s.status
+                  })))
+
+                  // 🔧 第六次修复：如果没有任何步骤，添加默认步骤
+                  if (processingSteps.length === 0) {
+                    console.warn('[ChatStore V2] ⚠️ processingSteps 为空，添加默认步骤')
+                    const defaultStep: ProcessingStep = {
+                      step: 1,
+                      title: '查询完成',
+                      description: '查询已处理完成',
+                      status: 'completed',
+                      duration: 100
+                    }
+                    processingSteps.push(defaultStep)
+                  }
+
+                  // 🔧 第六次修复：检查 answer 是否为空
+                  if (!data.answer || !data.answer.trim()) {
+                    console.warn('[ChatStore V2] ⚠️ 收到的 answer 为空，data:', data)
+
+                    // 生成友好的错误消息
+                    const emptyAnswerMessage = data.success
+                      ? "查询已处理完成，但 AI 未生成文字回复。请查看上方的 Reasoning Process 了解详情。"
+                      : "查询处理失败，请重试。"
+
+                    // 更新消息内容
+                    state.updateMessage(assistantMessageId, {
+                      status: 'sent',
+                      content: emptyAnswerMessage,
+                      metadata: {
+                        processing_steps: [...processingSteps],
+                        progress: 100,
+                      }
+                    })
+
+                    state.setError(emptyAnswerMessage)
+                    return
+                  }
 
                   // 🔧 取消挂起的节流更新，执行最终同步更新
                   if (rafId !== null) {
@@ -767,27 +879,61 @@ export const useChatStore = create<ChatState>()(
                   }
                   pendingUpdate = false
 
-                  // 完成所有步骤，并禁用打字机光标、清理 content_preview
-                  processingSteps.forEach(step => {
-                    if (step.status === 'running') {
-                      step.status = 'completed'
-                    }
-                    // 禁用打字机光标
-                    step.streaming = false
-                    // 清理临时的流式内容预览（最终内容会在正式步骤中显示）
-                    step.content_preview = undefined
-                  })
-
                   // 🔧 解析图表配置
                   let chartConfig = null
+                  console.log('[ChatStore V2] 🔍 done 事件 data.chart_config:', data.chart_config)
+                  console.log('[ChatStore V2] 🔍 chart_config 类型:', typeof data.chart_config)
+                  console.log('[ChatStore V2] 🔍 chart_config 长度:', data.chart_config?.length || 'N/A')
                   if (data.chart_config) {
                     try {
                       chartConfig = typeof data.chart_config === 'string'
                         ? JSON.parse(data.chart_config)
                         : data.chart_config
-                      console.log('[ChatStore V2] 成功解析图表配置:', chartConfig)
+                      console.log('[ChatStore V2] ✅ 成功解析图表配置:', chartConfig)
+                      console.log('[ChatStore V2] 🔍 chartConfig.series:', chartConfig?.series)
+                      console.log('[ChatStore V2] 🔍 chartConfig.xAxis:', chartConfig?.xAxis)
                     } catch (e) {
-                      console.warn('[ChatStore V2] 图表配置解析失败:', e)
+                      console.warn('[ChatStore V2] ❌ 图表配置解析失败:', e)
+                    }
+                  } else {
+                    console.warn('[ChatStore V2] ⚠️ done 事件中没有 chart_config 字段')
+                  }
+
+                  // 🔧 检查是否有表格数据（即使没有图表配置）
+                  const hasTableData = processingSteps.some(step =>
+                    step.content_type === 'table' && step.content_data?.table
+                  )
+
+                  console.log('[ChatStore V2] 🔍 是否有表格数据:', hasTableData)
+                  console.log('[ChatStore V2] 🔍 是否有图表配置:', !!chartConfig)
+
+                  // 🔧 修复：如果有表格数据但没有图表配置，仍然应该添加图表步骤显示数据
+                  // 这样可以确保表格数据在 Reasoning Process 中正确显示
+                  if (hasTableData && !chartConfig) {
+                    console.log('[ChatStore V2] 📊 有表格数据但无图表配置，将添加数据展示步骤')
+
+                    // 找到表格数据的步骤
+                    const tableStep = processingSteps.find(step =>
+                      step.content_type === 'table' && step.content_data?.table
+                    )
+
+                    if (tableStep && tableStep.content_data?.table) {
+                      const table = tableStep.content_data.table
+
+                      // 🔧 添加一个数据展示步骤
+                      const dataDisplayStep = {
+                        step: processingSteps.length + 1,
+                        title: '查询数据展示',
+                        description: `查询返回 ${table.row_count} 行数据，共 ${table.columns.length} 列`,
+                        status: 'completed' as const,
+                        content_type: 'table' as const,
+                        content_data: {
+                          table: table
+                        },
+                        duration: 50
+                      }
+                      processingSteps.push(dataDisplayStep)
+                      console.log('[ChatStore V2] ✅ 添加数据展示步骤')
                     }
                   }
 
@@ -795,12 +941,12 @@ export const useChatStore = create<ChatState>()(
                   if (chartConfig) {
                     const chartStep = {
                       step: processingSteps.length + 1,
-                      title: '生成数据可视化',  // 🔧 修复：使用 title 而不是 message
-                      description: chartConfig.title?.text || '图表生成完成',  // 🔧 添加 description 字段
+                      title: '生成数据可视化',
+                      description: chartConfig.title?.text || '图表生成完成',
                       status: 'completed' as const,
-                      echarts_option: chartConfig, // 🔧 关键修复：添加 echarts_option 字段
-                      duration: 100,  // 🔧 修复：使用 duration 而不是 duration_ms
-                      content_type: 'chart' as const,  // 🔧 添加 content_type 字段
+                      echarts_option: chartConfig,
+                      duration: 100,
+                      content_type: 'chart' as const,
                       content_data: {
                         chart: {
                           echarts_option: chartConfig,
@@ -827,16 +973,16 @@ export const useChatStore = create<ChatState>()(
                       // 移除表格前后多余的空行
                       .replace(/\n{3,}/g, '\n\n')
                       .trim()
-                    
+
                     // 如果清理后内容为空，使用默认消息
                     if (!cleanedAnswer) {
                       cleanedAnswer = '已生成数据可视化图表，请查看上方图表。'
                     }
-                    
+
                     const answerStep = {
                       step: processingSteps.length + 1,
                       title: 'AI 回答',
-                      description: cleanedAnswer.length > 100 
+                      description: cleanedAnswer.length > 100
                         ? cleanedAnswer.substring(0, 100) + '...'
                         : cleanedAnswer,
                       status: 'completed' as const,
@@ -845,11 +991,27 @@ export const useChatStore = create<ChatState>()(
                         text: cleanedAnswer
                       }
                     }
+
                     processingSteps.push(answerStep)
                     console.log('[ChatStore V2] 添加 AI 回答步骤:', answerStep)
                   }
 
-                  // 更新最终消息
+                  // 🔧 第六次修复：在最终更新前，再次检查是否有 running 步骤
+                  const hasRunningBeforeFinal = processingSteps.some(s => s.status === 'running')
+                  if (hasRunningBeforeFinal) {
+                    console.warn('[ChatStore V2] ⚠️ 最终更新前仍有 running 步骤，强制完成所有步骤')
+                    processingSteps = processingSteps.map(s => ({
+                      ...s,
+                      status: 'completed',
+                    }))
+                  }
+
+                  console.log('[ChatStore V2] 🔍 最终 processingSteps 状态:', processingSteps.map(s => ({
+                    step: s.step,
+                    status: s.status
+                  })))
+
+                  // 🔧 第六次修复：只调用一次 updateMessage，使用最新的 processingSteps
                   state.updateMessage(assistantMessageId, {
                     status: 'sent',
                     content: data.answer,
@@ -872,10 +1034,42 @@ export const useChatStore = create<ChatState>()(
                 },
                 onError: (data) => {
                   console.error('[ChatStore V2] 错误:', data)
-                  set({ streamingStatus: 'error' })
+
+                  // 🔧 兜底逻辑：确保步骤1被标记为完成
+                  processingSteps = processingSteps.map(s => {
+                    if (s.step === 1 && s.status === 'running') {
+                      return { ...s, status: 'completed', streaming: false, content_preview: undefined }
+                    }
+                    // 清理所有步骤的 streaming 和 content_preview
+                    return { ...s, streaming: false, content_preview: undefined, status: s.status === 'running' ? 'completed' : s.status }
+                  })
+
+                  // 如果没有任何步骤，添加默认步骤
+                  if (processingSteps.length === 0) {
+                    console.warn('[ChatStore V2] ⚠️ processingSteps 为空，添加默认步骤')
+                    processingSteps = [{
+                      step: 1,
+                      title: '查询处理',
+                      description: '查询处理完成',
+                      status: 'completed',
+                      duration: 100
+                    }]
+                  }
+
+                  console.log('[ChatStore V2] ✅ onError：已更新所有步骤')
+
+                  set({
+                    streamingStatus: 'error',
+                    isLoading: false,
+                    isTyping: false,
+                  })
                   state.updateMessage(assistantMessageId, {
                     status: 'error',
                     content: data.error || '查询失败',
+                    metadata: {
+                      processing_steps: [...processingSteps],
+                      progress: 100,
+                    },
                   })
                   state.setError(data.detail || data.error || 'V2 流式响应错误')
                 },
@@ -1159,7 +1353,11 @@ export const useChatStore = create<ChatState>()(
                 })
               },
               onError: (error: string) => {
-                set({ streamingStatus: 'error' })
+                set({
+                  streamingStatus: 'error',
+                  isLoading: false,  // 🔧 确保重置加载状态
+                  isTyping: false,   // 🔧 确保重置输入状态
+                })
                 state.updateMessage(assistantMessageId, {
                   status: 'error',
                   content: accumulatedContent || error || '生成失败',
@@ -1302,6 +1500,13 @@ export const useChatStore = create<ChatState>()(
           }
 
         } catch (error) {
+          // 记录错误日志
+          logger.error('ChatStore', 'sendMessage failed', error, {
+            sessionId,
+            dataSourceIds,
+            useStream,
+          })
+
           console.error('[ChatStore] 发送消息失败:', error)
 
           // 确保 session 已经被缓存（如果没有则先缓存）
@@ -1358,9 +1563,16 @@ export const useChatStore = create<ChatState>()(
           state.addMessage(errorMessage)
           state.setError(`发送消息失败: ${error instanceof Error ? error.message : '未知错误'}`)
         } finally {
+          // 结束性能计时
+          endTimer()
+
           state.setLoading(false)
           state.setTyping(false)
           console.log('[ChatStore] _sendOnlineMessage 完成')
+
+          logger.info('ChatStore', '_sendOnlineMessage completed', {
+            sessionId,
+          })
         }
       },
 
@@ -1413,16 +1625,50 @@ export const useChatStore = create<ChatState>()(
 
       // 更新消息（支持深度合并 metadata）
       updateMessage: (messageId: string, updates: Partial<ChatMessage>) => {
+        // 🔧 第三次修复：添加调试日志
+        console.log('[ChatStore] 🔧 updateMessage 调用:', {
+          messageId,
+          hasUpdates: !!updates,
+          hasContent: !!updates.content,
+          hasMetadata: !!updates.metadata,
+          metadataKeys: updates.metadata ? Object.keys(updates.metadata) : [],
+          processingSteps: updates.metadata?.processing_steps?.map((s: any) => ({ step: s.step, status: s.status })),
+          progress: updates.metadata?.progress
+        })
+
         set((state) => {
           if (!state.currentSession) return state
 
           // 辅助函数：深度合并消息更新
           const mergeMessage = (m: ChatMessage): ChatMessage => {
             if (m.id !== messageId) return m
-            
+
+            // 🔧 第五次修复：强制完成所有 running 状态的步骤
+            let processingSteps = updates.metadata?.processing_steps || m.metadata?.processing_steps
+            if (processingSteps && processingSteps.length > 0) {
+              const hasRunning = processingSteps.some((s: any) => s.status === 'running')
+              if (hasRunning) {
+                console.log('[ChatStore] 🔧 第五次修复：强制完成所有 running 步骤')
+                processingSteps = processingSteps.map((step: any) => ({
+                  ...step,
+                  status: step.status === 'running' ? 'completed' : step.status,
+                  streaming: false
+                }))
+                // 🔧 更新 updates.metadata.processing_steps
+                if (updates.metadata) {
+                  updates.metadata = {
+                    ...updates.metadata,
+                    processing_steps: processingSteps
+                  }
+                } else {
+                  updates.metadata = { processing_steps: processingSteps }
+                }
+              }
+            }
+
             // 如果更新包含 metadata，需要深度合并
             if (updates.metadata && m.metadata) {
-              return {
+              const merged = {
                 ...m,
                 ...updates,
                 metadata: {
@@ -1430,8 +1676,20 @@ export const useChatStore = create<ChatState>()(
                   ...updates.metadata,
                 }
               }
+              // 🔧 第三次修复：记录合并后的 metadata
+              if (merged.metadata?.processing_steps) {
+                console.log('[ChatStore] 🔧 mergeMessage 合并后 metadata:', {
+                  processingSteps: merged.metadata.processing_steps.map((s: any) => ({
+                    step: s.step,
+                    status: s.status,
+                    title: s.title?.substring(0, 20)
+                  })),
+                  progress: merged.metadata.progress
+                })
+              }
+              return merged
             }
-            
+
             // 否则直接合并
             return { ...m, ...updates }
           }

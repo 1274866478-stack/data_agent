@@ -172,8 +172,154 @@ from datetime import datetime
 from sql_validator import SQLValidator, SQLValidationError
 
 
+# ============================================================
+# 🚨 地理查询规则注入器
+# ============================================================
+
+def _inject_geo_query_rules(user_query: str) -> str:
+    """
+    根据用户查询动态注入地理查询规则
+
+    Args:
+        user_query: 用户查询文本
+
+    Returns:
+        str: 额外的强制规则（如果检测到地理关键词）
+    """
+    if not user_query:
+        return ""
+
+    # 地理关键词列表
+    province_keywords = [
+        "省份", "省", "安徽", "浙江", "江苏", "上海", "北京", "广东", "福建",
+        "湖北", "湖南", "河南", "河北", "山东", "山西", "四川", "重庆", "天津",
+        "辽宁", "吉林", "黑龙江", "陕西", "甘肃", "青海", "云南", "贵州", "西藏",
+        "新疆", "内蒙古", "宁夏", "广西", "海南", "台湾", "香港", "澳门",
+        "华南", "华北", "华东", "华中", "西南", "西北", "东北"
+    ]
+
+    city_keywords = [
+        "城市", "市", "杭州", "宁波", "苏州", "南京", "深圳", "广州", "成都",
+        "武汉", "西安", "郑州", "青岛", "大连", "厦门", "长沙", "合肥", "南昌",
+        "昆明", "南宁", "贵阳", "兰州", "太原", "石家庄", "济南", "福州"
+    ]
+
+    address_keywords = ["地址", "客户地址", "用户地址", "地区", "区域", "分布"]
+
+    # 组合所有关键词
+    all_geo_keywords = province_keywords + city_keywords + address_keywords
+
+    # 检查是否包含地理关键词
+    query_lower = user_query.lower()
+    has_geo_keyword = any(keyword in query_lower for keyword in all_geo_keywords)
+
+    if not has_geo_keyword:
+        return ""
+
+    # 检测具体关键词类型
+    detected_types = []
+    if any(kw in query_lower for kw in province_keywords):
+        detected_types.append("省份")
+    if any(kw in query_lower for kw in city_keywords):
+        detected_types.append("城市")
+    if any(kw in query_lower for kw in address_keywords):
+        detected_types.append("地址")
+
+    # 检测是否为占比类问题
+    is_proportion_query = any(kw in query_lower for kw in ["占比", "比例", "百分比", "分布"])
+
+    # 生成动态规则
+    detected_type_str = "、".join(detected_types)
+    extra_rules = f"""
+
+## 🚨🚨🚨【当前查询检测】{detected_type_str}查询 - 必须使用 addresses 表 🚨🚨🚨
+
+用户查询包含{detected_type_str}关键词，**当前查询必须遵守以下强制规则**：
+
+### 1️⃣ 表选择强制规则
+- ✅ **必须使用**: `addresses` 表进行{detected_type_str}查询
+- ❌ **绝对禁止**: `users` 表或其他表用于{detected_type_str}查询
+
+### 2️⃣ 查询流程强制规则
+```
+第1步: list_tables()  ← 确认表存在
+第2步: get_schema("addresses")  ← 必须查看 addresses 表结构
+第3步: query('SELECT province, COUNT(*) FROM addresses GROUP BY province')  ← 使用 GROUP BY
+```
+
+### 3️⃣ 占比类问题特殊规则
+"""
+
+    if is_proportion_query:
+        extra_rules += """当用户问'占比'、'比例'、'分布'时：
+- ❌ 禁止：SELECT COUNT(*) FROM table WHERE condition
+- ❌ 禁止：多次 COUNT 查询
+- ✅ 必须：SELECT province as category, COUNT(*) as value FROM addresses GROUP BY province
+- ✅ 生成完整的分布数据用于饼图（不要 LIMIT！）
+"""
+    else:
+        extra_rules += """- 必须使用 GROUP BY 一次查询获取所有分类数据
+- 禁止使用 LIMIT 截断分布结果
+- 返回完整的 province/city 分布数据
+"""
+
+    # 添加检测信息
+    detected_kw_list = [kw for kw in all_geo_keywords if kw in query_lower][:10]
+    extra_rules += f"""
+**检测到的关键词**: {', '.join(detected_kw_list)}
+**用户原查询**: "{user_query[:100]}"
+
+---
+"""
+
+    print(f"🚨 [地理查询检测] 检测到{detected_type_str}关键词，已注入强制规则")
+    return extra_rules
+
+
 # Base system prompt for the SQL Agent (will be dynamically enhanced based on db_type)
 BASE_SYSTEM_PROMPT = """你是一个专业的 PostgreSQL 数据库助手，具备数据查询和图表可视化能力。
+
+## 🚨🚨🚨【绝对强制】省份/城市查询必选 addresses 表 🚨🚨🚨
+
+### 触发关键词（任一出现即强制）
+当用户查询包含以下关键词时，**必须**选择 addresses 表，**禁止**使用 users 表：
+
+- **省份关键词**: "省份"、"省"、"安徽"、"浙江"、"江苏"、"上海"、"北京"、"广东"、"福建"、"湖北"、"湖南"、"河南"、"河北"、"山东"、"山西"、"四川"、"重庆"、"天津"、"辽宁"、"吉林"、"黑龙江"、"陕西"、"甘肃"、"青海"、"云南"、"贵州"、"西藏"、"新疆"、"内蒙古"、"宁夏"、"广西"、"海南"、"台湾"、"香港"、"澳门"等
+- **城市关键词**: "城市"、"市"、"杭州"、"宁波"、"苏州"、"南京"、"深圳"、"广州"、"成都"、"武汉"、"西安"、"郑州"、"青岛"、"大连"、"厦门"、"长沙"、"合肥"等
+- **地区关键词**: "地区"、"区域"、"分布"、"占比" + "客户"
+- **地址关键词**: "地址"、"客户地址"、"用户地址"
+
+### 🚨 严禁模式
+
+```sql
+-- ❌ 绝对禁止：使用 users 表查询地理位置
+SELECT * FROM users WHERE province = '安徽'
+SELECT COUNT(*) FROM users WHERE province = '安徽省'
+SELECT * FROM users WHERE city = '杭州'
+
+-- ✅ 必须使用：addresses 表查询地理位置
+SELECT * FROM addresses WHERE province = '安徽省'
+SELECT province, COUNT(*) FROM addresses GROUP BY province
+SELECT city, COUNT(*) FROM addresses GROUP BY city
+```
+
+### 🚨 占比类问题特殊规则
+
+当用户问"XX的占比"、"XX的比例"、"XX的分布"时：
+- ❌ 禁止：`SELECT COUNT(*) FROM table WHERE condition`
+- ❌ 禁止：多次 COUNT 查询
+- ✅ 必须：`SELECT CASE WHEN ... END as category, COUNT(*) as value ... GROUP BY category`
+
+### 正确流程（安徽客户占比示例）
+
+```
+步骤1: list_tables()
+步骤2: get_schema("addresses")  ← 必须查看 addresses 表结构
+步骤3: query('SELECT province, COUNT(*) FROM addresses GROUP BY province')
+步骤4: 从结果中计算安徽省的占比
+```
+
+---
 
 ## 🚨🚨🚨【最高优先级安全规则】🚨🚨🚨
 
@@ -801,17 +947,21 @@ ORDER BY month;
 """
 
 
-def get_system_prompt(db_type: str = "postgresql") -> str:
+def get_system_prompt(db_type: str = "postgresql", user_query: str = "") -> str:
     """
     根据数据库类型获取系统提示词，并注入动态时间上下文
 
     Args:
         db_type: 数据库类型（postgresql, mysql, sqlite, xlsx, csv等）
+        user_query: 用户查询（用于动态规则注入）
 
     Returns:
-        str: 系统提示词（包含当前时间信息）
+        str: 系统提示词（包含当前时间信息和动态规则）
     """
-    print(f"🔍 [get_system_prompt] 调用参数 db_type='{db_type}'")
+    print(f"🔍 [get_system_prompt] 调用参数 db_type='{db_type}', user_query='{user_query[:50] if user_query else ''}...'")
+
+    # 🚨🚨🚨 动态地理查询规则注入
+    geo_query_rules = _inject_geo_query_rules(user_query) if user_query else ""
 
     # 🕒 动态时间上下文（对于"昨天"、"上月"等时间查询至关重要）
     current_time = datetime.now()
@@ -1039,8 +1189,8 @@ def get_system_prompt(db_type: str = "postgresql") -> str:
     try:
         from prompt_generator import generate_database_aware_system_prompt
         result = generate_database_aware_system_prompt(db_type, BASE_SYSTEM_PROMPT)
-        # 在提示词末尾追加数据分析输出要求和时间上下文
-        result = result + data_analysis_output_requirement + time_context
+        # 在提示词末尾追加地理查询规则、数据分析输出要求和时间上下文
+        result = result + geo_query_rules + data_analysis_output_requirement + time_context
         print(f"🔍 [get_system_prompt] 成功生成提示词，长度={len(result)}")
         # 打印提示词的前200字符，验证是否包含数据库特定信息
         preview = result[:200].replace('\n', ' ')
@@ -1048,10 +1198,10 @@ def get_system_prompt(db_type: str = "postgresql") -> str:
         return result
     except ImportError as e:
         print(f"⚠️ 无法导入 prompt_generator: {e}，使用默认PostgreSQL提示词")
-        return BASE_SYSTEM_PROMPT + data_analysis_output_requirement + time_context
+        return BASE_SYSTEM_PROMPT + geo_query_rules + data_analysis_output_requirement + time_context
     except Exception as e:
         print(f"⚠️ 生成动态提示词失败: {e}，使用默认PostgreSQL提示词")
-        return BASE_SYSTEM_PROMPT + data_analysis_output_requirement + time_context
+        return BASE_SYSTEM_PROMPT + geo_query_rules + data_analysis_output_requirement + time_context
 
 
 # 默认提示词（向后兼容）
@@ -1817,6 +1967,22 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
     # 🔴🔴🔴 图表合并关键词检测（用于强制工具调用）
     CHART_MERGE_KEYWORDS = ["合并", "合在一起", "放到一起", "合并在一张图", "合并到一起", "合并显示", "组合"]
 
+    # 🚨🚨🚨 地理查询关键词检测（用于强制 addresses 表选择）
+    GEO_PROVINCE_KEYWORDS = [
+        "省份", "省", "安徽", "浙江", "江苏", "上海", "北京", "广东", "福建",
+        "湖北", "湖南", "河南", "河北", "山东", "山西", "四川", "重庆", "天津",
+        "辽宁", "吉林", "黑龙江", "陕西", "甘肃", "青海", "云南", "贵州", "西藏",
+        "新疆", "内蒙古", "宁夏", "广西", "海南", "台湾", "香港", "澳门",
+        "华南", "华北", "华东", "华中", "西南", "西北", "东北"
+    ]
+    GEO_CITY_KEYWORDS = [
+        "城市", "市", "杭州", "宁波", "苏州", "南京", "深圳", "广州", "成都",
+        "武汉", "西安", "郑州", "青岛", "大连", "厦门", "长沙", "合肥", "南昌",
+        "昆明", "南宁", "贵阳", "兰州", "太原", "石家庄", "济南", "福州"
+    ]
+    GEO_ADDRESS_KEYWORDS = ["地址", "客户地址", "用户地址", "地区", "区域", "分布"]
+    GEO_ALL_KEYWORDS = GEO_PROVINCE_KEYWORDS + GEO_CITY_KEYWORDS + GEO_ADDRESS_KEYWORDS
+
     # 定义节点
     async def call_model(state: MessagesState):
         messages = state["messages"]
@@ -1869,9 +2035,12 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 
         is_split_request = False
         is_merge_request = False
+        is_geo_query = False  # 🚨 地理查询标志
         if last_human_message:
             is_split_request = any(keyword in str(last_human_message) for keyword in CHART_SPLIT_KEYWORDS)
             is_merge_request = any(keyword in str(last_human_message) for keyword in CHART_MERGE_KEYWORDS)
+            # 🚨 检测地理查询
+            is_geo_query = any(keyword in str(last_human_message).lower() for keyword in GEO_ALL_KEYWORDS)
 
         # 如果是拆分或合并请求，增强系统提示词
         enhanced_system_prompt = system_prompt
@@ -1993,6 +2162,76 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 
 现在请执行工具调用生成合并图表！
 """
+        elif is_geo_query:
+            # 🚨🚨🚨 地理查询强制规则注入
+            detected_keywords = [kw for kw in GEO_ALL_KEYWORDS if kw.lower() in str(last_human_message).lower()]
+            detected_type = "省份" if any(kw in str(last_human_message).lower() for kw in GEO_PROVINCE_KEYWORDS) else "城市"
+            is_proportion_query = any(kw in str(last_human_message).lower() for kw in ["占比", "比例", "百分比", "分布"])
+
+            enhanced_system_prompt = f"""{system_prompt}
+
+## 🚨🚨🚨【当前查询检测】{detected_type}查询 - 必须使用 addresses 表 🚨🚨🚨
+
+用户查询包含{detected_type}关键词：{', '.join(detected_keywords[:5])}
+
+**当前查询必须遵守以下强制规则**：
+
+### 1️⃣ 表选择强制规则
+- ✅ **必须使用**: `addresses` 表进行{detected_type}查询
+- ❌ **绝对禁止**: `users` 表或其他表用于{detected_type}查询
+
+### 2️⃣ 查询流程强制规则
+```
+第1步: list_tables()  ← 确认表存在
+第2步: get_schema("addresses")  ← 必须查看 addresses 表结构
+第3步: query('SELECT province, COUNT(*) FROM addresses GROUP BY province')  ← 使用 GROUP BY
+```
+
+### 3️⃣ 占比类问题特殊规则
+"""
+
+            # 根据是否为占比查询添加不同的规则
+            if is_proportion_query:
+                proportion_rules = """当用户问'占比'、'比例'、'分布'时：
+- ❌ 禁止：SELECT COUNT(*) FROM table WHERE condition
+- ❌ 禁止：多次 COUNT 查询
+- ✅ 必须：SELECT province as category, COUNT(*) as value FROM addresses GROUP BY province
+- ✅ 生成完整的分布数据用于饼图（不要 LIMIT！）
+"""
+            else:
+                proportion_rules = """- 必须使用 GROUP BY 一次查询获取所有分类数据
+- 禁止使用 LIMIT 截断分布结果
+- 返回完整的 province/city 分布数据
+"""
+
+            enhanced_system_prompt = f"""{system_prompt}
+
+## 🚨🚨🚨【当前查询检测】{detected_type}查询 - 必须使用 addresses 表 🚨🚨🚨
+
+用户查询包含{detected_type}关键词：{', '.join(detected_keywords[:5])}
+
+**当前查询必须遵守以下强制规则**：
+
+### 1️⃣ 表选择强制规则
+- ✅ **必须使用**: `addresses` 表进行{detected_type}查询
+- ❌ **绝对禁止**: `users` 表或其他表用于{detected_type}查询
+
+### 2️⃣ 查询流程强制规则
+```
+第1步: list_tables()  ← 确认表存在
+第2步: get_schema("addresses")  ← 必须查看 addresses 表结构
+第3步: query('SELECT province, COUNT(*) FROM addresses GROUP BY province')  ← 使用 GROUP BY
+```
+
+### 3️⃣ 占比类问题特殊规则
+{proportion_rules}
+
+**用户原查询**: "{last_human_message[:100] if last_human_message else ''}"
+
+现在请执行工具调用，使用 addresses 表进行查询！
+"""
+
+            print(f"🚨 [地理查询检测] 检测到{detected_type}关键词，已注入强制规则")
 
         # 🔧 优化上下文窗口：根据请求类型限制历史消息数量
         # 这有助于提高 LLM 对重要信息的关注度，避免被过多历史干扰

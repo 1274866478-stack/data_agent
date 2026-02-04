@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from .endpoints import health, tenants, documents, data_sources, config, test, llm, auth, upload, reasoning, file_upload
 from .endpoints import performance_monitoring
 from .endpoints import sql_error_memories
+from .endpoints import logs
 # 暂时禁用security端点，因为编码问题
 # from .endpoints import security
 # 启用query端点，Agent集成已完成
@@ -55,3 +56,6 @@ api_router.include_router(sql_error_memories.router, prefix="/sql-error-memories
 
 # 新增RAG服务端点 - Story 3.3 - 暂时禁用
 # api_router.include_router(rag.router, tags=["RAG"])
+
+# 新增前端日志接收端点 - 全量埋点
+api_router.include_router(logs.router, prefix="/logs", tags=["Logging"])

@@ -11,7 +11,7 @@ Tenant Isolation Middleware - 租户隔离中间件
     - 数据过滤验证
 
 作者: BMad Master
-版本: 2.0.0
+版本: 2.2.0 (Bug修复: SQL 注入防护 - tenant_id 转义)
 """
 
 import os
@@ -23,6 +23,81 @@ from dataclasses import dataclass, field
 # 配置日志
 logger = logging.getLogger(__name__)
 
+
+# ============================================================================
+# SQL 安全工具函数
+# ============================================================================
+
+def _escape_sql_string(value: str) -> str:
+    """
+    转义 SQL 字符串字面量中的特殊字符
+
+    防止 SQL 注入攻击，通过转义单引号和反斜杠来实现。
+    遵循 SQL 标准：单引号通过双写单引号来转义。
+
+    Args:
+        value: 需要转义的字符串值
+
+    Returns:
+        转义后的安全字符串
+
+    Examples:
+        >>> _escape_sql_string("test")
+        "test"
+        >>> _escape_sql_string("test's value")
+        "test''s value"
+        >>> _escape_sql_string("test'; DROP TABLE--")
+        "test''; DROP TABLE--"
+        >>> _escape_sql_string("path\\file")
+        "path\\\\file"
+    """
+    # 必须先转义反斜杠，再转义单引号
+    # 否则会出现 "''\"" 变成 "''\\'" 的问题
+    return value.replace("\\", "\\\\").replace("'", "''")
+
+
+def _is_safe_tenant_id(tenant_id: str) -> bool:
+    """
+    验证 tenant_id 是否符合安全规范
+
+    防御深度：即使有转义函数，也进行输入验证。
+
+    Args:
+        tenant_id: 要验证的租户 ID
+
+    Returns:
+        True 如果安全，False 否则
+
+    安全规则：
+        - 不允许空字符串
+        - 不允许包含单引号
+        - 不允许包含反斜杠
+        - 不允许包含 SQL 注入模式（如 --, /*, */）
+        - 长度限制：1-255 字符
+    """
+    if not tenant_id or not isinstance(tenant_id, str):
+        return False
+
+    if len(tenant_id) > 255:
+        return False
+
+    # 检查危险字符
+    dangerous_chars = ["'", "\\", '"', ";", "\x00"]
+    for char in dangerous_chars:
+        if char in tenant_id:
+            logger.warning(f"[SECURITY] tenant_id contains dangerous character: {repr(char)}")
+            return False
+
+    # 检查 SQL 注入模式
+    injection_patterns = ["--", "/*", "*/", "; DROP", "; DELETE", "; INSERT"]
+    tenant_upper = tenant_id.upper()
+    for pattern in injection_patterns:
+        if pattern in tenant_upper:
+            logger.warning(f"[SECURITY] tenant_id contains injection pattern: {pattern}")
+            return False
+
+    return True
+
 # LangChain/LangGraph imports for deepagents compatibility
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langchain_core.messages.tool import ToolMessage
@@ -33,6 +108,80 @@ from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, Mod
 # ============================================================================
 # 租户过滤注入函数
 # ============================================================================
+
+def has_tenant_id_filter(sql: str) -> bool:
+    """
+    更准确地检测 SQL 是否已有 tenant_id 过滤条件
+
+    使用多种策略检测，避免误判：
+    1. 检查 WHERE 子句中的 tenant_id 条件
+    2. 避免将字符串字面量中的 "tenant_id" 误判
+    3. 避免将表名/列名包含 "tenant_id" 误判
+
+    Args:
+        sql: SQL 查询语句
+
+    Returns:
+        True 如果已存在有效的 tenant_id 过滤条件
+    """
+    sql_upper = sql.upper()
+
+    # 策略 1: 使用更精确的正则表达式
+    # 匹配: WHERE/AND/OR + tenant_id + =，但要排除以下情况：
+    # - 字符串字面量中的 'tenant_id'
+    # - 注释中的 tenant_id
+    # - 表名中的 tenant_id (如 tenant_id_table)
+
+    # 移除字符串字面量和注释，避免误判
+    sql_without_strings = _remove_strings_and_comments(sql)
+
+    # 检查 WHERE 子句中的 tenant_id 条件
+    # 模式匹配: (WHERE|AND|OR) + tenant_id + =
+    patterns = [
+        r'\bWHERE\s+tenant_id\s*=',
+        r'\bAND\s+tenant_id\s*=',
+        r'\bOR\s+tenant_id\s*=',
+    ]
+
+    for pattern in patterns:
+        if re.search(pattern, sql_without_strings, re.IGNORECASE):
+            logger.info(f"[TENANT_CHECK] Found existing tenant_id filter with pattern: {pattern}")
+            return True
+
+    # 策略 2: 检查是否有明确的 JOIN 条件包含 tenant_id
+    # 例如: JOIN ... ON ... tenant_id = ...
+    if re.search(r'\bJOIN\b.*?\bON\b.*?\btenant_id\s*=', sql_without_strings, re.IGNORECASE):
+        logger.info("[TENANT_CHECK] Found tenant_id in JOIN condition")
+        return True
+
+    logger.debug("[TENANT_CHECK] No existing tenant_id filter found")
+    return False
+
+
+def _remove_strings_and_comments(sql: str) -> str:
+    """
+    移除 SQL 中的字符串字面量和注释，用于更精确的模式匹配
+
+    Args:
+        sql: 原始 SQL
+
+    Returns:
+        移除字符串和注释后的 SQL
+    """
+    # 移除单行注释
+    result = re.sub(r'--.*$', '', sql, flags=re.MULTILINE)
+
+    # 移除多行注释
+    result = re.sub(r'/\*.*?\*/', '', result, flags=re.DOTALL)
+
+    # 移除单引号字符串
+    result = re.sub(r"'[^']*'", "''", result)
+
+    # 移除双引号字符串
+    result = re.sub(r'"[^"]*"', '""', result)
+
+    return result
+
 
 def inject_tenant_filter(sql: str, tenant_id: str) -> str:
     """
@@ -47,9 +196,10 @@ def inject_tenant_filter(sql: str, tenant_id: str) -> str:
     正确的 SQL 子句顺序：
     SELECT ... FROM ... WHERE ... GROUP BY ... HAVING ... ORDER BY ... LIMIT
 
-    v4.3.0 优化：
-    - 添加详细日志记录，方便调试
-    - 改进已存在 tenant_id 的检测逻辑
+    v4.3.2 优化：
+    - 使用 has_tenant_id_filter() 进行更精确的检测
+    - 避免 SQL 注入：使用转义函数处理 tenant_id
+    - 添加 tenant_id 安全验证
 
     Args:
         sql: 原始 SQL 查询
@@ -57,19 +207,29 @@ def inject_tenant_filter(sql: str, tenant_id: str) -> str:
 
     Returns:
         注入 tenant_id 过滤条件后的 SQL
+
+    Raises:
+        ValueError: 如果 tenant_id 包含不安全的字符
     """
+    # 🔒 安全验证：检查 tenant_id 是否安全
+    if not _is_safe_tenant_id(tenant_id):
+        error_msg = f"[SECURITY] Unsafe tenant_id rejected: {tenant_id[:50]}..."
+        logger.error(error_msg)
+        raise ValueError(f"Unsafe tenant_id: contains invalid characters or injection patterns")
+
+    # 🔒 SQL 转义：转义 tenant_id 中的特殊字符
+    escaped_tenant_id = _escape_sql_string(tenant_id)
+
     sql_upper = sql.upper()
 
-    # 📊 详细日志：记录输入的 SQL
+    # 📊 详细日志：记录输入的 SQL（不记录敏感的 tenant_id 值）
+    tenant_id_safe_log = tenant_id[:8] + "..." if len(tenant_id) > 8 else tenant_id
     logger.debug(f"[TENANT_INJECT] Input SQL: {sql[:150]}...")
-    logger.debug(f"[TENANT_INJECT] tenant_id: {tenant_id}")
+    logger.debug(f"[TENANT_INJECT] tenant_id: {tenant_id_safe_log}")
 
-    # 检查是否已经包含 tenant_id 过滤
-    # v4.3.0: 改进检测逻辑，更精确地判断是否已有 tenant_id 条件
-    tenant_pattern = re.search(r'\btenant_id\s*=', sql, re.IGNORECASE)
-    if tenant_pattern:
-        logger.info(f"[TENANT_INJECT] SQL already contains tenant_id filter at position {tenant_pattern.start()}, skipping injection")
-        logger.debug(f"[TENANT_INJECT] Existing tenant_id snippet: {sql[max(0,tenant_pattern.start()-20):tenant_pattern.end()+20]}")
+    # 检查是否已经包含 tenant_id 过滤（使用改进的检测函数）
+    if has_tenant_id_filter(sql):
+        logger.info("[TENANT_INJECT] SQL already contains tenant_id filter, skipping injection")
         return sql
 
     # 找到各个子句的位置
@@ -100,14 +260,15 @@ def inject_tenant_filter(sql: str, tenant_id: str) -> str:
                     next_clause_name = match.group()
 
         if next_clause_pos < float('inf'):
-            # 在下一个子句之前插入 AND tenant_id
+            # 🔒 安全：使用转义后的 tenant_id
             before = sql[:next_clause_pos].rstrip()
             after = sql[next_clause_pos:]
-            result = f"{before} AND tenant_id = '{tenant_id}' {after}"
+            result = f"{before} AND tenant_id = '{escaped_tenant_id}' {after}"
             logger.info(f"[TENANT_INJECT] Injected before {next_clause_name} clause")
         else:
             # 没有其他子句，直接在末尾添加
-            result = f"{sql} AND tenant_id = '{tenant_id}'"
+            # 🔒 安全：使用转义后的 tenant_id
+            result = f"{sql} AND tenant_id = '{escaped_tenant_id}'"
             logger.info("[TENANT_INJECT] Injected at end (existing WHERE)")
     else:
         # 没有 WHERE，需要插入 WHERE 子句
@@ -129,14 +290,15 @@ def inject_tenant_filter(sql: str, tenant_id: str) -> str:
                     next_clause_name = match.group()
 
         if insert_pos < float('inf'):
-            # 在找到的子句之前插入 WHERE
+            # 🔒 安全：使用转义后的 tenant_id
             before = sql[:insert_pos].rstrip()
             after = sql[insert_pos:]
-            result = f"{before} WHERE tenant_id = '{tenant_id}' {after}"
+            result = f"{before} WHERE tenant_id = '{escaped_tenant_id}' {after}"
             logger.info(f"[TENANT_INJECT] Injected before {next_clause_name} clause (new WHERE)")
         else:
             # 没有其他子句，在末尾添加 WHERE
-            result = f"{sql} WHERE tenant_id = '{tenant_id}'"
+            # 🔒 安全：使用转义后的 tenant_id
+            result = f"{sql} WHERE tenant_id = '{escaped_tenant_id}'"
             logger.info("[TENANT_INJECT] Injected at end (new WHERE)")
 
     logger.debug(f"[TENANT_INJECT] Output SQL: {result[:150]}...")

@@ -99,12 +99,13 @@ class SQLValidator:
     ]
 
     @classmethod
-    def validate(cls, sql: str) -> Tuple[bool, Optional[str]]:
+    def validate(cls, sql: str, user_query: str = "") -> Tuple[bool, Optional[str]]:
         """
         校验 SQL 安全性
 
         Args:
             sql: 要校验的 SQL 语句
+            user_query: 原始用户查询（用于检测占比类问题）
 
         Returns:
             tuple: (is_safe, error_message)
@@ -115,6 +116,35 @@ class SQLValidator:
             return True, None
 
         sql_upper = sql.upper().strip()
+
+        # 🔧 新增：检测占比类查询的错误模式
+        proportion_keywords = ['占比', '比例', '分布', '多少', '百分比']
+        is_proportion = any(kw in user_query for kw in proportion_keywords)
+
+        # 检测：SELECT COUNT(*) FROM table WHERE ... (没有 GROUP BY)
+        # 但如果有 LIMIT 或者是复杂查询，则不强制要求 GROUP BY
+        if is_proportion:
+            has_count = 'COUNT(' in sql_upper
+            has_group_by = 'GROUP BY' in sql_upper
+            has_where = 'WHERE' in sql_upper
+            has_limit = 'LIMIT' in sql_upper
+
+            # 如果是 COUNT 查询，有 WHERE，但没有 GROUP BY，且没有 LIMIT
+            # 这很可能是占比类查询的错误模式
+            if has_count and has_where and not has_group_by and not has_limit:
+                # 检查是否是简单的 COUNT(*) FROM ... WHERE 模式
+                simple_count_pattern = r"SELECT\s+COUNT\s*\([^)]+\)\s+FROM\s+\w+\s+WHERE\s+\w+\s*(?:=|LIKE)\s*\S+"
+                if re.match(simple_count_pattern, sql, re.IGNORECASE):
+                    return False, (
+                        "占比类查询必须使用 GROUP BY 获取完整分布，"
+                        "请使用: SELECT CASE WHEN...END as category, COUNT(*) as value FROM table GROUP BY category\n"
+                        "示例：\n"
+                        "  SELECT\n"
+                        "    CASE WHEN region = '安徽' THEN '安徽' ELSE '其他' END as category,\n"
+                        "    COUNT(*) as value\n"
+                        "  FROM customers\n"
+                        "  GROUP BY category;"
+                    )
 
         # 1. 检查是否以允许的关键字开头
         if not re.match(cls.ALLOWED_STARTS, sql_upper, re.IGNORECASE):
@@ -161,6 +191,92 @@ class SQLValidator:
         #     return False, "Performance Alert: Query must include a LIMIT clause."
 
         return True, None
+
+    @classmethod
+    def validate_table_selection(
+        cls,
+        sql: str,
+        user_query: str = ""
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        验证表选择是否正确（地理查询专用）
+
+        检测用户查询包含省份/城市关键词时，是否错误地使用了 users 表
+        而不是 addresses 表。
+
+        Args:
+            sql: 要校验的 SQL 语句
+            user_query: 原始用户查询
+
+        Returns:
+            tuple: (is_valid, error_message, suggested_sql)
+                - is_valid: True 表示表选择正确，False 表示需要修正
+                - error_message: 错误描述（如果不正确）
+                - suggested_sql: 建议的 SQL（可选）
+        """
+        if not sql or not sql.strip():
+            return True, None, None
+
+        sql_lower = sql.lower()
+
+        # 地理位置关键词检测
+        geo_keywords = [
+            "省份", "省", "城市", "市",
+            "安徽", "浙江", "江苏", "上海", "北京", "广东",
+            "分布", "占比", "客户地址", "客户占比"
+        ]
+
+        has_geo_query = any(kw in user_query for kw in geo_keywords)
+
+        if not has_geo_query:
+            return True, None, None
+
+        # 检测是否错误使用了 users 表
+        if "users" in sql_lower or "user" in sql_lower:
+            # 检查是否有 province/城市相关条件
+            has_geo_condition = (
+                "province" in sql_lower or
+                "city" in sql_lower or
+                "district" in sql_lower
+            )
+
+            if has_geo_condition:
+                # 提取查询条件中的省份/城市值
+                province_match = re.search(r"province\s*=\s*['\"]([^'\"]+)['\"]", sql, re.IGNORECASE)
+                city_match = re.search(r"city\s*=\s*['\"]([^'\"]+)['\"]", sql, re.IGNORECASE)
+
+                target_location = None
+                if province_match:
+                    target_location = province_match.group(1)
+                elif city_match:
+                    target_location = city_match.group(1)
+
+                # 建议使用 addresses 表的 SQL
+                suggested_sql = None
+                if target_location:
+                    suggested_sql = (
+                        f"SELECT province, COUNT(*) as count\n"
+                        f"FROM addresses\n"
+                        f"GROUP BY province\n"
+                        f"ORDER BY count DESC;"
+                    )
+
+                return False, (
+                    "⚠️ 检测到省份/城市查询使用了 users 表。"
+                    "addresses 表包含完整的地理信息，请使用 addresses 表。\n\n"
+                    f"原因：users 表的 province/city 字段可能为空或不完整，"
+                    f"addresses 表才是地理位置查询的正确选择。\n\n"
+                    f"建议流程：\n"
+                    f"1. 调用 get_schema('addresses') 查看表结构\n"
+                    f"2. 使用一次 GROUP BY 查询获取所有省份/城市分布"
+                ), suggested_sql
+
+        # 检查是否正确使用了 addresses 表（给出正面反馈）
+        if "addresses" in sql_lower:
+            logger = __import__('logging').getLogger(__name__)
+            logger.info(f"[TABLE_SELECTION] ✅ 正确使用 addresses 表进行地理查询")
+
+        return True, None, None
 
     @classmethod
     def sanitize_for_logging(cls, sql: str, max_length: int = 200) -> str:

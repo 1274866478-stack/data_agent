@@ -70,7 +70,7 @@ import {
     XCircle,
     Zap
 } from 'lucide-react'
-import React, { useCallback, useMemo } from 'react'
+import React, { useCallback, useEffect, useMemo } from 'react'
 
 interface ProcessingStepsProps {
   steps: ProcessingStep[]
@@ -260,8 +260,8 @@ const TableDataRenderer = React.memo(function TableDataRenderer({ table }: Table
     setIsExpanded(prev => !prev)
   }, [])
 
-  // 默认显示更多行（50行），列数不限
-  const DEFAULT_MAX_ROWS = 50
+  // 🔧 默认只显示前5行，避免占用过多空间（从50改为5）
+  const DEFAULT_MAX_ROWS = 5
   const MAX_COLUMNS = 10  // 增加列数限制
 
   // 使用 useMemo 缓存计算结果
@@ -399,6 +399,19 @@ function parseAnalysisText(text: string): { summary: string; chartDescriptions: 
 }
 
 /**
+ * 🔧 清理图表标题中的 Markdown 符号
+ * 移除 **、*、# 等 Markdown 格式标记
+ */
+function cleanMarkdownSymbols(text: string): string {
+  if (!text || typeof text !== 'string') return text
+  return text
+    .replace(/\*\*/g, '')        // 移除加粗标记
+    .replace(/\*/g, '')          // 移除斜体标记
+    .replace(/^#+\s*/, '')       // 移除标题级标记
+    .trim()
+}
+
+/**
  * 规范化 ECharts 配置，确保纵坐标标签完整显示
  * 自动添加合理的 grid 配置和坐标轴边距
  */
@@ -407,6 +420,11 @@ function normalizeEChartsOption(option: any): any {
 
   // 深拷贝避免修改原始配置
   const normalized = JSON.parse(JSON.stringify(option))
+
+  // 🔧 新增：清理标题中的 Markdown 符号
+  if (normalized.title?.text) {
+    normalized.title.text = cleanMarkdownSymbols(normalized.title.text)
+  }
 
   // 如果已有 grid 配置，确保 left 值足够大
   if (normalized.grid) {
@@ -481,6 +499,14 @@ function normalizeEChartsOption(option: any): any {
 
 // 渲染图表
 function renderChart(chart: StepChartData, description?: string) {
+  // 🔧 新增：调试日志
+  console.log('[ProcessingSteps] renderChart 调用，chart 数据:', {
+    has_echarts_option: !!chart.echarts_option,
+    has_chart_image: !!chart.chart_image,
+    chart_type: chart.chart_type,
+    title: chart.title,
+  })
+
   // 图表说明文字（显示在图表上方）
   const descriptionElement = description && description.trim() && (
     <div className="mb-2 p-3 rounded-md bg-primary/5 border border-primary/20">
@@ -492,6 +518,7 @@ function renderChart(chart: StepChartData, description?: string) {
   )
 
   if (chart.echarts_option) {
+    console.log('[ProcessingSteps] ✅ 使用 echarts_option 渲染图表')
     // 规范化配置，确保坐标轴标签完整显示
     const normalizedOption = normalizeEChartsOption(chart.echarts_option)
 
@@ -549,6 +576,16 @@ function renderVisualization(
   table: StepTableData | null,
   description?: string
 ) {
+  // 🔧 新增：调试日志
+  console.log('[ProcessingSteps] renderVisualization 调用:', {
+    has_chart: !!chart,
+    has_table: !!table,
+    chart_has_echarts_option: !!chart?.echarts_option,
+    chart_has_image: !!chart?.chart_image,
+    chart_type: chart?.chart_type,
+    table_rows: table?.row_count,
+  })
+
   if (!chart && !table) return null
 
   const descriptionElement = description && description.trim() && (
@@ -747,9 +784,22 @@ function renderStepContent(step: ProcessingStep, outputFormat: 'markdown' | 'pla
       break
     case 'error':
       if (step.content_data.error) {
+        const suggestion = step.content_data.suggestion
         return (
-          <div className="mt-2 p-2 rounded-md bg-red-50 border border-red-200">
-            <p className="text-xs text-red-700">{step.content_data.error}</p>
+          <div className="mt-2 p-3 rounded-md bg-red-50 border border-red-200">
+            <div className="flex items-center gap-2 mb-2">
+              <XCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+              <span className="text-sm font-semibold text-red-700">SQL 执行错误</span>
+            </div>
+            <p className="text-xs text-red-700 mb-2 whitespace-pre-wrap">{step.content_data.error}</p>
+            {suggestion && (
+              <div className="mt-2 p-2 bg-red-100 rounded border border-red-300">
+                <div className="text-xs font-medium text-red-800 mb-1 flex items-center gap-1">
+                  💡 修复建议：
+                </div>
+                <p className="text-xs text-red-700 whitespace-pre-wrap leading-relaxed">{suggestion}</p>
+              </div>
+            )}
           </div>
         )
       }
@@ -772,8 +822,14 @@ function renderStepContent(step: ProcessingStep, outputFormat: 'markdown' | 'pla
       if (step.content_data.text) {
         // 过滤硬编码示例内容
         const filteredText = filterExampleContent(step.content_data.text)
+        const isLoading = step.status === 'running'  // 新增：检测加载状态
+
         return outputFormat === 'plain' ? (
-          <PlainText content={filteredText} className="text-sm leading-relaxed" />
+          <PlainText
+            content={filteredText}
+            className="text-sm leading-relaxed"
+            isLoading={isLoading}  // 新增：传递加载状态
+          />
         ) : (
           <Markdown content={filteredText} className="text-sm prose-base" />
         )
@@ -798,10 +854,28 @@ function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex
   if (!step.content_type || !step.content_data) return null
 
   // 🔧 修改：任何图表类型的步骤都使用 renderVisualization 合并表格和图表（不再检查固定步骤号）
-  if (step.content_type === 'chart' && step.content_data.chart) {
+  if (step.content_type === 'chart') {
     const description = chartDescriptions[chartIndex]
-    // 使用新的 renderVisualization 函数合并图表和表格
-    return renderVisualization(step.content_data.chart, step6Table || null, description)
+
+    // 🔧 修复：优先检查步骤级别的 echarts_option，然后检查 content_data.chart
+    const stepLevelChart = (step as any).echarts_option
+    const contentChart = step.content_data.chart
+
+    // 合并图表数据：优先使用步骤级别的 echarts_option
+    const chartToRender: StepChartData | null = contentChart || {}
+    if (stepLevelChart && !chartToRender.echarts_option) {
+      chartToRender.echarts_option = stepLevelChart
+    }
+
+    if (chartToRender && (chartToRender.echarts_option || chartToRender.chart_image)) {
+      // 使用新的 renderVisualization 函数合并图表和表格
+      return renderVisualization(chartToRender, step6Table || null, description)
+    }
+
+    // 如果有 chart 对象但没有 echarts_option，尝试使用 content_data.chart
+    if (contentChart) {
+      return renderVisualization(contentChart, step6Table || null, description)
+    }
   }
 
   // 如果是步骤8（text类型的数据分析），显示总结部分（如果有）
@@ -836,8 +910,9 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
     setIsExpanded(prev => !prev)
   }, [])
 
-  // 调试日志
-  console.log('[ProcessingSteps] 渲染，steps数量:', steps?.length, steps)
+  // 🔧 第三次修复：详细的调试日志
+  console.log('[ProcessingSteps] 🔧 渲染，steps:', steps?.map(s => ({ step: s.step, status: s.status, title: s.title?.substring(0, 20) })))
+  console.log('[ProcessingSteps] 🔧 completedSteps:', steps?.filter(s => s.status === 'completed').length, '/', steps?.length)
 
   if (!steps || steps.length === 0) return null
 
@@ -867,6 +942,21 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
   }, [steps])
   const tableData = tableDataStep?.content_data?.table || null
   console.log('[ProcessingSteps] 提取的表格数据:', tableData ? `${tableData.row_count} 行 x ${tableData.columns?.length} 列` : 'null')
+
+  // 🔧 新增：如果没有找到表格数据但有步骤，打印所有步骤详情用于诊断
+  useEffect(() => {
+    if (!tableData && steps.length > 0) {
+      console.warn('[ProcessingSteps] ⚠️ 没有找到表格数据，所有步骤详情:', steps.map(s => ({
+        step: s.step,
+        title: s.title,
+        content_type: s.content_type,
+        has_content_data: !!s.content_data,
+        content_data_keys: s.content_data ? Object.keys(s.content_data) : [],
+        has_table: !!s.content_data?.table,
+        has_chart: !!s.content_data?.chart,
+      })))
+    }
+  }, [steps, tableData])
 
   // 🔧 修改：按内容类型检测是否有图表（不再依赖固定步骤号）
   const hasChart = useMemo(() => {

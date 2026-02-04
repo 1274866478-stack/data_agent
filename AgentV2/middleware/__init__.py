@@ -13,6 +13,7 @@ Includes:
     - ChartGuidanceMiddleware: 图表生成指南中间件
     - LoopDetectionMiddleware: 循环检测中间件
     - SemanticPriorityMiddleware: 语义层优先中间件
+    - KnowledgeInjectionMiddleware: 知识注入中间件（双知识系统）
 """
 
 from .sql_security import SQLSecurityMiddleware
@@ -53,6 +54,15 @@ from .error_tracker import (
     SuccessEntry,
     create_error_tracker
 )
+from .table_cache_middleware import (
+    TableCacheMiddleware,
+    create_table_cache_middleware
+)
+# 🔴 临时禁用 - knowledge_base.py 文件不存在
+# from .knowledge_middleware import (
+#     KnowledgeInjectionMiddleware,
+#     create_knowledge_middleware
+# )
 
 __all__ = [
     "SQLSecurityMiddleware",
@@ -82,4 +92,10 @@ __all__ = [
     "SemanticDetectionResult",
     "detect_semantic_terms",
     "needs_semantic_layer",
+    # 表名缓存中间件
+    "TableCacheMiddleware",
+    "create_table_cache_middleware",
+    # 知识注入中间件（双知识系统）- 🔴 临时禁用
+    # "KnowledgeInjectionMiddleware",
+    # "create_knowledge_middleware",
 ]

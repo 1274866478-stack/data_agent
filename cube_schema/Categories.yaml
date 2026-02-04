@@ -4,6 +4,9 @@
 # 分类表用于产品类别分析，可与产品表关联进行分类销售分析
 
 cube: Categories
+  # Excel 工作表名映射（当使用 Excel 作为数据源时）
+  excel_sheet: categories
+
   # 数据源配置
   sql_table: |
     SELECT

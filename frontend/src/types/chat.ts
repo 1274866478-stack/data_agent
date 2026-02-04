@@ -77,6 +77,7 @@ export interface StepContentData {
   table?: StepTableData;     // 表格数据
   chart?: StepChartData;     // 图表配置
   error?: string;            // 错误信息
+  suggestion?: string;        // 🔧 新增：错误修复建议
   text?: string;             // 数据分析文本（用于步骤8）
 }
 
@@ -174,6 +175,7 @@ export interface V2StepData {
     chart?: StepChartData;
     text?: string;
     error?: string;
+    suggestion?: string;  // 🔧 新增：错误修复建议
   };
   duration?: number;
   streaming?: boolean;

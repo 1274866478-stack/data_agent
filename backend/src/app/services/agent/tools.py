@@ -163,14 +163,23 @@ def execute_sql_safe_func(sql: str = None, query: str = None, input_data: Dict[s
     
     try:
         result = _mcp_client_wrapper.execute_query(sql)
-        # 🔴 第一道防线：检查空数据
-        if result is None or result == "" or result == "[]" or result == "{}":
-            logger.warning("⚠️ [第一道防线] SQL查询返回空数据")
-            return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+
+        # 🔧 修复：区分"查询成功但无结果"和"查询失败"
+        # 空结果（"[]"，"{}"）是有效的查询结果，表示查询成功但没有符合条件的数据
+        if result is None or result == "":
+            logger.warning("⚠️ [第一道防线] SQL查询执行失败，返回None或空字符串")
+            return 'SYSTEM ERROR: Tool execution failed. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "查询执行失败，请检查数据源连接或联系管理员"。'
+
         # 检查是否是错误信息
-        if isinstance(result, str) and (result.startswith("错误") or result.startswith("Error") or "失败" in result):
-            logger.warning(f"⚠️ [第一道防线] SQL查询返回错误: {result}")
-            return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+        if isinstance(result, str) and (result.startswith("错误") or result.startswith("Error") or "失败" in result or "exception" in result.lower() or "traceback" in result.lower()):
+            logger.warning(f"⚠️ [第一道防线] SQL查询返回错误: {result[:200]}")
+            return f'SYSTEM ERROR: SQL execution failed. {result[:500]}. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "查询执行出错，请检查查询语句或联系管理员".'
+
+        # 🔧 空结果（"[]"，"{}"）是有效的查询结果，不是错误
+        # 对于空结果，添加友好的说明后直接返回，不触发重试
+        if result == "[]" or result == "{}":
+            logger.info("ℹ️ [信息] SQL查询成功但返回空结果（无符合条件的数据）")
+            return result  # 直接返回空结果，让 AI 知道查询成功但无数据
         
         # 🔥 上下文管理：限制返回数据长度
         MAX_RESULT_LENGTH = 5000  # 与agent_service.py中的MAX_TOOL_RESULT_LENGTH保持一致
@@ -241,13 +250,22 @@ def get_table_schema_func(table_name: str = None, input_data: Dict[str, Any] = N
     
     try:
         result = _mcp_client_wrapper.get_schema(table_name)
-        # 🔴 第一道防线：检查空数据
-        if result is None or result == "" or result == "[]" or result == "{}":
-            logger.warning("⚠️ [第一道防线] 获取表结构返回空数据")
-            return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
-        if isinstance(result, str) and (result.startswith("错误") or result.startswith("Error") or "失败" in result):
-            logger.warning(f"⚠️ [第一道防线] 获取表结构返回错误: {result}")
-            return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+
+        # 🔧 修复：区分"查询成功但无结果"和"查询失败"
+        if result is None or result == "":
+            logger.warning(f"⚠️ [第一道防线] 获取表结构失败: {table_name}")
+            return 'SYSTEM ERROR: Tool execution failed. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取表结构，请检查表名或联系管理员"。'
+
+        # 检查是否是错误信息
+        if isinstance(result, str) and (result.startswith("错误") or result.startswith("Error") or "失败" in result or "exception" in result.lower() or "does not exist" in result.lower()):
+            logger.warning(f"⚠️ [第一道防线] 获取表结构返回错误: {result[:200]}")
+            return f'SYSTEM ERROR: Table schema fetch failed. {result[:500]}. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取表结构，请检查表名是否正确"。'
+
+        # 🔧 空结果是有效的查询结果（表可能没有列）
+        if result == "[]" or result == "{}":
+            logger.info(f"ℹ️ [信息] 表 {table_name} 查询成功但返回空结构")
+            return result  # 直接返回空结果
+
         return result
     except Exception as e:
         logger.error(f"⚠️ [第一道防线] 获取表结构异常: {e}", exc_info=True)
@@ -290,13 +308,22 @@ def list_available_tables_func(input_data: Dict[str, Any] = None) -> str:
     
     try:
         result = _mcp_client_wrapper.list_tables()
-        # 🔴 第一道防线：检查空数据
-        if result is None or result == "" or result == "[]" or result == "{}":
-            logger.warning("⚠️ [第一道防线] 列出表返回空数据")
-            return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
-        if isinstance(result, str) and (result.startswith("错误") or result.startswith("Error") or "失败" in result):
-            logger.warning(f"⚠️ [第一道防线] 列出表返回错误: {result}")
-            return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+
+        # 🔧 修复：区分"查询成功但无结果"和"查询失败"
+        if result is None or result == "":
+            logger.warning("⚠️ [第一道防线] 列出表失败")
+            return 'SYSTEM ERROR: Tool execution failed. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法列出数据表，请检查数据源连接或联系管理员"。'
+
+        # 检查是否是错误信息
+        if isinstance(result, str) and (result.startswith("错误") or result.startswith("Error") or "失败" in result or "exception" in result.lower() or "traceback" in result.lower()):
+            logger.warning(f"⚠️ [第一道防线] 列出表返回错误: {result[:200]}")
+            return f'SYSTEM ERROR: List tables failed. {result[:500]}. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法列出数据表，请检查数据源连接"。'
+
+        # 🔧 空结果（"[]"）是有效的查询结果，表示数据库中确实没有用户数据表
+        if result == "[]" or result == "{}":
+            logger.info("ℹ️ [信息] 查询成功但数据库中无用户数据表")
+            # 不再触发错误，直接返回空结果让 AI 知道没有表
+            return result
         
         # 🔥 修复：排除系统表，只返回用户数据表
         # 系统表列表（需要排除的表）
