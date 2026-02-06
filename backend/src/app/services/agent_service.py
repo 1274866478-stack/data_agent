@@ -251,6 +251,8 @@ def _build_processing_steps(
 ) -> list:
     """
     构建包含SQL、表格、图表、数据分析文本的处理步骤列表
+    
+    🆕 优化：隐藏技术性步骤，只展示业务相关步骤
 
     Args:
         success: 查询是否成功
@@ -265,7 +267,7 @@ def _build_processing_steps(
         answer: AI数据分析文本（用于步骤8）
 
     Returns:
-        list: 处理步骤列表
+        list: 处理步骤列表（已过滤技术步骤）
     """
     if not success:
         return [{
@@ -276,9 +278,10 @@ def _build_processing_steps(
         }]
 
     # 计算各步骤的大致耗时（估算）
-    base_time = processing_time_ms / 8  # 现在有8个步骤
+    # 🆕 优化：减少步骤数量，只保留关键业务步骤
+    base_time = processing_time_ms / 5  # 现在有5个关键业务步骤
 
-    # 构建表格数据（用于步骤6）
+    # 构建表格数据（用于步骤4）
     table_data = None
     if data_obj:
         columns = safe_get_attr(data_obj, 'columns', [])
@@ -290,7 +293,7 @@ def _build_processing_steps(
                 "row_count": row_count
             }
 
-    # 构建图表数据（用于步骤7）
+    # 构建图表数据（用于步骤5）
     chart_step_data = None
     if echarts_option:
         chart_step_data = {
@@ -303,52 +306,32 @@ def _build_processing_steps(
             "chart_type": _extract_chart_type(chart_obj)
         }
 
+    # 🆕 优化：只保留关键业务步骤，隐藏技术步骤
     steps = [
         {
             "step": 1,
-            "title": "理解用户问题",
+            "title": "理解查询意图",
             "description": "分析用户查询意图，识别数据需求",
             "status": "completed",
             "duration": int(base_time)
         },
         {
             "step": 2,
-            "title": "获取数据库Schema",
-            "description": f"成功加载 {safe_get_attr(data_obj, 'row_count', 0)} 行数据",
-            "status": "completed",
-            "duration": int(base_time)
-        },
-        {
-            "step": 3,
-            "title": "构建AI Prompt",
-            "description": "根据问题和Schema生成查询指令",
-            "status": "completed",
-            "duration": int(base_time)
-        },
-        {
-            "step": 4,
-            "title": "AI生成SQL语句",
+            "title": "生成查询语句",
             "description": "AI已生成数据库查询语句",
             "status": "completed",
-            "duration": int(base_time * 2),
+            "duration": int(base_time * 1.5),
             "content_type": "sql",
             "content_data": {
                 "sql": sql
             } if sql else None
         },
         {
-            "step": 5,
-            "title": "验证SQL语句",
-            "description": "检查SQL语法和安全性",
-            "status": "completed",
-            "duration": int(base_time * 0.5)
-        },
-        {
-            "step": 6,
-            "title": "执行SQL查询",
+            "step": 3,
+            "title": "执行数据查询",
             "description": f"查询返回 {row_count} 行结果",
             "status": "completed",
-            "duration": int(base_time * 1.5),
+            "duration": int(base_time * 2),
             "content_type": "table",
             "content_data": {
                 "table": table_data
@@ -356,10 +339,10 @@ def _build_processing_steps(
         },
     ]
 
-    # 添加步骤7（图表生成）
+    # 添加步骤4（图表生成）
     if chart_step_data:
         steps.append({
-            "step": 7,
+            "step": 4,
             "title": "生成数据可视化",
             "description": f"创建 {chart_step_data.get('chart_type', '图表')} 展示分析结果",
             "status": "completed",
@@ -370,11 +353,11 @@ def _build_processing_steps(
             }
         })
 
-    # 添加步骤8（数据分析总结）
+    # 添加步骤5（数据分析总结）
     if answer and answer.strip():
         steps.append({
-            "step": 8,
-            "title": "数据分析总结",
+            "step": len(steps) + 1,
+            "title": "输出分析结论",
             "description": "AI对查询结果的分析和解读",
             "status": "completed",
             "duration": int(base_time * 1.5),
@@ -1172,11 +1155,29 @@ async def run_agent_query(
                 "- Opportunity detection\n"
                 "- Strategic suggestions\n"
                 "\n"
+                "**5. Prediction & Forecasting (必填)**:\n"
+                "- Short-term prediction based on trends\n"
+                "- Prediction methodology and assumptions\n"
+                "- Prediction limitations and uncertainty\n"
+                "\n"
+                "**6. Root Cause Analysis (必填)**:\n"
+                "- Driving factors behind data changes\n"
+                "- Correlation analysis between metrics\n"
+                "- Business logic explanation\n"
+                "\n"
+                "**7. Actionable Insights (必填)**:\n"
+                "- Optimization recommendations (at least 2-3)\n"
+                "- Risk identification\n"
+                "- Opportunity discovery\n"
+                "- Suggested further analysis\n"
+                "\n"
                 "⚠️ Example format for time series:\n"
                 "• 总销售额：X 万元，平均每月 Y 万元\n"
                 "• 整体趋势：上升/下降 Z%（从 A 万增长到 B 万）\n"
                 "• 峰值：C 万元（某月），谷值：D 万元（某月）\n"
                 "• 波动性：标准差 E，变异系数 F%\n"
+                "• 预测：预计下月约 [预测值]（基于 [增长率] 推算）\n"
+                "• 成因：主要驱动因素是 [因素描述]\n"
                 "• 建议：基于以上发现...\n"
                 "\n"
                 "⚠️ Even for simple queries, calculate and present statistics.\n"

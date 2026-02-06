@@ -702,6 +702,123 @@ function renderVisualization(
 }
 
 /**
+ * 🆕 过滤技术性步骤，只展示业务相关步骤
+ *
+ * 需要隐藏的技术性步骤（内部实现细节）：
+ * - list_tables: 获取表列表（元数据操作）
+ * - get_schema: 获取表结构（元数据操作）
+ * - connect_db: 连接数据库（基础设施）
+ * - validate_query: SQL验证（内部校验）
+ * - 调用工具: 所有工具调用步骤
+ *
+ * 更新：扩展隐藏关键词列表，包含更多技术细节步骤
+ */
+function filterTechnicalSteps(steps: ProcessingStep[]): ProcessingStep[] {
+  // 需要隐藏的步骤标题关键词（这些是技术实现细节，用户不需要看到）
+  const HIDDEN_STEP_KEYWORDS = [
+    // 原有关键词
+    'list_tables',
+    'get_schema',
+    'get_recommended_tables',
+    '获取表列表',
+    '获取表结构',
+    '连接数据库',
+    'SQL验证',
+    'validate_query',
+    '元数据获取',
+    'Schema检索',
+    // 🆕 新增：根据截图实际标题（计划修复1）
+    '列出数据库表',           // 截图中的实际标题
+    '获取数据库结构',         // 截图中的实际标题
+    // 🆕 新增：过滤重复的技术步骤
+    '数据源连接中',
+    '模式加载中',
+    '知识库查询中',
+    '上下文检索',
+    '知识检索',
+    '向量检索',
+    '加载模式',
+    '加载数据',
+    '正在连接',
+    '连接中',
+    '验证中',
+    '检查中',
+    '初始化',
+    '准备中',
+  ]
+
+  // 🆕 需要去重的步骤关键词（相同标题只保留最后一个 completed 状态）
+  const DUPLICATE_STEP_KEYWORDS = [
+    'SQL生成中',
+    '生成SQL中',
+    '执行查询中',
+    '数据分析中',
+    '处理中',
+    '生成中',
+    '查询结果',  // 🆕 计划修复3：合并重复的"查询结果"步骤
+  ]
+
+  // 第一步：过滤掉技术性步骤
+  let filtered = steps.filter(step => {
+    const titleLower = (step.title || '').toLowerCase()
+
+    // 🆕 计划修复2：通用过滤 - 所有以"调用工具:"开头的步骤都隐藏
+    if (titleLower.startsWith('调用工具:') || titleLower.startsWith('调用工具：')) {
+      return false
+    }
+
+    // 检查是否是隐藏的技术性步骤
+    const isHidden = HIDDEN_STEP_KEYWORDS.some(keyword =>
+      titleLower.includes(keyword.toLowerCase())
+    )
+
+    return !isHidden
+  })
+
+  // 🆕 第二步：去重逻辑 - 相同标题的步骤只保留最后一个（特别是 completed 状态的）
+  const stepMap = new Map<string, ProcessingStep>()
+
+  for (const step of filtered) {
+    const title = step.title || ''
+    // 检查是否是需要去重的步骤类型
+    const isDuplicateType = DUPLICATE_STEP_KEYWORDS.some(keyword =>
+      title.includes(keyword)
+    )
+
+    if (isDuplicateType) {
+      // 对于需要去重的步骤，总是用新的覆盖旧的（保留最后一个）
+      // 🆕 计划修复3：对于"查询结果"步骤，优先保留有数据的
+      const existing = stepMap.get(title)
+      if (title.includes('查询结果')) {
+        const existingHasData = existing?.content_data?.table?.row_count > 0
+        const currentHasData = step?.content_data?.table?.row_count > 0
+        if (currentHasData >= existingHasData) {
+          stepMap.set(title, step)
+        }
+      } else {
+        stepMap.set(title, step)
+      }
+    } else {
+      // 对于不需要去重的步骤，使用 step + title 作为唯一键
+      const uniqueKey = `${step.step}_${title}`
+      stepMap.set(uniqueKey, step)
+    }
+  }
+
+  // 转换回数组
+  filtered = Array.from(stepMap.values())
+
+  // 第三步：按步骤号排序
+  filtered.sort((a, b) => a.step - b.step)
+
+  // 重新编号步骤，使其连续
+  return filtered.map((step, index) => ({
+    ...step,
+    step: index + 1, // 重新编号从1开始
+  }))
+}
+
+/**
  * 过滤硬编码的示例内容（通过特征指纹识别）
  * 只过滤包含特定硬编码数值的段落
  */
@@ -878,8 +995,14 @@ function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex
     }
   }
 
-  // 如果是步骤8（text类型的数据分析），显示总结部分（如果有）
-  if (step.step === 8 && step.content_type === 'text') {
+  // 如果是数据分析步骤（text类型），显示总结部分（如果有）
+  // 优先检查 message/title 是否包含"数据分析"，兜底检查步骤号8（向后兼容）
+  const isDataAnalysisStep = (
+    (step.message === '数据分析' || step.title === '数据分析') ||
+    step.step === 8
+  ) && step.content_type === 'text'
+
+  if (isDataAnalysisStep) {
     // 如果有总结（summary），显示总结；否则显示原始文本
     const textToShow = summary && summary.trim() ? summary : step.content_data.text
     if (!textToShow) return null
@@ -916,13 +1039,32 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
 
   if (!steps || steps.length === 0) return null
 
+  // 🆕 过滤技术性步骤，只展示业务相关步骤
+  const filteredSteps = useMemo(() => filterTechnicalSteps(steps), [steps])
+
+  // 如果过滤后没有步骤，不渲染
+  if (filteredSteps.length === 0) return null
+
   // 🔧 新增：提取和配对图表说明
-  // 1. 查找步骤8（数据分析文本）
-  const step8 = useMemo(
-    () => steps.find(s => s.step === 8 && s.content_type === 'text' && s.content_data?.text),
-    [steps]
+  // 1. 查找数据分析文本步骤（动态查找最后一个 content_type === 'text' 的步骤）
+  // 优先查找 message/title 包含"数据分析"的步骤，否则查找最后一个 text 类型步骤
+  const analysisStep = useMemo(
+    () => {
+      // 优先查找明确标记为"数据分析"的步骤
+      const dataAnalysisStep = filteredSteps.find(s =>
+        (s.message === '数据分析' || s.title === '数据分析') &&
+        s.content_type === 'text' &&
+        s.content_data?.text
+      )
+      if (dataAnalysisStep) return dataAnalysisStep
+
+      // 兜底：查找最后一个 text 类型的步骤（通常是数据分析）
+      const textSteps = filteredSteps.filter(s => s.content_type === 'text' && s.content_data?.text)
+      return textSteps.length > 0 ? textSteps[textSteps.length - 1] : null
+    },
+    [filteredSteps]
   )
-  const analysisText = step8?.content_data?.text || ''
+  const analysisText = analysisStep?.content_data?.text || ''
 
   // 2. 解析文本：提取总结和图表说明
   const { summary, chartDescriptions } = useMemo(
@@ -930,23 +1072,23 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
     [analysisText]
   )
 
-  // 🔧 修改：按内容类型提取表格数据（不再依赖固定步骤号）
+  // 🔧 修改：按内容类型提取表格数据（不再依赖固定步骤号）- 使用过滤后的步骤
   // 找到最后一个包含表格数据的步骤
   const tableDataStep = useMemo(() => {
-    const tableSteps = steps.filter(s => s.content_type === 'table' && s.content_data?.table)
+    const tableSteps = filteredSteps.filter(s => s.content_type === 'table' && s.content_data?.table)
     console.log('[ProcessingSteps] 查找表格步骤:', {
-      allSteps: steps.map(s => ({ step: s.step, title: s.title, content_type: s.content_type, hasTable: !!s.content_data?.table })),
+      allSteps: filteredSteps.map(s => ({ step: s.step, title: s.title, content_type: s.content_type, hasTable: !!s.content_data?.table })),
       tableSteps: tableSteps.length,
     })
     return tableSteps.length > 0 ? tableSteps[tableSteps.length - 1] : null
-  }, [steps])
+  }, [filteredSteps])
   const tableData = tableDataStep?.content_data?.table || null
   console.log('[ProcessingSteps] 提取的表格数据:', tableData ? `${tableData.row_count} 行 x ${tableData.columns?.length} 列` : 'null')
 
   // 🔧 新增：如果没有找到表格数据但有步骤，打印所有步骤详情用于诊断
   useEffect(() => {
-    if (!tableData && steps.length > 0) {
-      console.warn('[ProcessingSteps] ⚠️ 没有找到表格数据，所有步骤详情:', steps.map(s => ({
+    if (!tableData && filteredSteps.length > 0) {
+      console.warn('[ProcessingSteps] ⚠️ 没有找到表格数据，所有步骤详情:', filteredSteps.map(s => ({
         step: s.step,
         title: s.title,
         content_type: s.content_type,
@@ -956,21 +1098,21 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
         has_chart: !!s.content_data?.chart,
       })))
     }
-  }, [steps, tableData])
+  }, [filteredSteps, tableData])
 
-  // 🔧 修改：按内容类型检测是否有图表（不再依赖固定步骤号）
+  // 🔧 修改：按内容类型检测是否有图表（不再依赖固定步骤号）- 使用过滤后的步骤
   const hasChart = useMemo(() => {
-    return steps.some(s => s.content_type === 'chart' && s.content_data?.chart)
-  }, [steps])
+    return filteredSteps.some(s => s.content_type === 'chart' && s.content_data?.chart)
+  }, [filteredSteps])
 
-  // 3. 使用 useMemo 计算统计信息
+  // 3. 使用 useMemo 计算统计信息 - 使用过滤后的步骤
   const stats = useMemo(() => {
-    const totalDuration = steps.reduce((sum, step) => sum + (step.duration || 0), 0)
-    const completedSteps = steps.filter(s => s.status === 'completed').length
-    const hasError = steps.some(s => s.status === 'error')
-    const isRunning = steps.some(s => s.status === 'running')
+    const totalDuration = filteredSteps.reduce((sum, step) => sum + (step.duration || 0), 0)
+    const completedSteps = filteredSteps.filter(s => s.status === 'completed').length
+    const hasError = filteredSteps.some(s => s.status === 'error')
+    const isRunning = filteredSteps.some(s => s.status === 'running')
     return { totalDuration, completedSteps, hasError, isRunning }
-  }, [steps])
+  }, [filteredSteps])
 
   // 4. 使用 useMemo 缓存容器类名 - DataLab 玻璃态风格
   const containerClassName = useMemo(
@@ -1012,9 +1154,9 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
             <CheckCircle2 className="w-4 h-4" />
           )}
           <span>
-            Reasoning Process 
+            Reasoning Process
             <span className="ml-2 text-xs font-normal opacity-75 font-mono">
-              ({stats.completedSteps}/{steps.length} steps
+              ({stats.completedSteps}/{filteredSteps.length} steps
               {stats.totalDuration > 0 && ` • ${formatDuration(stats.totalDuration)}`})
             </span>
           </span>
@@ -1036,12 +1178,12 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
               stats.hasError ? 'bg-gradient-to-r from-red-400 to-red-500' :
               'bg-gradient-to-r from-primary-400 to-primary-600'
             )}
-            style={{ width: `${(stats.completedSteps / steps.length) * 100}%` }}
+            style={{ width: `${(stats.completedSteps / filteredSteps.length) * 100}%` }}
           />
         </div>
         <div className="flex justify-between mt-1.5 text-[10px] text-slate-400 dark:text-slate-500">
-          <span>{stats.completedSteps} / {steps.length} 步骤</span>
-          <span className="font-mono">{Math.round((stats.completedSteps / steps.length) * 100)}%</span>
+          <span>{stats.completedSteps} / {filteredSteps.length} 步骤</span>
+          <span className="font-mono">{Math.round((stats.completedSteps / filteredSteps.length) * 100)}%</span>
         </div>
       </div>
 
@@ -1052,7 +1194,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
             // 🔧 在 map 外部维护图表索引计数器
             let currentChartIndex = 0
 
-            return steps.map((step, index) => {
+            return filteredSteps.map((step, index) => {
               // 🔧 重构：支持多图表 - 使用 step号 + chart_index 作为唯一key
               const chartIndexAttr = step.content_data?.chart?.chart_index
               const uniqueKey = chartIndexAttr !== undefined
@@ -1114,12 +1256,12 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
                             <CheckCircle2 className="w-3 h-3 text-green-500" />
                           )}
                           <span className="text-xs font-medium text-primary">
-                            {step.step === 8 ? '正在生成分析...' : '正在生成...'}
+                            {step.message === '数据分析' || step.title === '数据分析' ? '正在生成分析...' : '正在生成...'}
                           </span>
                         </div>
                         <div className={cn(
                           "text-xs text-foreground whitespace-pre-wrap break-words max-h-48 overflow-y-auto",
-                          step.step === 8 ? "font-normal leading-relaxed" : "font-mono"
+                          (step.message === '数据分析' || step.title === '数据分析' || step.step === 8) ? "font-normal leading-relaxed" : "font-mono"
                         )}>
                           {step.content_preview}
                           {/* 🔧 打字机光标效果（仅在流式输出时显示） */}

@@ -624,6 +624,100 @@ def _check_table_consistency(query_history: list) -> tuple[bool, str]:
     return True, ""
 
 
+def _generate_smart_analysis(
+    rows: list,
+    columns: list,
+    query: str,
+    query_history: list = None
+) -> str:
+    """基于查询结果生成智能分析文本
+
+    Args:
+        rows: 查询结果行数据
+        columns: 列名
+        query: 用户原始查询
+        query_history: 查询历史（用于占比类分析）
+
+    Returns:
+        详细的分析文本
+    """
+    if not rows or not columns:
+        return "查询已完成，但未返回数据。"
+
+    row_count = len(rows)
+    col_count = len(columns)
+
+    # 检测查询类型
+    is_proportion = any(kw in query for kw in ["占比", "比例", "百分比", "分布"])
+    is_trend = any(kw in query for kw in ["趋势", "变化", "增长", "下降"])
+
+    parts = []
+
+    # 占比类查询的详细分析
+    if is_proportion and query_history and len(query_history) >= 2:
+        parts.append("📊 **数据分析总结**\n\n")
+
+        # 从查询历史中提取分子分母（使用安全的方式）
+        for i, h in enumerate(query_history):
+            if isinstance(h, dict) and h.get("rows"):
+                parts.append(f"**查询{i+1}**: {h.get('query', 'N/A')}\n")
+                history_rows = h.get("rows", [])
+                # 安全地显示行数据
+                for row in history_rows[:3]:
+                    parts.append(f"• {row}\n")
+                parts.append("\n")
+
+        # 计算占比（使用 _extract_numeric_value 函数安全提取）
+        if len(query_history) >= 2:
+            numerator = 0
+            denominator = 0
+
+            # 安全地从第一个查询历史中提取分子
+            if isinstance(query_history[0], dict):
+                first_rows = query_history[0].get("rows", [])
+                numerator = _extract_numeric_value(first_rows) or 0
+
+            # 安全地从第二个查询历史中提取分母
+            if isinstance(query_history[1], dict):
+                second_rows = query_history[1].get("rows", [])
+                denominator = _extract_numeric_value(second_rows) or 0
+
+            if denominator > 0:
+                proportion = (numerator / denominator) * 100
+                parts.append(f"**占比结果**: {proportion:.1f}%\n\n")
+
+    # 通用分析
+    parts.append(f"📈 **数据概览**\n")
+    parts.append(f"• 返回 **{row_count}** 条记录\n")
+    parts.append(f"• 包含 **{col_count}** 个字段: {', '.join(columns[:5])}\n\n")
+
+    # 数值统计
+    numeric_cols = []
+    for i, col in enumerate(columns):
+        if rows and i < len(rows[0]):
+            val = rows[0][i]
+            if isinstance(val, (int, float)):
+                numeric_cols.append((col, i))
+
+    if numeric_cols:
+        parts.append("**🔢 数值统计**\n")
+        for col, idx in numeric_cols[:3]:
+            values = [row[idx] for row in rows if idx < len(row) and isinstance(row[idx], (int, float))]
+            if values:
+                parts.append(f"• **{col}**: 最小={min(values)}, 最大={max(values)}, 平均={sum(values)/len(values):.2f}\n")
+        parts.append("\n")
+
+    # 数据预览
+    parts.append("**📋 数据预览**\n")
+    for row in rows[:5]:
+        parts.append(f"• {' | '.join(str(v) for v in row)}\n")
+
+    if row_count > 5:
+        parts.append(f"\n（共 {row_count} 条记录，仅显示前5条）\n")
+
+    return "".join(parts)
+
+
 def _validate_and_fix_percentage(
     answer: str,
     query_history: list
@@ -785,6 +879,93 @@ def generate_proportion_chart_from_history(
         logger.warning(f"[图表生成] 基于历史生成图表失败: {e}")
 
     return None
+
+
+def enhance_proportion_response(
+    answer: str,
+    data: List[Dict],
+    user_query: str
+) -> str:
+    """
+    为占比类查询增强响应文本
+
+    计算各省份/类别的占比百分比，并添加到响应中。
+    此函数用于处理带有 GROUP BY 的占比查询结果。
+
+    Args:
+        answer: AI 生成的原始回答
+        data: 查询结果数据（包含 province/city 等分组列和 count 值）
+        user_query: 用户原始查询
+
+    Returns:
+        增强后的回答文本
+    """
+    if not data or len(data) < 1:
+        return answer
+
+    # 检查数据是否包含必要的字段
+    first_row = data[0]
+    if not isinstance(first_row, dict):
+        return answer
+
+    # 查找分组列和计数列
+    group_column = None
+    count_column = None
+
+    for col in first_row.keys():
+        col_lower = col.lower()
+        if col_lower in ['province', 'city', 'region', 'category', 'type']:
+            group_column = col
+        elif col_lower in ['count', 'total', 'num', 'value']:
+            count_column = col
+
+    if not group_column or not count_column:
+        # 数据格式不匹配，不进行增强
+        return answer
+
+    # 计算总数
+    total = sum(row.get(count_column, 0) for row in data if isinstance(row.get(count_column), (int, float)))
+
+    if total <= 0:
+        return answer
+
+    # 找到目标省份/类别
+    target_location = None
+    for kw in ['内蒙古', '安徽', '浙江', '江苏', '上海', '北京', '广东', '山东', '河南', '湖北']:
+        if kw in user_query:
+            target_location = kw
+            break
+
+    # 构建占比分析文本
+    proportion_text = "\n\n📊 **分布分析**:\n\n"
+
+    # 按数量排序（降序）
+    sorted_data = sorted(
+        [row for row in data if isinstance(row.get(count_column), (int, float))],
+        key=lambda x: x.get(count_column, 0),
+        reverse=True
+    )
+
+    for row in sorted_data[:10]:  # 最多显示前10个
+        category = row.get(group_column, "未知")
+        count = row.get(count_column, 0)
+        percentage = (count / total * 100) if total > 0 else 0
+        marker = "👈" if str(category) == target_location else ""
+        proportion_text += f"- {category}: {count} ({percentage:.1f}%) {marker}\n"
+
+    # 添加目标类别的占比总结
+    if target_location:
+        target_count = next(
+            (r.get(count_column, 0) for r in data if str(r.get(group_column, "")) == target_location),
+            0
+        )
+        if target_count > 0:
+            target_pct = (target_count / total * 100) if total > 0 else 0
+            proportion_text += f"\n**{target_location}占比**: {target_pct:.1f}% ({target_count}/{total})\n"
+
+    logger.info(f"[占比增强] 添加了 {len(sorted_data)} 个类别的分布分析")
+
+    return answer + proportion_text
 
 
 # ============================================================================
@@ -1143,9 +1324,12 @@ async def create_stream_query_v2(
                                     if "sql" in tool_name.lower() or "query" in tool_name.lower():
                                         sql_query = tool_input.get("query") or tool_input.get("sql", "")
                                         if sql_query:
+                                            # 使用友好的步骤标题，避免被前端过滤器隐藏
+                                            # 标题包含"SQL"和"生成"以匹配前端图标逻辑
+                                            step_data["message"] = "生成SQL语句"
                                             step_data["content_type"] = "sql"
                                             step_data["content_data"] = {"sql": sql_query}
-                                            step_data["detail"] = f"执行查询: {sql_query[:100]}..."
+                                            step_data["detail"] = f"AI已生成SQL: {sql_query[:80]}..."
                                     elif "schema" in tool_name.lower():
                                         step_data["message"] = "获取数据库结构"
                                         step_data["detail"] = f"表: {tool_input.get('table_name', 'unknown')}"
@@ -1626,13 +1810,13 @@ async def create_stream_query_v2(
                                 elif len(rows) > 0:
                                     answer = f"查询返回 {len(rows)} 行数据"
                                 else:
-                                    answer = "查询已完成，请查看上方的处理步骤。"
+                                    answer = ""  # 不显示任何提示，后续会使用智能分析
                             else:
                                 answer = "查询处理完成，但未返回数据。"
 
                         # 确保answer不为空
                         if not answer:
-                            answer = "查询已处理完成。"
+                            answer = ""  # 不显示任何提示，后续会使用智能分析
 
                         # 🔧 始终尝试提取图表配置（如果存在）
                         # 不再检查 include_chart 标志，因为 AI 可能会根据问题类型自主决定生成图表
@@ -1663,8 +1847,17 @@ async def create_stream_query_v2(
                         # 🔧 最终图表配置状态日志
                         if chart_config:
                             logger.info(f"[图表配置] ✅ 最终图表配置长度: {len(chart_config)} 字符")
+                            # 🔧 新增：打印图表配置的结构用于诊断
+                            try:
+                                chart_obj = json.loads(chart_config)
+                                logger.info(f"[图表配置] 📊 图表结构: keys={list(chart_obj.keys())}, has_series={('series' in chart_obj)}")
+                            except:
+                                logger.info(f"[图表配置] 📊 图表配置是对象格式，非JSON字符串")
                         else:
                             logger.warning(f"[图表配置] ❌ 未生成有效的图表配置")
+                            # 🔧 新增：诊断为什么没有图表配置
+                            logger.warning(f"[图表配置诊断] collected_table_data.has_data={collected_table_data.get('has_data')}, columns={len(collected_table_data.get('columns', []))}")
+                            logger.warning(f"[图表配置诊断] answer长度={len(answer)}, has_chart_marker={'[CHART_START]' in answer}")
 
                         # 计算总处理时间
                         total_processing_time_ms = (time.time() - overall_start) * 1000
@@ -1706,9 +1899,20 @@ async def create_stream_query_v2(
                             await cache_manager.cache.set(cache_key, cache_data, ttl=600)
                             logger.debug(f"查询结果已缓存: {cache_key}")
 
-                        # 🔧 修复：确保 done 事件中的 answer 字段有内容
-                        # 如果前端没有通过 data 事件累积到 answer，这里提供兜底
-                        final_answer = answer if answer else "查询已处理完成，请查看上方处理步骤。"
+                        # 🔧 智能兜底：如果 answer 为空，基于 collected_table_data 生成分析
+                        if answer and answer.strip():
+                            final_answer = answer
+                        elif collected_table_data["has_data"]:
+                            final_answer = _generate_smart_analysis(
+                                collected_table_data["rows"],
+                                collected_table_data["columns"],
+                                request.query,
+                                collected_table_data.get("query_history", [])
+                            )
+                            logger.info(f"[智能分析] 基于 collected_table_data 生成分析，长度: {len(final_answer)}")
+                        else:
+                            # 🔧 修复：始终返回至少一个占位符，避免前端显示空白
+                            final_answer = "查询已完成，请查看上方处理步骤。"
 
                         # 🔧 修复：发送步骤1完成事件（理解问题步骤）
                         # 使用 overall_start 计算准确的持续时间
@@ -1744,6 +1948,33 @@ async def create_stream_query_v2(
                                 # 同时更新 accumulated_answer 以便后续使用
                                 answer = validated_answer
 
+                        # 🔧 新增 v6：增强占比查询响应（为 GROUP BY 查询添加分布分析）
+                        if is_proportion_query(request.query) and collected_table_data.get("has_data"):
+                            rows = collected_table_data.get("rows", [])
+                            columns = collected_table_data.get("columns", [])
+
+                            # 检查是否为 GROUP BY 查询结果（多行数据）
+                            if len(rows) > 1 and columns:
+                                # 将行数据转换为字典格式
+                                data_list = []
+                                for row in rows:
+                                    row_dict = {}
+                                    for i, col in enumerate(columns):
+                                        if i < len(row):
+                                            row_dict[col] = row[i]
+                                    data_list.append(row_dict)
+
+                                # 调用增强函数
+                                enhanced_answer = enhance_proportion_response(
+                                    final_answer,
+                                    data_list,
+                                    request.query
+                                )
+                                if enhanced_answer != final_answer:
+                                    logger.info(f"[占比增强] 已添加分布分析到响应")
+                                    final_answer = enhanced_answer
+                                    answer = enhanced_answer
+
                         # 🔧 新增：使用查询历史生成占比图表（优先级更高）
                         if not chart_config and is_proportion_query(request.query) and len(query_history) >= 2:
                             logger.info(f"[图表生成] 检测到占比查询且有{len(query_history)}条历史记录，尝试生成占比图表")
@@ -1754,6 +1985,88 @@ async def create_stream_query_v2(
                             if history_chart and _is_valid_chart_config(history_chart):
                                 chart_config = history_chart
                                 logger.info(f"[图表生成] ✅ 基于查询历史生成占比图表成功")
+
+                        # 🆕 发送数据分析步骤 - 跨表警告、AI回答和多维度分析共存
+                        parts = []
+
+                        # 1. 添加跨表警告（如果有）
+                        has_cross_table_warning = False
+                        if is_proportion_query(request.query):
+                            query_history = collected_table_data.get("query_history", [])
+                            if len(query_history) >= 2:
+                                is_consistent, consistency_error = _check_table_consistency(query_history)
+                                if not is_consistent:
+                                    parts.append(f"{consistency_error}\n\n")
+                                    has_cross_table_warning = True
+
+                        # 2. 添加 AI 回答（如果有原始 AI 分析）
+                        if final_answer and final_answer.strip():
+                            # 过滤掉跨表警告（避免重复）
+                            ai_only_answer = final_answer
+                            if has_cross_table_warning and final_answer.startswith("⚠️"):
+                                # 移除已添加的警告部分
+                                warning_end = final_answer.find("\n\n") + 2
+                                if warning_end > 0:
+                                    ai_only_answer = final_answer[warning_end:]
+                            if ai_only_answer.strip():
+                                parts.append(ai_only_answer.strip() + "\n\n")
+
+                        # 3. 添加多维度数据分析（始终生成）
+                        if collected_table_data["has_data"]:
+                            smart_analysis = _generate_smart_analysis(
+                                collected_table_data["rows"],
+                                collected_table_data["columns"],
+                                request.query,
+                                collected_table_data.get("query_history", [])
+                            )
+                            parts.append(smart_analysis)
+
+                        # 4. 发送完整的分析内容
+                        analysis_content = "".join(parts)
+
+                        # 🔧 修复：确保始终发送数据分析步骤
+                        analysis_step_number = processing_step_number + 1
+                        if not analysis_content or not analysis_content.strip():
+                            # 确保始终有内容可发送
+                            analysis_content = "📊 **数据分析**\n\n查询已完成，请查看上方处理步骤。"
+
+                        for event in send_event("step", {
+                            "step": analysis_step_number,
+                            "message": "数据分析",
+                            "title": "数据分析总结",
+                            "detail": "AI对查询结果进行详细解读和分析",
+                            "status": "completed",
+                            "duration": round((time.time() - overall_start) * 1000, 2),
+                            "content_type": "text",
+                            "content_data": {
+                                "text": analysis_content
+                            }
+                        }):
+                            yield event
+                        logger.info(f"[数据分析] ✅ 已发送数据分析步骤 (步骤{analysis_step_number}), 内容长度: {len(analysis_content)}")
+
+                        # 🔧 新增：发送图表步骤（如果有图表配置）
+                        if chart_config and _is_valid_chart_config(chart_config):
+                            chart_step_number = analysis_step_number + 1
+                            try:
+                                chart_obj = json.loads(chart_config) if isinstance(chart_config, str) else chart_config
+                            except:
+                                chart_obj = chart_config
+
+                            for event in send_event("step", {
+                                "step": chart_step_number,
+                                "message": "图表生成",
+                                "title": "数据可视化",
+                                "detail": "自动生成数据图表",
+                                "status": "completed",
+                                "duration": 100,
+                                "content_type": "chart",
+                                "content_data": {
+                                    "chart": chart_obj
+                                }
+                            }):
+                                yield event
+                            logger.info(f"[图表步骤] ✅ 已发送图表步骤 (步骤{chart_step_number})")
 
                         for event in send_event("done", {
                             "success": True,

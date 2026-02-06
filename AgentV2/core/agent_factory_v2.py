@@ -640,6 +640,50 @@ class AgentFactory:
 
 对于这类查询，按以下流程执行：
 
+### 🔥🔥🔥【占比类查询 - 特殊规则】🔥🔥🔥
+
+当查询涉及以下关键词时：
+- "XX 占比"、"XX 比例"、"XX 分布"
+- "XX 有多少"、"XX 占多少"
+- 省份/城市/地区的客户分布
+
+**必须遵守以下规则**：
+
+#### ❌ 绝对禁止的 SQL：
+- ❌ `SELECT COUNT(*) FROM users WHERE province = '内蒙古'` -- 使用错误的表
+- ❌ `SELECT COUNT(*) FROM addresses WHERE province = '内蒙古'` -- 只查询单一数值
+- ❌ 多次分离的 COUNT 查询
+
+#### ✅ 强制工作流程：
+```
+用户: "内蒙古客户占比"
+
+第一步: list_tables()
+       → 确认可用表
+
+第二步: get_schema("addresses")
+       → 确认表结构（省份查询必须用 addresses 表！）
+
+第三步: execute_query('SELECT province, COUNT(*) as cnt
+                      FROM addresses
+                      WHERE tenant_id = ?
+                      GROUP BY province
+                      ORDER BY cnt DESC')
+       → 获取所有省份分布
+
+第四步: 在结果中计算内蒙古占比 = 34 / 1000 * 100%
+```
+
+#### 🚨 表选择规则：
+| 查询类型 | 必须使用的表 | 禁止使用的表 |
+|---------|-------------|-------------|
+| 省份/城市查询 | **addresses** | ~~users~~ |
+| 客户占比/分布 | **addresses** | ~~users~~ |
+
+**原因**: users 表的 province 字段可能为空或不完整，addresses 表包含完整地址信息。
+
+---
+
 ## 🔴🔴🔴【数据查询流程】生成SQL前必须先调用list_tables()！🔴🔴🔴
 
 **每次生成SQL前，必须按以下顺序执行**：
@@ -750,15 +794,34 @@ When encountering errors:
 
 ## SQL SYNTAX RULES
 
-- For **proportion/distribution** questions, use CASE WHEN + GROUP BY:
-  ```sql
-  SELECT CASE WHEN quantity <= 0 THEN 'Out of Stock'
-              WHEN quantity <= reorder_point THEN 'Low Stock'
-              ELSE 'Normal Stock' END as category,
-         COUNT(*) as value
-  FROM inventory GROUP BY category;
-  ```
+## 🚨🚨🚨【占比类查询强制规则】🚨🚨🚨
 
+当用户询问"XX 占比"、"XX 比例"、"XX 分布"（如"内蒙古客户占比"）时：
+
+### ❌ 绝对禁止：
+- SELECT COUNT(*) FROM users WHERE province = '内蒙古'  -- 只查询单一数值
+- SELECT COUNT(*) FROM users WHERE tenant_id = 'xxx'  -- 只查询总数
+- 多次分离的 COUNT 查询
+
+### ✅ 必须使用：
+**第一步**: list_tables()  -- 查看可用表
+**第二步**: get_schema("addresses")  -- 省份查询必须使用 addresses 表！
+**第三步**: execute_query('SELECT province, COUNT(*) FROM addresses GROUP BY province')
+**第四步**: 从结果中计算占比
+
+### 🚨 表选择规则：
+| 查询类型 | 必须使用的表 | 禁止使用的表 |
+|---------|-------------|-------------|
+| 省份/城市查询 | addresses | users |
+| 客户占比/分布 | addresses | users |
+
+**原因**: users 表的 province 字段可能为空或不完整，addresses 表包含完整地址信息。
+
+---
+
+## 通用规则
+
+- For **proportion/distribution** questions, use CASE WHEN + GROUP BY
 - LIMIT must be LAST in the query
 - Use double quotes for table/sheet names with special characters: `"table_name"`
 

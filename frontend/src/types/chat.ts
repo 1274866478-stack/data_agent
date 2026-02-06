@@ -84,8 +84,11 @@ export interface StepContentData {
 // AI处理步骤定义
 export interface ProcessingStep {
   step: number;           // 步骤编号
+  step_id?: string;       // 🔧 新增：步骤唯一标识符，用于去重和合并
   title: string;          // 步骤标题
+  message?: string;       // 🔧 新增：步骤消息（用于快速识别步骤类型，如"数据分析"）
   description: string;    // 步骤描述
+  detail?: string;        // 🔧 新增：步骤详细信息（后端发送的字段名）
   status: 'pending' | 'running' | 'completed' | 'error';  // 步骤状态
   timestamp?: string;     // 时间戳
   duration?: number;      // 耗时（毫秒）
@@ -164,6 +167,7 @@ export type V2StreamEventType = 'start' | 'step' | 'progress' | 'data' | 'error'
  */
 export interface V2StepData {
   step: number;
+  step_id?: string;  // 🔧 新增：步骤唯一标识符，用于去重和合并
   message: string;
   detail?: string;
   // 🔧 新增：V1 ProcessingStep 兼容字段
@@ -203,10 +207,11 @@ export interface V2DataChunk {
 export interface V2DoneData {
   success: boolean;
   answer: string;
-  processing_steps: string[];
+  processing_steps: ProcessingStep[] | string[];  // 🔧 修复：支持步骤对象或字符串数组
   tenant_id: string;
   processing_time_ms?: number;
   chart_config?: string | Record<string, any>;  // 图表配置（JSON字符串或对象）
+  connection_id?: string;
 }
 
 /**

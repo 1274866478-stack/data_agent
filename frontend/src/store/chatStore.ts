@@ -657,7 +657,7 @@ export const useChatStore = create<ChatState>()(
 
               // 🔧 流式更新节流控制
               let lastUpdateTime = 0
-              const UPDATE_THROTTLE_MS = 50  // 每 50ms 最多更新一次 UI
+              const UPDATE_THROTTLE_MS = 100  // 每 100ms 最多更新一次 UI（优化流式输出）
               let pendingUpdate = false
               let rafId: number | null = null
 
@@ -680,6 +680,7 @@ export const useChatStore = create<ChatState>()(
                   // 🔧 修复：添加详细的状态调试日志
                   console.log('[ChatStore V2] 步骤事件:', {
                     step: data.step,
+                    step_id: data.step_id,
                     message: data.message,
                     status: data.status,
                     hasStatusField: "status" in data,
@@ -700,8 +701,10 @@ export const useChatStore = create<ChatState>()(
                     content_preview: data.content_preview,  // 🔧 新增
                   }
 
-                  // 查找并更新/添加步骤
-                  const existingIndex = processingSteps.findIndex(s => s.step === data.step)
+                  // 🔧 优先使用 step_id 合并，回退到 step 数字
+                  const existingIndex = processingSteps.findIndex(s =>
+                    data.step_id ? s.step_id === data.step_id : s.step === data.step
+                  )
                   if (existingIndex >= 0) {
                     // 🔧 如果步骤已存在，合并更新（保留已有的 timestamp 等字段）
                     processingSteps[existingIndex] = {
@@ -899,104 +902,45 @@ export const useChatStore = create<ChatState>()(
                     console.warn('[ChatStore V2] ⚠️ done 事件中没有 chart_config 字段')
                   }
 
-                  // 🔧 检查是否有表格数据（即使没有图表配置）
+                  // 🔧 步骤优化：移除前端重复添加的3个步骤（数据展示、图表、AI回答）
+                  // 后端已经发送了相应的步骤，前端不需要再添加
+                  // 1. 数据展示步骤：后端的 on_tool_end 已包含表格数据
+                  // 2. 图表步骤：后端的 done 事件已包含图表配置
+                  // 3. AI回答步骤：使用 data.answer 而非额外添加步骤
+                  console.log('[ChatStore V2] 🔍 步骤优化：跳过前端重复步骤添加')
+
+                  // 🔧 检查是否有表格数据（仅用于日志记录）
                   const hasTableData = processingSteps.some(step =>
                     step.content_type === 'table' && step.content_data?.table
                   )
-
                   console.log('[ChatStore V2] 🔍 是否有表格数据:', hasTableData)
                   console.log('[ChatStore V2] 🔍 是否有图表配置:', !!chartConfig)
 
-                  // 🔧 修复：如果有表格数据但没有图表配置，仍然应该添加图表步骤显示数据
-                  // 这样可以确保表格数据在 Reasoning Process 中正确显示
-                  if (hasTableData && !chartConfig) {
-                    console.log('[ChatStore V2] 📊 有表格数据但无图表配置，将添加数据展示步骤')
-
-                    // 找到表格数据的步骤
-                    const tableStep = processingSteps.find(step =>
-                      step.content_type === 'table' && step.content_data?.table
-                    )
-
-                    if (tableStep && tableStep.content_data?.table) {
-                      const table = tableStep.content_data.table
-
-                      // 🔧 添加一个数据展示步骤
-                      const dataDisplayStep = {
-                        step: processingSteps.length + 1,
-                        title: '查询数据展示',
-                        description: `查询返回 ${table.row_count} 行数据，共 ${table.columns.length} 列`,
-                        status: 'completed' as const,
-                        content_type: 'table' as const,
-                        content_data: {
-                          table: table
-                        },
-                        duration: 50
-                      }
-                      processingSteps.push(dataDisplayStep)
-                      console.log('[ChatStore V2] ✅ 添加数据展示步骤')
-                    }
-                  }
-
-                  // 🔧 如果有图表配置，添加一个图表步骤到 processing_steps
-                  if (chartConfig) {
-                    const chartStep = {
-                      step: processingSteps.length + 1,
+                  // 🔧 修复4：如果有图表配置，添加图表步骤到 processing_steps
+                  // 这样 ProcessingSteps 组件就能正确显示图表
+                  if (chartConfig && !processingSteps.some(s => s.content_type === 'chart')) {
+                    console.log('[ChatStore V2] 📊 添加图表步骤到 processing_steps')
+                    const maxStep = Math.max(0, ...processingSteps.map(s => s.step || 0))
+                    processingSteps.push({
+                      step: maxStep + 1,
+                      step_id: `chart-${Date.now()}`,
                       title: '生成数据可视化',
-                      description: chartConfig.title?.text || '图表生成完成',
+                      description: '创建图表展示分析结果',
                       status: 'completed' as const,
-                      echarts_option: chartConfig,
-                      duration: 100,
+                      duration: 200,
                       content_type: 'chart' as const,
                       content_data: {
                         chart: {
                           echarts_option: chartConfig,
-                          chart_type: chartConfig.series?.[0]?.type || 'line',
+                          chart_type: chartConfig.chart_type || 'line',
                           title: chartConfig.title?.text || '数据图表',
                         }
                       }
-                    }
-                    processingSteps.push(chartStep)
-                    console.log('[ChatStore V2] 添加图表步骤到 processing_steps:', chartStep)
+                    })
+                    console.log('[ChatStore V2] ✅ 图表步骤已添加')
                   }
 
-                  // 🔧 添加"AI 回答"步骤，确保 answer 在 ProcessingSteps 中显示
-                  // 因为 removeChartMarkers 会在有 processing_steps 时过滤掉 message.content
-                  if (data.answer && data.answer.trim()) {
-                    // 🔧 修复：移除 [CHART_START]...[CHART_END] 标记和 markdown 表格
-                    // 因为数据已通过图表可视化展示，表格是冗余的
-                    let cleanedAnswer = data.answer
-                      // 移除图表标记
-                      .replace(/\[CHART_START\][\s\S]*?\[CHART_END\]/g, '')
-                      // 移除 markdown 表格（以 | 开头或结尾的行，包括表头分隔符）
-                      .replace(/^\|.*\|$/gm, '')
-                      .replace(/^\|[-:\s|]+\|$/gm, '')
-                      // 移除表格前后多余的空行
-                      .replace(/\n{3,}/g, '\n\n')
-                      .trim()
-
-                    // 如果清理后内容为空，使用默认消息
-                    if (!cleanedAnswer) {
-                      cleanedAnswer = '已生成数据可视化图表，请查看上方图表。'
-                    }
-
-                    const answerStep = {
-                      step: processingSteps.length + 1,
-                      title: 'AI 回答',
-                      description: cleanedAnswer.length > 100
-                        ? cleanedAnswer.substring(0, 100) + '...'
-                        : cleanedAnswer,
-                      status: 'completed' as const,
-                      content_type: 'answer' as const,
-                      content_data: {
-                        text: cleanedAnswer
-                      }
-                    }
-
-                    processingSteps.push(answerStep)
-                    console.log('[ChatStore V2] 添加 AI 回答步骤:', answerStep)
-                  }
-
-                  // 🔧 第六次修复：在最终更新前，再次检查是否有 running 步骤
+                  // 🔧 步骤优化：在最终更新前，再次检查是否有 running 步骤
                   const hasRunningBeforeFinal = processingSteps.some(s => s.status === 'running')
                   if (hasRunningBeforeFinal) {
                     console.warn('[ChatStore V2] ⚠️ 最终更新前仍有 running 步骤，强制完成所有步骤')

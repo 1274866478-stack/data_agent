@@ -279,6 +279,150 @@ class SQLValidator:
         return True, None, None
 
     @classmethod
+    def fix_proportion_sql(cls, sql: str, user_query: str = "") -> str:
+        """
+        修正占比类查询的 SQL
+
+        检测条件：
+        1. 用户查询包含占比/分布关键词
+        2. SQL 包含 WHERE province/city = 'XX' 但没有 GROUP BY
+
+        修正策略：
+        - 将 WHERE province = 'XX' 改为 GROUP BY province
+        - 添加 SELECT province, COUNT(*) ...
+        - 保留其他条件（如额外的过滤条件）
+
+        Args:
+            sql: 原始 SQL 语句
+            user_query: 用户查询（用于判断是否为占比类查询）
+
+        Returns:
+            str: 修正后的 SQL（如果需要），否则返回原始 SQL
+        """
+        if not sql or not sql.strip():
+            return sql
+
+        # 获取 logger
+        logger = __import__('logging').getLogger(__name__)
+
+        # 检测是否为占比查询
+        proportion_keywords = ['占比', '比例', '分布', '多少', '百分比']
+        is_proportion = any(kw in user_query for kw in proportion_keywords)
+
+        if not is_proportion:
+            return sql  # 不是占比查询，不修正
+
+        sql_upper = sql.upper().strip()
+
+        # 检查是否已经包含 GROUP BY（已经正确）
+        if 'GROUP BY' in sql_upper:
+            return sql  # 已经有 GROUP BY，不需要修正
+
+        # 错误模式1: SELECT COUNT(*) FROM table WHERE province = 'XX'
+        pattern1 = r"SELECT\s+COUNT\s*\(\s*\*\s*\)\s+FROM\s+(\w+)\s+WHERE\s+province\s*=\s*'([^']+)'"
+        match1 = re.search(pattern1, sql, re.IGNORECASE)
+
+        if match1:
+            table_name = match1.group(1)
+            province_value = match1.group(2)
+            fixed_sql = (
+                f"SELECT province, COUNT(*) as count\n"
+                f"FROM {table_name}\n"
+                f"GROUP BY province\n"
+                f"ORDER BY count DESC"
+            )
+            logger.warning(
+                f"[SQL修正] 占比查询SQL已修正:\n"
+                f"  原始: {sql}\n"
+                f"  修正: {fixed_sql}\n"
+                f"  原因: 检测到 'WHERE province = \"{province_value}\"'，"
+                f"占比查询应使用 GROUP BY 获取所有省份分布"
+            )
+            return fixed_sql
+
+        # 错误模式2: SELECT COUNT(*) FROM table WHERE city = 'XX'
+        pattern2 = r"SELECT\s+COUNT\s*\(\s*\*\s*\)\s+FROM\s+(\w+)\s+WHERE\s+city\s*=\s*'([^']+)'"
+        match2 = re.search(pattern2, sql, re.IGNORECASE)
+
+        if match2:
+            table_name = match2.group(1)
+            city_value = match2.group(2)
+            fixed_sql = (
+                f"SELECT city, COUNT(*) as count\n"
+                f"FROM {table_name}\n"
+                f"GROUP BY city\n"
+                f"ORDER BY count DESC"
+            )
+            logger.warning(
+                f"[SQL修正] 占比查询SQL已修正:\n"
+                f"  原始: {sql}\n"
+                f"  修正: {fixed_sql}\n"
+                f"  原因: 检测到 'WHERE city = \"{city_value}\"'，"
+                f"占比查询应使用 GROUP BY 获取所有城市分布"
+            )
+            return fixed_sql
+
+        # 错误模式3: SELECT COUNT(*) FROM table WHERE province IN (...)
+        pattern3 = r"SELECT\s+COUNT\s*\(\s*\*\s*\)\s+FROM\s+(\w+)\s+WHERE\s+province\s+IN\s*\("
+        match3 = re.search(pattern3, sql, re.IGNORECASE)
+
+        if match3:
+            table_name = match3.group(1)
+            fixed_sql = (
+                f"SELECT province, COUNT(*) as count\n"
+                f"FROM {table_name}\n"
+                f"GROUP BY province\n"
+                f"ORDER BY count DESC"
+            )
+            logger.warning(
+                f"[SQL修正] 占比查询SQL已修正:\n"
+                f"  原始: {sql}\n"
+                f"  修正: {fixed_sql}\n"
+                f"  原因: 检测到 WHERE province IN 模式，"
+                f"占比查询应使用 GROUP BY 获取所有省份分布"
+            )
+            return fixed_sql
+
+        # 错误模式4: 通用检测 - 任何带 WHERE 的 COUNT(*) 查询但没有 GROUP BY
+        # 更宽松的模式，用于捕获更多情况
+        sql_lower = sql.lower()
+        if ('COUNT(' in sql_upper and
+            'WHERE' in sql_upper and
+            'FROM' in sql_upper and
+            'LIMIT' not in sql_upper):
+
+            # 尝试提取表名
+            from_match = re.search(r"FROM\s+(\w+)", sql, re.IGNORECASE)
+            if from_match:
+                table_name = from_match.group(1)
+
+                # 检查 WHERE 条件中是否包含 province 或 city
+                has_geo_condition = (
+                    'province' in sql_lower or
+                    'city' in sql_lower
+                )
+
+                if has_geo_condition:
+                    # 确定分组列
+                    group_column = 'province' if 'province' in sql_lower else 'city'
+
+                    fixed_sql = (
+                        f"SELECT {group_column}, COUNT(*) as count\n"
+                        f"FROM {table_name}\n"
+                        f"GROUP BY {group_column}\n"
+                        f"ORDER BY count DESC"
+                    )
+                    logger.warning(
+                        f"[SQL修正] 占比查询SQL已修正（通用模式）:\n"
+                        f"  原始: {sql}\n"
+                        f"  修正: {fixed_sql}\n"
+                        f"  原因: 检测到占比类查询但缺少 GROUP BY"
+                    )
+                    return fixed_sql
+
+        return sql
+
+    @classmethod
     def sanitize_for_logging(cls, sql: str, max_length: int = 200) -> str:
         """
         清理 SQL 用于日志记录（截断过长的查询）
@@ -337,7 +481,7 @@ def assert_sql_safe(sql: str) -> None:
     """
     is_safe, error_msg = SQLValidator.validate(sql)
     if not is_safe:
-        raise SQLValidationError(error_msg, sql)
+        raise SQLValidationError(error_msg or "Unknown SQL validation error", sql)
 
 
 # 测试代码

@@ -84,6 +84,16 @@ except ImportError:
     COLUMN_SEMANTICS = {}
     TABLE_RELATIONSHIPS = {}
 
+# 🔧 新增：导入 SQL 校验和修正器
+try:
+    from ..sql_validator import SQLValidator
+    SQL_VALIDATOR_AVAILABLE = True
+    logger.info("✅ [database_tools] SQL 校验和修正器加载成功")
+except ImportError:
+    SQL_VALIDATOR_AVAILABLE = False
+    logger.warning("⚠️ [database_tools] SQL 校验和修正器未找到")
+    SQLValidator = None
+
 # ============================================================================
 # 连接上下文存储 (使用 contextvars 支持异步/多线程)
 # ============================================================================
@@ -2026,9 +2036,16 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
     if cleaned_query != query_with_tenant_removed:
         logger.info(f"SQL cleaned: {query_with_tenant_removed[:50]}... -> {cleaned_query[:50]}...")
 
-    # 🔧 新增：检测错误的占比查询模式（v4 修复）
-    # 如果检测到"SELECT COUNT(*) FROM table WHERE condition"模式且没有 GROUP BY
-    # 返回强制错误，要求使用 GROUP BY 获取完整分布
+    # 🔧 新增：调用 SQL 修正器修正占比查询（v6 修复）
+    # 在代码层面强制修正占比类查询的错误 SQL 模式
+    if SQL_VALIDATOR_AVAILABLE and SQLValidator is not None:
+        user_query = _get_user_query() or ""
+        fixed_query = SQLValidator.fix_proportion_sql(cleaned_query, user_query)
+        if fixed_query != cleaned_query:
+            logger.warning(f"[SQL修正器] 占比查询SQL已自动修正")
+            cleaned_query = fixed_query
+
+    # 🔧 保留原有的占比检测作为后盾
     proportion_error = _check_invalid_proportion_query_pattern(cleaned_query)
     if proportion_error:
         logger.warning(f"[占比类查询错误] 检测到错误的占比查询模式，返回错误")

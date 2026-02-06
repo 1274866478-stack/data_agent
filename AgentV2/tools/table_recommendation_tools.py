@@ -93,13 +93,16 @@ def get_recommended_tables_for_query(query: str) -> str:
 
             for table_info in enhanced_tables:
                 table_name = table_info["name"]
-                recommended_for = table_info.get("recommended_for", [])
+                # 🔧 修复：显式处理 None 值，即使字段显式设置为 None 也会被转换为空列表
+                recommended_for = table_info.get("recommended_for") or []
                 priority = table_info.get("priority", "medium")
 
                 # 计算匹配分数
                 matched_keywords = [kw for kw in recommended_for if kw in query_lower]
                 if matched_keywords:
-                    match_score = len(matched_keywords) / len(recommended_for) if recommended_for else 0
+                    # 🔧 修复：添加 or [] 防止 len(None) 错误
+                    safe_recommended_for = recommended_for or []
+                    match_score = len(matched_keywords) / len(safe_recommended_for) if safe_recommended_for else 0
 
                     # 优先级加分
                     priority_boost = {"high": 0.3, "medium": 0.15, "low": 0}.get(priority, 0)
@@ -233,7 +236,8 @@ def explain_table_selection(query: str, table_name: str) -> str:
         result = {
             "query": query,
             "selected_table": table_name,
-            "match_score": len(matched_keywords) / len(config.get("recommended_for", [1])),
+            # 🔧 修复：添加 or [] 防止 len(None) 错误
+            "match_score": len(matched_keywords) / len(config.get("recommended_for") or [1]),
             "matched_keywords": matched_keywords,
             "explanation": {
                 "why_this_table": config.get("description", ""),
