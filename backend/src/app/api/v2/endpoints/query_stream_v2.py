@@ -346,7 +346,14 @@ def generate_default_chart_config_from_table(
     Returns:
         JSON 字符串格式的 ECharts 配置，如果无法生成则返回 None
     """
+    # 🔧 计划修复2：增加图表生成诊断日志
+    logger.info(f"[图表诊断] 📊 generate_default_chart_config_from_table 调用: "
+                f"columns={len(columns) if columns else 0}, "
+                f"rows={len(rows) if rows else 0}, "
+                f"query='{query[:50] if query else ''}...'")
+
     if not columns or not rows:
+        logger.warning(f"[图表诊断] ⚠️ 缺少必要数据: columns={columns}, rows存在={bool(rows)}")
         return None
 
     try:
@@ -401,9 +408,14 @@ def generate_default_chart_config_from_table(
         if category_col is None and columns:
             category_col = columns[0]
 
+        # 🔧 计划修复2：添加列类型诊断日志
+        logger.info(f"[图表诊断] 📊 列类型分析: category_col={category_col}, value_cols={value_cols}, time_col={time_col}")
+
         # 如果没有数值列，跳过
         if not value_cols:
-            logger.info("[图表生成] 没有找到数值列，无法生成图表")
+            logger.warning("[图表诊断] ⚠️ 没有找到数值列，无法生成图表")
+            logger.info(f"[图表诊断] 🔍 所有列名: {columns}")
+            logger.info(f"[图表诊断] 🔍 第一行数据: {rows[0] if rows else 'N/A'}")
             return None
 
         # 限制数据行数（避免图表过于复杂）
@@ -1831,9 +1843,29 @@ async def create_stream_query_v2(
                             logger.warning(f"[图表提取] ⚠️ AI 生成的图表配置无效，将尝试兜底方案")
                             chart_config = None
 
+                        # 🔧 计划修复1：检测是否是分组查询（如"每个省市的客户数量"）
+                        query_lower = request.query.lower() if request.query else ""
+                        is_group_by_query = any(kw in query_lower for kw in [
+                            '每个', '各', '分组', '每个省市', '每个地区', '每个城市',
+                            '各个', '各省市', '各地区', '各城市', '每种', '各类'
+                        ])
+                        if is_group_by_query:
+                            logger.info(f"[图表自动生成] 🔍 检测到分组查询关键词: {request.query[:50]}...")
+
                         # 🔧 兜底方案：如果没有图表配置但有表格数据，自动生成
-                        if not chart_config and collected_table_data["has_data"] and collected_table_data["columns"] and collected_table_data["rows"]:
+                        # 🆕 计划修复1：如果是分组查询且有表格数据，强制生成图表
+                        should_generate_chart = (
+                            not chart_config and
+                            collected_table_data["has_data"] and
+                            collected_table_data["columns"] and
+                            collected_table_data["rows"] and
+                            len(collected_table_data["rows"]) > 0
+                        )
+
+                        if should_generate_chart:
                             logger.info(f"[图表自动生成] 📊 表格数据可用: 列数={len(collected_table_data['columns'])}, 行数={len(collected_table_data['rows'])}")
+                            if is_group_by_query:
+                                logger.info(f"[图表自动生成] 🎯 分组查询强制生成图表")
                             chart_config = generate_default_chart_config_from_table(
                                 columns=collected_table_data["columns"],
                                 rows=collected_table_data["rows"],

@@ -567,6 +567,18 @@ function renderChart(chart: StepChartData, description?: string) {
     )
   }
 
+  // 🔧 计划修复4：图表配置存在但渲染失败时显示错误提示
+  if (chart && !chart.echarts_option && !chart.chart_image) {
+    console.warn('[ProcessingSteps] ⚠️ 图表配置存在但无可渲染内容:', chart)
+    return (
+      <div className="mt-2 p-3 rounded-md bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700">
+        <div className="text-xs text-yellow-700 dark:text-yellow-300">
+          ⚠️ 图表配置不完整，无法显示图表
+        </div>
+      </div>
+    )
+  }
+
   return null
 }
 
@@ -761,6 +773,23 @@ function filterTechnicalSteps(steps: ProcessingStep[]): ProcessingStep[] {
   // 第一步：过滤掉技术性步骤
   let filtered = steps.filter(step => {
     const titleLower = (step.title || '').toLowerCase()
+
+    // 🔧 计划修复5：明确保留图表和可视化相关步骤
+    const isChartStep = (
+      titleLower.includes('图表') ||
+      titleLower.includes('可视化') ||
+      titleLower.includes('数据分布') ||
+      titleLower.includes('分布图') ||
+      titleLower.includes('趋势图') ||
+      titleLower.includes('柱状图') ||
+      titleLower.includes('折线图') ||
+      titleLower.includes('饼图') ||
+      step.content_type === 'chart'
+    )
+    if (isChartStep) {
+      console.log('[ProcessingSteps] 🔧 保留图表步骤:', step.title)
+      return true
+    }
 
     // 🆕 计划修复2：通用过滤 - 所有以"调用工具:"开头的步骤都隐藏
     if (titleLower.startsWith('调用工具:') || titleLower.startsWith('调用工具：')) {

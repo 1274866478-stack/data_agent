@@ -126,18 +126,14 @@ if _agent_path.exists() and str(_agent_path) not in sys.path:
 
 try:
     from models import VisualizationResponse
-    # 优先使用新版本的 run_agent（支持 enable_echarts）
-    try:
-        from app.services.agent.agent_service import run_agent
-        _use_new_agent = True
-        logger.info("使用新版本 Agent (支持 enable_echarts)")
-    except ImportError:
-        # 回退到旧版本
-        from sql_agent import run_agent as run_agent_legacy
-        run_agent = run_agent_legacy
-        _use_new_agent = False
-        logger.info("使用旧版本 Agent (不支持 enable_echarts)")
+    # 🔧 [迁移计划] 强制使用稳定的 V1 Agent (sql_agent.py)
+    # V1 更简单稳定，没有复杂的中间件和子代理系统
+    # 参考: Agent V1 到 V2 退化问题分析报告 - 方案 C 渐进式迁移
+    from sql_agent import run_agent as run_agent_v1
+    run_agent = run_agent_v1
+    _use_new_agent = False  # 标记为使用 V1
     _agent_available = True
+    logger.info("✅ 使用稳定的 V1 Agent (sql_agent.py)")
 
     # 🔥 【QA集成】导入错误追踪模块
     try:
