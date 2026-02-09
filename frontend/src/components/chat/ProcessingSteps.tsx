@@ -360,14 +360,17 @@ const TableDataRenderer = React.memo(function TableDataRenderer({ table }: Table
 function parseAnalysisText(text: string): { summary: string; chartDescriptions: string[] } {
   if (!text) return { summary: '', chartDescriptions: [] }
 
+  // 🔧 先过滤详细分析模块（数据概览、数值统计、数据预览）
+  const filteredText = filterDetailedAnalysis(text)
+
   // 查找第一个图表标题的位置（如"第一个图表"、"图表1"等）
   const chartTitlePattern = /(?:第\s*[一二三四五六七八九十\d]+\s*个?图表[:：]?\s*)|(?:图表\s*[一二三四五六七八九十\d]+[:：]?\s*)/i
-  const firstChartIndex = text.search(chartTitlePattern)
+  const firstChartIndex = filteredText.search(chartTitlePattern)
 
   // 如果找到图表标题，分割文本
   if (firstChartIndex > 0) {
-    const summaryPart = text.substring(0, firstChartIndex).trim()
-    const chartPart = text.substring(firstChartIndex)
+    const summaryPart = filteredText.substring(0, firstChartIndex).trim()
+    const chartPart = filteredText.substring(firstChartIndex)
 
     // 解析图表说明
     const chartDescriptions: string[] = []
@@ -394,8 +397,8 @@ function parseAnalysisText(text: string): { summary: string; chartDescriptions: 
     }
   }
 
-  // 没有找到图表标题，返回整个文本作为总结
-  return { summary: text, chartDescriptions: [] }
+  // 没有找到图表标题，返回过滤后的整个文本作为总结
+  return { summary: filteredText, chartDescriptions: [] }
 }
 
 /**
@@ -412,50 +415,69 @@ function cleanMarkdownSymbols(text: string): string {
 }
 
 /**
+ * 安全深拷贝，避免循环引用导致的 JSON 序列化失败
+ * 使用 structuredClone 或递归浅拷贝作为后备方案
+ */
+function safeDeepClone<T>(obj: T): T {
+  if (!obj || typeof obj !== 'object') return obj
+
+  // 优先使用 structuredClone（现代浏览器支持）
+  if (typeof structuredClone !== 'undefined') {
+    try {
+      return structuredClone(obj)
+    } catch {
+      // 如果 structuredClone 失败，使用后备方案
+    }
+  }
+
+  // 后备方案：递归浅拷贝（处理常见对象结构）
+  if (Array.isArray(obj)) {
+    return obj.map(item => safeDeepClone(item)) as any
+  }
+
+  const cloned: any = {}
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key) && typeof obj[key] === 'object' && obj[key] !== null) {
+      cloned[key] = safeDeepClone(obj[key])
+    } else {
+      cloned[key] = obj[key]
+    }
+  }
+  return cloned
+}
+
+/**
  * 规范化 ECharts 配置，确保纵坐标标签完整显示
  * 自动添加合理的 grid 配置和坐标轴边距
  */
 function normalizeEChartsOption(option: any): any {
   if (!option || typeof option !== 'object') return option
 
-  // 深拷贝避免修改原始配置
-  const normalized = JSON.parse(JSON.stringify(option))
+  // 深拷贝避免修改原始配置，使用安全拷贝方法
+  const normalized = safeDeepClone(option)
 
   // 🔧 新增：清理标题中的 Markdown 符号
   if (normalized.title?.text) {
     normalized.title.text = cleanMarkdownSymbols(normalized.title.text)
   }
 
-  // 如果已有 grid 配置，确保 left 值足够大
+  // 修复：如果有 grid 配置，强制修正可能导致截断的值
   if (normalized.grid) {
     if (Array.isArray(normalized.grid)) {
       normalized.grid.forEach((g: any) => {
-        if (!g.left || g.left === '3%' || g.left === '10%') {
-          g.left = '15%'
-        }
-        if (!g.right || g.right === '4%' || g.right === '10%') {
-          g.right = '5%'
-        }
-        if (!g.bottom || g.bottom === '3%') {
-          g.bottom = '10%'
-        }
-        if (!g.containLabel) {
-          g.containLabel = true
-        }
+        // 强制设置合理值，防止图表被截断
+        g.left = '15%'
+        g.right = '5%'
+        g.bottom = '10%'
+        g.top = '15%'
+        g.containLabel = true
       })
     } else {
-      if (!normalized.grid.left || normalized.grid.left === '3%' || normalized.grid.left === '10%') {
-        normalized.grid.left = '15%'
-      }
-      if (!normalized.grid.right || normalized.grid.right === '4%' || normalized.grid.right === '10%') {
-        normalized.grid.right = '5%'
-      }
-      if (!normalized.grid.bottom || normalized.grid.bottom === '3%') {
-        normalized.grid.bottom = '10%'
-      }
-      if (!normalized.grid.containLabel) {
-        normalized.grid.containLabel = true
-      }
+      normalized.grid.left = '15%'
+      normalized.grid.right = '5%'
+      normalized.grid.bottom = '10%'
+      normalized.grid.top = '15%'
+      normalized.grid.containLabel = true
     }
   } else {
     // 没有 grid 配置时，添加默认配置
@@ -525,17 +547,17 @@ function renderChart(chart: StepChartData, description?: string) {
     return (
       <>
         {descriptionElement}
-        <div className="mt-2 rounded-md border border-primary/20 overflow-hidden bg-card">
+        <div className="mt-2 rounded-md border border-primary/20 bg-card">
           <div className="flex items-center justify-between px-3 py-1.5 bg-primary/5 border-b border-primary/20">
             <span className="text-xs font-medium text-primary">数据可视化</span>
             {chart.chart_type && (
               <span className="text-xs text-primary/70 uppercase">{chart.chart_type}</span>
             )}
           </div>
-          <div className="p-2">
+          <div className="p-2" style={{ minHeight: '420px' }}>
             <ReactECharts
               option={normalizedOption}
-              style={{ width: '100%', minHeight: '400px' }}
+              style={{ width: '100%', height: '400px' }}
               opts={{ renderer: 'canvas' }}
               notMerge={false}
               lazyUpdate={false}
@@ -610,10 +632,10 @@ function renderVisualization(
   const chartTypeLabel = chart?.chart_type || ''
 
   const chartElement = chart?.echarts_option ? (
-    <div className="p-2">
+    <div className="p-2" style={{ minHeight: '420px' }}>
       <ReactECharts
         option={normalizeEChartsOption(chart.echarts_option)}
-        style={{ width: '100%', minHeight: '400px' }}
+        style={{ width: '100%', height: '400px' }}
         opts={{ renderer: 'canvas' }}
         notMerge={false}
         lazyUpdate={false}
@@ -698,7 +720,7 @@ function renderVisualization(
   return (
     <>
       {descriptionElement}
-      <div className="mt-2 rounded-md border border-primary/30 overflow-hidden bg-card">
+      <div className="mt-2 rounded-md border border-primary/30 bg-card">
         <div className="flex items-center justify-between px-3 py-1.5 bg-primary/5 border-b border-primary/30">
           <span className="text-xs font-medium text-primary">📊 可视化数据</span>
           <span className="text-xs text-primary/70">
@@ -819,9 +841,11 @@ function filterTechnicalSteps(steps: ProcessingStep[]): ProcessingStep[] {
       // 🆕 计划修复3：对于"查询结果"步骤，优先保留有数据的
       const existing = stepMap.get(title)
       if (title.includes('查询结果')) {
-        const existingHasData = existing?.content_data?.table?.row_count > 0
-        const currentHasData = step?.content_data?.table?.row_count > 0
-        if (currentHasData >= existingHasData) {
+        const existingRowCount = existing?.content_data?.table?.row_count ?? 0
+        const currentRowCount = step?.content_data?.table?.row_count ?? 0
+        const existingHasData = existingRowCount > 0
+        const currentHasData = currentRowCount > 0
+        if (currentHasData || !existingHasData) {
           stepMap.set(title, step)
         }
       } else {
@@ -904,6 +928,85 @@ function filterMarkdownLeaks(text: string): string {
   return filteredLines.join('\n')
 }
 
+/**
+ * 🆕 过滤详细数据分析模块
+ * 隐藏数据概览、数值统计、数据预览等技术细节，只保留简洁的分析总结
+ *
+ * 需要过滤的区块：
+ * - 📈 数据概览
+ * - 🔢 数值统计
+ * - 📋 数据预览
+ * - 返回 X 条记录
+ * - 包含 X 个字段
+ * - 各字段统计信息
+ */
+function filterDetailedAnalysis(text: string): string {
+  if (!text) return text
+
+  const lines = text.split('\n')
+  const filteredLines: string[] = []
+  let skipSection = false
+
+  // 需要跳过的区块起始标记
+  const SECTION_START_PATTERNS = [
+    /^📈\s*\*\*数据概览\*\*/,
+    /^\*\*📈\s*数据概览\*\*/,
+    /^\*\*🔢\s*数值统计\*\*/,
+    /^\*\*📋\s*数据预览\*\*/,
+    /^📋\s*\*\*数据预览\*\*/,
+    /^数据概览/,
+    /^数值统计/,
+    /^数据预览/,
+  ]
+
+  // 需要跳过的详细统计行（用于处理没有标题的情况）
+  const DETAIL_LINE_PATTERNS = [
+    /^•\s+返回\s+\d+\s+条记录/,
+    /^•\s+包含\s+\d+\s+个字段/,
+    /^•\s+\w+:\s+最小=.*,\s+最大=.*,\s+平均=/,
+    /^\s*\w+:\s*最小=.*,\s*最大=/,
+    /^\s*总记录数:/,
+    /^\s*字段列表:/,
+  ]
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    const originalLine = line  // 保留原始行（包括缩进）
+
+    // 检查是否进入需要跳过的区块
+    const isSectionStart = SECTION_START_PATTERNS.some(pattern => pattern.test(trimmed))
+    if (isSectionStart) {
+      skipSection = true
+      continue
+    }
+
+    // 检查是否是详细统计行（独立判断，即使不在区块内也跳过）
+    const isDetailLine = DETAIL_LINE_PATTERNS.some(pattern => pattern.test(trimmed))
+    if (isDetailLine) {
+      continue
+    }
+
+    // 遇到新的主要区块时停止跳过（如"📊 可视化"、"## 分析结论"等）
+    if (skipSection) {
+      if (/^(📊|##\s|###\s|^分析结论|^数据洞察)/.test(trimmed)) {
+        skipSection = false
+      } else {
+        continue  // 跳过当前行
+      }
+    }
+
+    filteredLines.push(originalLine)
+  }
+
+  // 清理多余的空行
+  const result = filteredLines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')  // 最多保留两个连续换行
+    .trim()
+
+  return result
+}
+
 // 渲染步骤内容
 function renderStepContent(step: ProcessingStep, outputFormat: 'markdown' | 'plain' = 'markdown') {
   if (!step.content_type || !step.content_data) return null
@@ -952,8 +1055,9 @@ function renderStepContent(step: ProcessingStep, outputFormat: 'markdown' | 'pla
       break
     case 'text':
       if (step.content_data.text) {
-        // 🔧 应用 Markdown 源码泄露过滤
-        const filteredText = filterMarkdownLeaks(step.content_data.text)
+        // 🔧 先应用详细分析过滤，再应用 Markdown 源码泄露过滤
+        const detailFiltered = filterDetailedAnalysis(step.content_data.text)
+        const filteredText = filterMarkdownLeaks(detailFiltered)
         return (
           <div className="mt-2 p-3 rounded-md bg-primary/5 border border-primary/20">
             <div className="text-xs font-medium text-primary mb-1">数据分析</div>
@@ -966,8 +1070,9 @@ function renderStepContent(step: ProcessingStep, outputFormat: 'markdown' | 'pla
       break
     case 'answer':
       if (step.content_data.text) {
-        // 过滤硬编码示例内容
-        const filteredText = filterExampleContent(step.content_data.text)
+        // 🔧 先应用详细分析过滤，再过滤硬编码示例内容
+        const detailFiltered = filterDetailedAnalysis(step.content_data.text)
+        const filteredText = filterExampleContent(detailFiltered)
         const isLoading = step.status === 'running'  // 新增：检测加载状态
 
         return outputFormat === 'plain' ? (
@@ -1003,12 +1108,38 @@ function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex
   if (step.content_type === 'chart') {
     const description = chartDescriptions[chartIndex]
 
-    // 🔧 修复：优先检查步骤级别的 echarts_option，然后检查 content_data.chart
+    // 🔧 修复：兼容两种数据格式
+    // 格式1: { content_data: { chart: { echarts_option: {...} } } }
+    // 格式2: { content_data: { chart: {...} } }  (chart 本身就是 echarts_option)
     const stepLevelChart = (step as any).echarts_option
     const contentChart = step.content_data.chart
 
-    // 合并图表数据：优先使用步骤级别的 echarts_option
-    const chartToRender: StepChartData | null = contentChart || {}
+    // 🔧 关键修复：创建新空对象，避免循环引用
+    const chartToRender: StepChartData = {}
+
+    // 如果 contentChart 本身就是 ECharts 配置（有 title/xAxis/yAxis/series 等字段）
+    // 使用浅拷贝将其包装到 echarts_option 中
+    if (contentChart && !contentChart.echarts_option) {
+      const hasEChartsFields = contentChart.title || contentChart.xAxis ||
+                              contentChart.yAxis || contentChart.series ||
+                              contentChart.legend || contentChart.grid ||
+                              contentChart.tooltip || contentChart.dataset
+      if (hasEChartsFields) {
+        chartToRender.echarts_option = { ...contentChart }  // 浅拷贝打破循环
+      }
+    }
+
+    // 如果 contentChart 已经有 echarts_option，直接使用
+    if (contentChart?.echarts_option && !chartToRender.echarts_option) {
+      chartToRender.echarts_option = contentChart.echarts_option
+    }
+
+    // 保留其他字段
+    if (contentChart?.chart_image) chartToRender.chart_image = contentChart.chart_image
+    if (contentChart?.chart_type) chartToRender.chart_type = contentChart.chart_type
+    if (contentChart?.title) chartToRender.title = contentChart.title
+
+    // 如果有步骤级别的 echarts_option，使用它
     if (stepLevelChart && !chartToRender.echarts_option) {
       chartToRender.echarts_option = stepLevelChart
     }
@@ -1016,11 +1147,6 @@ function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex
     if (chartToRender && (chartToRender.echarts_option || chartToRender.chart_image)) {
       // 使用新的 renderVisualization 函数合并图表和表格
       return renderVisualization(chartToRender, step6Table || null, description)
-    }
-
-    // 如果有 chart 对象但没有 echarts_option，尝试使用 content_data.chart
-    if (contentChart) {
-      return renderVisualization(contentChart, step6Table || null, description)
     }
   }
 
@@ -1032,8 +1158,14 @@ function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex
   ) && step.content_type === 'text'
 
   if (isDataAnalysisStep) {
-    // 如果有总结（summary），显示总结；否则显示原始文本
-    const textToShow = summary && summary.trim() ? summary : step.content_data.text
+    // 如果有总结（summary），显示总结；否则显示过滤后的原始文本
+    let textToShow = summary && summary.trim() ? summary : step.content_data.text
+
+    // 🔧 应用详细分析过滤（如果使用的是原始文本）
+    if (!summary || !summary.trim()) {
+      textToShow = filterDetailedAnalysis(step.content_data.text || '')
+    }
+
     if (!textToShow) return null
 
     return (
@@ -1292,7 +1424,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
                           "text-xs text-foreground whitespace-pre-wrap break-words max-h-48 overflow-y-auto",
                           (step.message === '数据分析' || step.title === '数据分析' || step.step === 8) ? "font-normal leading-relaxed" : "font-mono"
                         )}>
-                          {step.content_preview}
+                          {filterDetailedAnalysis(step.content_preview || '')}
                           {/* 🔧 打字机光标效果（仅在流式输出时显示） */}
                           {step.streaming && (
                             <span className="inline-block w-0.5 h-4 bg-primary animate-pulse ml-0.5 align-middle" />

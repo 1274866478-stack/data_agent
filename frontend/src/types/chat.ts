@@ -312,3 +312,82 @@ export interface V2CancelResponse {
   accumulated_answer: string;
 }
 
+/**
+ * 日志流式回调函数接口
+ * 用于处理日志查询的 SSE 事件
+ */
+export interface LogStreamCallbacks {
+  /** 开始事件 */
+  onStart?: (data: LogStreamStartData) => void;
+  /** 进度更新 */
+  onProgress?: (data: LogStreamProgressData) => void;
+  /** 文件状态更新 */
+  onFileStatus?: (data: LogStreamFileStatusData) => void;
+  /** 日志批次 */
+  onLogBatch?: (data: LogStreamBatchData) => void;
+  /** 完成事件 */
+  onDone?: (data: LogStreamDoneData) => void;
+  /** 错误事件 */
+  onError?: (data: LogStreamErrorData) => void;
+  /** 文件信息 */
+  onFileInfo?: (data: LogStreamFileInfoData) => void;
+  /** 错误计数 */
+  onErrorCount?: (data: LogStreamErrorCountData) => void;
+}
+
+/** 日志流开始数据 */
+export interface LogStreamStartData {
+  type: 'start';
+  message: string;
+}
+
+/** 日志流进度数据 */
+export interface LogStreamProgressData {
+  type: 'progress';
+  progress: number;
+  message?: string;
+}
+
+/** 日志流文件状态数据 */
+export interface LogStreamFileStatusData {
+  type: 'file_status';
+  file_path: string;
+  status: string;
+}
+
+/** 日志流批次数据 */
+export interface LogStreamBatchData {
+  type: 'log_batch';
+  logs: Array<{
+    timestamp: string;
+    level: string;
+    message: string;
+  }>;
+}
+
+/** 日志流完成数据 */
+export interface LogStreamDoneData {
+  type: 'done';
+  total_logs: number;
+}
+
+/** 日志流错误数据 */
+export interface LogStreamErrorData {
+  type: 'error';
+  error: string;
+  error_type?: string;
+  detail?: string;
+}
+
+/** 日志流文件信息数据 */
+export interface LogStreamFileInfoData {
+  type: 'file_info';
+  file_path: string;
+  size: number;
+}
+
+/** 日志流错误计数数据 */
+export interface LogStreamErrorCountData {
+  type: 'error_count';
+  count: number;
+}

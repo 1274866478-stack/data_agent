@@ -176,10 +176,19 @@ class SensitiveDataFilter:
                 filtered_data[key] = cls.filter_sensitive_data(value)
             elif isinstance(value, dict):
                 filtered_data[key] = cls.filter_dict(value)
+            elif isinstance(value, bytes):
+                # 将 bytes 转换为字符串（UTF-8 或 base64）
+                try:
+                    filtered_data[key] = value.decode('utf-8')
+                except UnicodeDecodeError:
+                    # 如果不是 UTF-8，使用 base64 编码
+                    import base64
+                    filtered_data[key] = f"<base64:{base64.b64encode(value).decode('ascii')}>"
             elif isinstance(value, list):
                 filtered_data[key] = [
                     cls.filter_sensitive_data(item) if isinstance(item, str) else
-                    cls.filter_dict(item) if isinstance(item, dict) else item
+                    cls.filter_dict(item) if isinstance(item, dict) else
+                    item.decode('utf-8') if isinstance(item, bytes) else item
                     for item in value
                 ]
             else:

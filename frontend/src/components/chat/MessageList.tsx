@@ -88,26 +88,72 @@ function removeChartMarkers(content: string, hasProcessingSteps: boolean): strin
   // 使用非贪婪匹配 + 跨行匹配，确保捕获所有变体
   cleaned = cleaned.replace(/\[CHART_START\][\s\S]*?\[CHART_END\]/gi, '')
 
-  // 🔧 新增：改进的逐行处理，移除可能的源码泄露和表格
+  // 🔧 新增：过滤详细数据分析模块（数据概览、数值统计、数据预览）
   const lines = cleaned.split('\n')
   const filteredLines: string[] = []
+  let skipSection = false
+
+  // 需要跳过的区块起始标记
+  const SECTION_START_PATTERNS = [
+    /^📈\s*\*\*数据概览\*\*/,
+    /^\*\*📈\s*数据概览\*\*/,
+    /^\*\*🔢\s*数值统计\*\*/,
+    /^\*\*📋\s*数据预览\*\*/,
+    /^数据概览/,
+    /^数值统计/,
+    /^数据预览/,
+  ]
+
+  // 需要跳过的详细统计行
+  const DETAIL_LINE_PATTERNS = [
+    /^•\s+返回\s+\d+\s+条记录/,
+    /^•\s+包含\s+\d+\s+个字段/,
+    /^•\s+\w+:\s+最小=.*,\s+最大=.*,\s+平均=/,
+    /^\s*\w+:\s*最小=.*,\s*最大=/,
+    /^\s*总记录数:/,
+    /^\s*字段列表:/,
+  ]
+
+  // 🔧 增强的源码泄露检测模式
+  const LEAK_PATTERNS = [
+    /^#{2,}\s+\w+.*#{2,}\s*[📊📈📉💼🔍]/,  // 多级标题 + emoji
+    /^#{2,}\s+202[0-9]年.*#{2,}/,             // 年份标题组合
+    /^#{2,}.*###.*$/,                        // 任意 ##...### 模式
+    /^(##|###)\s+.*\1\s+/,                   // 重复标题标记
+    /^(##|###)\s.*(数据概览|趋势分析|📊)/,   // 特征词汇组合
+  ]
+
   let inTable = false
   let tableLineCount = 0
 
   for (const line of lines) {
     const trimmed = line.trim()
 
-    // 🔧 增强的源码泄露检测模式
-    const LEAK_PATTERNS = [
-      /^#{2,}\s+\w+.*#{2,}\s*[📊📈📉💼🔍]/,  // 多级标题 + emoji
-      /^#{2,}\s+202[0-9]年.*#{2,}/,             // 年份标题组合
-      /^#{2,}.*###.*$/,                        // 任意 ##...### 模式
-      /^(##|###)\s+.*\1\s+/,                   // 重复标题标记
-      /^(##|###)\s.*(数据概览|趋势分析|📊)/,   // 特征词汇组合
-    ]
+    // 🔧 优先检查是否进入需要跳过的详细分析区块
+    const isSectionStart = SECTION_START_PATTERNS.some(pattern => pattern.test(trimmed))
+    if (isSectionStart) {
+      skipSection = true
+      continue
+    }
 
+    // 检查是否是详细统计行
+    const isDetailLine = DETAIL_LINE_PATTERNS.some(pattern => pattern.test(trimmed))
+    if (isDetailLine) {
+      continue
+    }
+
+    // 遇到新的主要区块时停止跳过
+    if (skipSection) {
+      if (/^(📊|##\s|###\s|^分析结论|^数据洞察)/.test(trimmed)) {
+        skipSection = false
+      } else {
+        continue
+      }
+    }
+
+    // 检查源码泄露
     if (LEAK_PATTERNS.some(pattern => pattern.test(trimmed))) {
-      continue // 跳过源码泄露行
+      continue
     }
 
     // 检查是否是表格行

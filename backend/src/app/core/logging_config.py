@@ -115,7 +115,19 @@ class StructuredFormatter(logging.Formatter):
         if hasattr(record, 'request_id'):
             log_data["request_id"] = record.request_id
 
-        return json.dumps(log_data, ensure_ascii=False, default=str)
+        # 自定义 JSON 序列化器，处理特殊类型
+        def _json_serializer(obj):
+            """处理特殊类型的 JSON 序列化"""
+            if isinstance(obj, bytes):
+                try:
+                    return obj.decode('utf-8')
+                except UnicodeDecodeError:
+                    import base64
+                    return f"<base64:{base64.b64encode(obj).decode('ascii')}>"
+            # 其他不可序列化类型使用 str()
+            return str(obj)
+
+        return json.dumps(log_data, ensure_ascii=False, default=_json_serializer)
 
 
 class PerformanceLogger:

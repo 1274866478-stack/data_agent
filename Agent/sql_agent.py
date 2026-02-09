@@ -494,7 +494,7 @@ SELECT city, COUNT(*) FROM addresses GROUP BY city
 |--------|----------|---------------------------|----------------------------|
 | "2024年5月" | 2024年5月整月 | `WHERE TO_CHAR(date_col, 'YYYY-MM') = '2024-05'` | `WHERE strftime(date_col, '%Y-%m') = '2024-05'` |
 | "2023年12月" | 2023年12月整月 | `WHERE date_col >= '2023-12-01'::date AND date_col < '2024-01-01'::date` | `WHERE strftime(date_col, '%Y-%m') = '2023-12'` |
-| "2024年的订单" | 2024年全年 | `WHERE EXTRACT(YEAR FROM date_col) = 2024` | `WHERE EXTRACT(YEAR FROM date_col) = 2024` |
+| "2024年的订单" | 2024年全年 | `WHERE EXTRACT(YEAR FROM date_col) = 2024` | `WHERE strftime(date_col, '%Y') = '2024'` |
 
 **🚨🚨🚨 禁止使用 LIKE 查询日期！**
 - ❌ **错误**: `WHERE order_date LIKE '2024-05%'` （对日期类型无效！）
@@ -508,6 +508,21 @@ SELECT city, COUNT(*) FROM addresses GROUP BY city
 | "客户"、"用户" | 客户数量 | COUNT(DISTINCT customer_id) 客户数 |
 | "收入"、"钱" | 金额 | SUM(amount), AVG(amount) |
 | "趋势"、"变化" | 时间序列数据 | 按日期/月份分组统计 |
+
+### 🔴🔴🔴 趋势查询时间粒度规则
+当用户问"趋势"问题时，必须根据时间范围选择正确的分组粒度：
+
+| 时间范围 | 分组方式 | SQL 示例 |
+|----------|----------|----------|
+| "2024年趋势"、"某年趋势" | 按月分组 | `DATE_TRUNC('month', date_col)` |
+| "3月趋势"、"本月趋势" | 按天分组 | `DATE_TRUNC('day', date_col)` |
+| "最近30天"、"近期" | 按天分组 | `DATE_TRUNC('day', date_col)` |
+| "最近一周" | 按天分组 | `DATE_TRUNC('day', date_col)` |
+
+**🚨 关键规则**：
+- 🔴 **年度趋势必须按月分组**，不要按天分组（数据太多）
+- 🔴 **月度/短期趋势按天分组**
+- 🔴 **必须包含 ORDER BY 时间字段**，确保数据按时间顺序排列
 
 ### 3️⃣ 处理流程（必须按顺序执行）
 ```
@@ -525,10 +540,24 @@ SELECT city, COUNT(*) FROM addresses GROUP BY city
 - 调用图表工具：generate_line_chart（趋势）或 generate_bar_chart（对比）
 
 ### 4️⃣ SQL查询示例（必须按日期分组）
-当用户问"最近生意怎么样"时，**不要只查总数**，要查时间序列：
 
+**示例 1：年度趋势（按月分组）**
 ```sql
--- ✅ 正确：按日期分组，可生成趋势图
+-- 用户问："2024年的销售趋势"
+SELECT
+    DATE_TRUNC('month', order_date) as month,
+    COUNT(*) as orders,
+    SUM(amount) as sales
+FROM orders
+WHERE EXTRACT(YEAR FROM order_date) = 2024
+GROUP BY DATE_TRUNC('month', order_date)
+ORDER BY month;
+-- 返回 12 行数据，每行是一个月的汇总
+```
+
+**示例 2：近期趋势（按天分组）**
+```sql
+-- 用户问："最近30天的销售趋势"
 SELECT
     DATE_TRUNC('day', order_date) as date,
     COUNT(*) as orders,
@@ -536,13 +565,12 @@ SELECT
 FROM orders
 WHERE order_date >= CURRENT_DATE - INTERVAL '30 days'
 GROUP BY DATE_TRUNC('day', order_date)
-ORDER BY date
--- 返回多行数据，每行是一个日期的数据
-
--- ❌ 错误：只查总数，无法画图
-SELECT COUNT(*), SUM(amount) FROM orders WHERE ...
--- 只返回一行，无法生成趋势图
+ORDER BY date;
+-- 返回 30 行数据，每行是一天的汇总
 ```
+
+❌ 错误：年度趋势按天分组（返回365行，数据太多）
+❌ 错误：只查总数，无法生成趋势图
 
 ### 5️⃣ 图表工具调用示例
 查询到时间序列数据后，立即调用图表工具：
@@ -560,7 +588,7 @@ SELECT COUNT(*), SUM(amount) FROM orders WHERE ...
 
 ### 6️⃣ 关键要求
 - 🔴 **模糊时间必须使用默认值**（"最近"默认30天，不要问用户"多久"）
-- 🔴 **查询必须按日期分组**（生成时间序列数据用于画图）
+- 🔴 **趋势查询必须选择正确的时间粒度**（年度→按月，短期→按天）
 - 🔴 **必须调用图表工具**（generate_line_chart 或 generate_bar_chart）
 - 🔴 **主动找表**（通过list_tables智能推断表名）
 - 🔴 **找不到合适的表/列时，明确说明**（不要瞎猜字段名）
@@ -1361,6 +1389,128 @@ data_analysis_output_requirement = """
 
 # 默认提示词（向后兼容）
 SYSTEM_PROMPT = BASE_SYSTEM_PROMPT + DEEP_DATA_ANALYSIS_REQUIREMENT
+
+
+def get_system_prompt(db_type: str = "postgresql") -> str:
+    """
+    根据数据库类型获取系统提示词
+
+    Args:
+        db_type: 数据库类型（postgresql, mysql, sqlite, xlsx, csv, duckdb等）
+
+    Returns:
+        完整的系统提示词字符串（根据数据库类型调整）
+    """
+    prompt = SYSTEM_PROMPT
+
+    # 根据数据库类型动态调整提示词
+    if db_type.lower() in ("xlsx", "csv", "duckdb", "excel", "xls"):
+        # DuckDB/Excel/CSV 数据源：调整数据库类型说明和 SQL 语法
+        prompt = prompt.replace(
+            "你是一个专业的 PostgreSQL 数据库助手，具备数据查询和图表可视化能力。",
+            "你是一个专业的 DuckDB 数据库助手（处理 Excel/CSV 文件），具备数据查询和图表可视化能力。"
+        )
+
+        # 替换 PostgreSQL 特有语法为 DuckDB 兼容语法
+
+        # EXTRACT(YEAR FROM column_name) → strftime(column_name, '%Y')
+        # 使用正则表达式匹配任意列名，确保所有 SQL 示例都被正确转换
+        prompt = re.sub(
+            r"EXTRACT\(YEAR FROM\s+(\w+)\)",
+            r"strftime(\1, '%Y')",
+            prompt
+        )
+        # 同时修复比较运算符：PostgreSQL 用数字，DuckDB 用字符串
+        # strftime(..., '%Y') = 2024 → strftime(..., '%Y') = '2024'
+        prompt = re.sub(
+            r"strftime\((\w+), '%Y'\)\s*=\s*(\d{4})",
+            r"strftime(\1, '%Y') = '\2'",
+            prompt
+        )
+
+        # TO_CHAR → strftime
+        prompt = prompt.replace(
+            "TO_CHAR(date_col, 'YYYY-MM') = '2024-05'",
+            "strftime(date_col, '%Y-%m') = '2024-05'"
+        )
+        prompt = prompt.replace(
+            "TO_CHAR(date_col, 'YYYY-MM')",
+            "strftime(date_col, '%Y-%m')"
+        )
+
+        # INTERVAL 语法：PostgreSQL 用引号，DuckDB 不用引号
+        prompt = prompt.replace(
+            "INTERVAL '30 days'",
+            "INTERVAL 30 days"
+        )
+        prompt = prompt.replace(
+            "INTERVAL '7 days'",
+            "INTERVAL 7 days"
+        )
+        prompt = prompt.replace(
+            "INTERVAL '1 month'",
+            "INTERVAL 1 month"
+        )
+        prompt = prompt.replace(
+            "INTERVAL '12 months'",
+            "INTERVAL 12 months"
+        )
+
+        # DATE_TRUNC → date_trunc（DuckDB 标准写法）
+        prompt = prompt.replace(
+            "DATE_TRUNC('month',",
+            "date_trunc('month',"
+        )
+        prompt = prompt.replace(
+            "DATE_TRUNC('day',",
+            "date_trunc('day',"
+        )
+
+        # 添加 DuckDB 特定说明
+        duckdb_note = """
+
+## 📌 DuckDB/Excel 数据源特殊说明
+
+当前使用的是 **DuckDB** 数据库（处理 Excel/CSV 文件），请注意以下语法差异：
+
+### DuckDB vs PostgreSQL 语法对照
+| 功能 | PostgreSQL 语法 | DuckDB 语法 |
+|------|----------------|-------------|
+| 提取年份 | `EXTRACT(YEAR FROM date_col)` | `strftime(date_col, '%Y')` |
+| 提取年月 | `TO_CHAR(date_col, 'YYYY-MM')` | `strftime(date_col, '%Y-%m')` |
+| 日期截断（月） | `DATE_TRUNC('month', date_col)` | `date_trunc('month', date_col)` |
+| 日期截断（天） | `DATE_TRUNC('day', date_col)` | `date_trunc('day', date_col)` |
+| 时间间隔 | `INTERVAL '30 days'` | `INTERVAL 30 days` |
+
+### DuckDB SQL 示例
+```sql
+-- 年度趋势查询（按月分组）
+SELECT
+    date_trunc('month', order_date) as month,
+    COUNT(*) as orders,
+    SUM(amount) as sales
+FROM orders
+WHERE strftime(order_date, '%Y') = '2024'
+GROUP BY date_trunc('month', order_date)
+ORDER BY month;
+
+-- 特定年月查询
+WHERE order_date >= '2024-05-01' AND order_date < '2024-06-01'
+
+-- 最近30天查询
+WHERE order_date >= CURRENT_DATE - INTERVAL 30 days
+```
+"""
+        # 在注意事项之前插入 DuckDB 说明
+        prompt = prompt.replace(
+            "## 注意事项：\n- 这是 PostgreSQL 数据库，使用 PostgreSQL 语法",
+            "## 注意事项：\n- 这是 DuckDB 数据库（Excel/CSV 文件），使用 DuckDB 语法"
+        )
+
+        # 添加 DuckDB 特定说明到提示词末尾
+        prompt = prompt.rstrip() + duckdb_note
+
+    return prompt
 
 
 def create_llm():
