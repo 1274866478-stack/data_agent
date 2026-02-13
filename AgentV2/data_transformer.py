@@ -270,6 +270,8 @@ def sql_result_to_echarts_data(
         # 确保 Y 值是数值类型
         try:
             y_val = float(y_val) if y_val is not None else 0
+            # 统一两位小数，保持报表观感专业
+            y_val = round(y_val, 2) if isinstance(y_val, float) else y_val
         except (ValueError, TypeError):
             y_val = 0
         
@@ -342,6 +344,7 @@ def sql_result_to_mcp_echarts_data(
         # 确保数值类型
         try:
             y_val = float(y_val) if y_val is not None else 0
+            y_val = round(y_val, 2) if isinstance(y_val, float) else y_val
         except (ValueError, TypeError):
             y_val = 0
 

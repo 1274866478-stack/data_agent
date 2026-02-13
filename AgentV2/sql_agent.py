@@ -81,6 +81,7 @@ import re
 import sys
 import os
 import copy
+from datetime import datetime, date
 from typing import Annotated, Literal, Optional, Dict, Any, List, Tuple
 
 # 配置日志记录器
@@ -108,12 +109,102 @@ def _has_month_aggregation(sql: str) -> bool:
 
 def _rewrite_sql_monthly(sql: str) -> str:
     """粗暴但有效：把日级 order_date 聚合改成按月。"""
-    month_expr = "DATE_TRUNC('month', order_date)"
+    month_expr = "strftime('%Y-%m', order_date)"
     sql_new = re.sub(r"DATE_TRUNC\s*\(\s*'day'\s*,\s*order_date\s*\)", month_expr, sql, flags=re.IGNORECASE)
     sql_new = re.sub(r"\border_date\b", f"{month_expr} AS month", sql_new, count=1, flags=re.IGNORECASE)
     sql_new = re.sub(r"GROUP BY\s+order_date", f"GROUP BY {month_expr}", sql_new, flags=re.IGNORECASE)
     sql_new = re.sub(r"ORDER BY\s+order_date", f"ORDER BY {month_expr}", sql_new, flags=re.IGNORECASE)
     return sql_new
+
+
+def _extract_year(question: str) -> Optional[int]:
+    """从用户问题中提取年份（命中第一个 20xx）。"""
+    if not question:
+        return None
+    m = re.search(r"\b(20\d{2})\b", question)
+    return int(m.group(1)) if m else None
+
+
+def _enforce_year_filter_and_month(sql: str, year: int) -> str:
+    """
+    将年过滤改为范围查询，并强制按月聚合（针对 orders 表销售趋势场景）。
+    - 使用 >= year-01-01 AND < next_year-01-01 避免索引失效
+    - 统一月粒度，生成订单数/销售额/客单价
+    """
+    if not year:
+        return sql
+
+    sql_lower = sql.lower()
+    if " from orders" not in sql_lower:
+        return sql
+
+    date_col = "order_date" if "order_date" in sql_lower else "order_date"
+    year_start = f"'{year:04d}-01-01'"
+    year_end = f"'{year + 1:04d}-01-01'"
+
+    # 1) 将 SUBSTRING/LIKE 年份过滤改为范围过滤
+    sql = re.sub(
+        rf"substring\s*\(\s*{date_col}\s*,\s*1\s*,\s*4\s*\)\s*=\s*'?\d{{4}}'?",
+        f"{date_col} >= {year_start} AND {date_col} < {year_end}",
+        sql,
+        flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        rf"{date_col}\s+like\s+'{year}\%'",
+        f"{date_col} >= {year_start} AND {date_col} < {year_end}",
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+    # 2) 如缺失年份条件，插入范围过滤
+    sql_lower = sql.lower()
+    if f"{year_start.lower()}" not in sql_lower and f"{year_end.lower()}" not in sql_lower:
+        if " where " in sql_lower:
+            sql = re.sub(
+                r"\bwhere\b",
+                f"WHERE {date_col} >= {year_start} AND {date_col} < {year_end} AND",
+                sql,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            sql = sql.replace("AND  AND", "AND ")
+        elif " group by " in sql_lower:
+            sql = re.sub(
+                r"\bgroup\s+by\b",
+                f"WHERE {date_col} >= {year_start} AND {date_col} < {year_end} GROUP BY",
+                sql,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        elif " order by " in sql_lower:
+            sql = re.sub(
+                r"\border\s+by\b",
+                f"WHERE {date_col} >= {year_start} AND {date_col} < {year_end} ORDER BY",
+                sql,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        else:
+            sql = f"{sql} WHERE {date_col} >= {year_start} AND {date_col} < {year_end}"
+
+    # 3) 强制按月聚合 + 生成三项指标
+    month_expr = f"strftime('%Y-%m', {date_col})"
+    select_pattern = re.compile(r"select\s+.*?\bfrom\b", re.IGNORECASE | re.DOTALL)
+    replacement_select = (
+        f"SELECT {month_expr} AS month, "
+        "COUNT(*) AS order_count, "
+        "SUM(total_amount) AS total_sales, "
+        "AVG(total_amount) AS avg_order_amount FROM"
+    )
+    sql = select_pattern.sub(replacement_select, sql)
+    # 统一 GROUP BY / ORDER BY
+    sql = re.sub(r"GROUP BY\s+[^;]+", f"GROUP BY {month_expr}", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"ORDER BY\s+[^;]+", "ORDER BY month", sql, flags=re.IGNORECASE)
+    if "group by" not in sql.lower():
+        sql += f" GROUP BY {month_expr}"
+    if "order by" not in sql.lower():
+        sql += " ORDER BY month"
+    return sql
 
 
 def _normalize_tool_call_v2(tc: Dict[str, Any]) -> Tuple[str, Dict[str, Any], str]:
@@ -209,19 +300,112 @@ def apply_time_aggregation_fix_to_tool_calls_v2(
     if not tool_calls or not _looks_like_year_trend(question):
         return tool_calls
 
+    target_year = _extract_year(question)
+
     fixed = []
     for tc in tool_calls:
         tc_copy = copy.deepcopy(tc)
         name, args, fmt = _normalize_tool_call_v2(tc_copy)
         sql = args.get("sql") or args.get("query")
         if name in ("query", "execute_query", "execute_sql_safe") and sql:
-            if not _has_month_aggregation(sql):
-                corrected = _rewrite_sql_monthly(sql)
-                args["sql"] = corrected
-                args["query"] = corrected
-                _write_back_tool_call_v2(tc_copy, args, fmt)
+            corrected = sql
+            # 针对销售趋势类（orders 表）强制范围过滤+月聚合+三指标
+            if target_year:
+                corrected = _enforce_year_filter_and_month(corrected, target_year)
+
+            if not _has_month_aggregation(corrected):
+                corrected = _rewrite_sql_monthly(corrected)
+
+            args["sql"] = corrected
+            args["query"] = corrected
+            _write_back_tool_call_v2(tc_copy, args, fmt)
         fixed.append(tc_copy)
     return fixed
+
+
+def _build_dual_axis_chart_config(raw_data: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    基于查询结果自动生成双轴配置（销售额 + 订单量）。
+    返回 chart_config_data 兼容结构。
+    """
+    if not raw_data:
+        return None
+
+    columns = list(raw_data[0].keys())
+    if len(columns) < 3:
+        return None
+
+    # 识别时间列与数值列
+    time_col = None
+    numeric_cols: List[str] = []
+    for col in columns:
+        col_lower = col.lower()
+        sample_val = raw_data[0].get(col)
+        if any(key in col_lower for key in ["month", "date", "day"]):
+            time_col = col
+        if isinstance(sample_val, (int, float)):
+            numeric_cols.append(col)
+
+    if not time_col or len(numeric_cols) < 2:
+        return None
+
+    def _pick_metric(candidates: List[str], keywords: List[str]) -> Optional[str]:
+        for kw in keywords:
+            for col in candidates:
+                if kw in col.lower():
+                    return col
+        return None
+
+    main_metric = _pick_metric(numeric_cols, ["sale", "amount", "total", "revenue"]) or numeric_cols[0]
+    secondary_metric = _pick_metric([c for c in numeric_cols if c != main_metric], ["count", "qty", "quantity", "order"]) \
+        or (numeric_cols[1] if len(numeric_cols) > 1 else None)
+
+    if not secondary_metric:
+        return None
+
+    return {
+        "chart_type": "line",
+        "chart_title": "销售额 vs 订单量（双轴）",
+        "x_field": time_col,
+        "y_field": main_metric,
+        "series": [
+            {"column": main_metric, "chart_type": "line", "y_axis_index": 0, "unit": ""},
+            {"column": secondary_metric, "chart_type": "bar", "y_axis_index": 1, "unit": ""},
+        ],
+        "is_dual_axis": True,
+        "left_axis_name": main_metric,
+        "right_axis_name": secondary_metric,
+    }
+
+
+def _extract_date_bounds(rows: List[List[Any]], columns: List[str]) -> Optional[Tuple[date, date]]:
+    """提取结果中的最小/最大日期，用于覆盖范围提示。"""
+    candidates = []
+
+    def _parse(val):
+        if isinstance(val, (datetime, date)):
+            return val.date() if isinstance(val, datetime) else val
+        if isinstance(val, str):
+            txt = val.strip()
+            for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m", "%Y/%m"):
+                try:
+                    dt = datetime.strptime(txt, fmt)
+                    return dt.date()
+                except ValueError:
+                    continue
+        return None
+
+    for row in rows:
+        for idx, col in enumerate(columns):
+            if any(k in col.lower() for k in ["date", "month", "day"]):
+                if idx < len(row):
+                    d = _parse(row[idx])
+                    if d:
+                        candidates.append(d)
+
+    if not candidates:
+        return None
+    return min(candidates), max(candidates)
 
 # Fix Windows GBK encoding issue
 if sys.platform == 'win32':
@@ -1566,6 +1750,13 @@ async def _generate_default_answer(query_result: QueryResult, sql: str, chart_co
     columns = query_result.columns
     row_count = query_result.row_count
 
+    # 数据覆盖范围提示（最小/最大日期）
+    coverage_bounds = _extract_date_bounds(rows, columns)
+    coverage_text = ""
+    if coverage_bounds:
+        min_d, max_d = coverage_bounds
+        coverage_text = f"数据覆盖范围：{min_d.isoformat()} 至 {max_d.isoformat()}"
+
     # 🔧 新增：尝试使用 AnalysisNode 生成智能分析
     try:
         # 导入 AnalysisNode
@@ -1595,6 +1786,8 @@ async def _generate_default_answer(query_result: QueryResult, sql: str, chart_co
 
         # 数据概要
         answer_parts.append(f"📈 **数据概要**: 共 {row_count} 条记录\n")
+        if coverage_text:
+            answer_parts.append(f"📅 {coverage_text}\n")
 
         # 洞察发现
         if report.insights:
@@ -1638,6 +1831,8 @@ async def _generate_default_answer(query_result: QueryResult, sql: str, chart_co
         "📊 [数据分析结果]",
         f"\n根据查询结果，共找到 {row_count} 条记录：\n"
     ]
+    if coverage_text:
+        answer_parts.append(f"📅 {coverage_text}\n")
 
     # 添加前几条数据预览
     preview_count = min(5, row_count)
@@ -1960,6 +2155,21 @@ async def build_visualization_response(
             if llm_y_field and llm_y_field not in actual_columns:
                 chart_config_data['y_field'] = field_mapping.y_field
 
+    # 基于数据自动生成双轴配置（销售额+订单量），避免单轴挤压
+    if raw_data:
+        dual_cfg = _build_dual_axis_chart_config(raw_data)
+        if dual_cfg:
+            if not chart_config_data:
+                chart_config_data = dual_cfg
+            else:
+                chart_config_data.setdefault('series', dual_cfg.get('series', []))
+                chart_config_data.setdefault('chart_type', dual_cfg.get('chart_type', 'line'))
+                chart_config_data.setdefault('x_field', dual_cfg.get('x_field'))
+                chart_config_data.setdefault('y_field', dual_cfg.get('y_field'))
+                chart_config_data['is_dual_axis'] = True
+                chart_config_data['left_axis_name'] = dual_cfg.get('left_axis_name', '')
+                chart_config_data['right_axis_name'] = dual_cfg.get('right_axis_name', '')
+
     # 🔧 新增：如果没有图表配置但有数据，使用 AnalysisNode 生成图表推荐
     if not chart_config_data and raw_data and len(raw_data) > 0:
         try:
@@ -2020,7 +2230,11 @@ async def build_visualization_response(
             chart_type=chart_type,
             title=chart_config_data.get('chart_title', ''),
             x_field=chart_config_data.get('x_field'),
-            y_field=chart_config_data.get('y_field')
+            y_field=chart_config_data.get('y_field'),
+            series=chart_config_data.get('series', []),
+            is_dual_axis=chart_config_data.get('is_dual_axis', False),
+            left_axis_name=chart_config_data.get('left_axis_name', chart_config_data.get('y_field', '')),
+            right_axis_name=chart_config_data.get('right_axis_name', '')
         )
 
         # 🔧 修复：避免重复内容
