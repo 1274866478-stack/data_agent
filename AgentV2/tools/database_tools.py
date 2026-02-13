@@ -806,6 +806,22 @@ def _is_excel_connection(database_url: str) -> bool:
     return database_url.startswith("excel://")
 
 
+def _infer_db_type_from_url(database_url: str) -> str:
+    """从连接方式推断数据库类型"""
+    if not database_url:
+        return ""
+    url = database_url.lower()
+    if url.startswith("excel://") or url.startswith("duckdb://"):
+        return "duckdb"
+    if url.startswith("postgresql://") or url.startswith("postgres://"):
+        return "postgres"
+    if url.startswith("mysql://") or url.startswith("mariadb://"):
+        return "mysql"
+    if url.startswith("sqlite://") or url.startswith("sqlite3://"):
+        return "sqlite"
+    return ""
+
+
 def _has_subquery(query: str) -> bool:
     """
     检测 SQL 查询是否包含子查询
@@ -2036,20 +2052,7 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
     if cleaned_query != query_with_tenant_removed:
         logger.info(f"SQL cleaned: {query_with_tenant_removed[:50]}... -> {cleaned_query[:50]}...")
 
-    # 🔧 新增：调用 SQL 修正器修正占比查询（v6 修复）
-    # 在代码层面强制修正占比类查询的错误 SQL 模式
-    if SQL_VALIDATOR_AVAILABLE and SQLValidator is not None:
-        user_query = _get_user_query() or ""
-        fixed_query = SQLValidator.fix_proportion_sql(cleaned_query, user_query)
-        if fixed_query != cleaned_query:
-            logger.warning(f"[SQL修正器] 占比查询SQL已自动修正")
-            cleaned_query = fixed_query
-
-    # 🔧 保留原有的占比检测作为后盾
-    proportion_error = _check_invalid_proportion_query_pattern(cleaned_query)
-    if proportion_error:
-        logger.warning(f"[占比类查询错误] 检测到错误的占比查询模式，返回错误")
-        return proportion_error
+    user_query = _get_user_query() or ""
 
     # 从 thread-local 获取 connection_id 和 tenant_id（如果未通过参数传递）
     # Agent 调用工具时不会传递 connection_id，需要从连接上下文获取
@@ -2057,6 +2060,46 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
         connection_id, _, tenant_id = _get_connection_context()
     else:
         _, _, tenant_id = _get_connection_context()
+
+    # 🔧 尽早获取数据库连接信息，以便后续修正器使用
+    database_url, connection_info = get_database_url(connection_id)
+    db_type = _infer_db_type_from_url(database_url)
+
+    # 🔧 月度聚合修正（主要方案：工具层拦截）
+    # 统一日志格式：[月度聚合修正] session=... changed=True ...
+    if SQL_VALIDATOR_AVAILABLE and SQLValidator is not None:
+        # 1. 先修正占比查询
+        fixed_query = SQLValidator.fix_proportion_sql(cleaned_query, user_query)
+        if fixed_query != cleaned_query:
+            logger.warning(f"[月度聚合修正] 占比查询SQL已自动修正")
+            cleaned_query = fixed_query
+
+        # 2. 再修正时间聚合（年度趋势查询）
+        # 传递 db_type 以正确选择月表达式语法
+        fixed_query = SQLValidator.fix_time_aggregation_sql(
+            cleaned_query,
+            user_query,
+            db_type=db_type
+        )
+        if fixed_query != cleaned_query:
+            connection_id_for_log = connection_id or "unknown"
+            logger.warning(
+                f"[月度聚合修正] "
+                f"connection_id={connection_id_for_log} "
+                f"tenant_id={tenant_id or 'unknown'} "
+                f"changed=True "
+                f"reason='年度趋势查询缺少月度聚合' "
+                f"db_type={db_type} "
+                f"sql_before={cleaned_query[:100] if len(cleaned_query) > 100 else cleaned_query}... "
+                f"sql_after={fixed_query[:100] if len(fixed_query) > 100 else fixed_query}..."
+            )
+            cleaned_query = fixed_query
+
+    # 🔧 保留原有的占比检测作为后盾
+    proportion_error = _check_invalid_proportion_query_pattern(cleaned_query)
+    if proportion_error:
+        logger.warning(f"[占比类查询错误] 检测到错误的占比查询模式，返回错误")
+        return proportion_error
 
     # 确保有租户 ID 用于缓存隔离
     cache_tenant_id = tenant_id or "default_tenant"
@@ -2080,7 +2123,8 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
     logger.info(f"Query result cache MISS (tenant={cache_tenant_id}): {cleaned_query[:50]}...")
 
     # 获取数据源连接信息
-    database_url, connection_info = get_database_url(connection_id)
+    if database_url is None:
+        database_url, connection_info = get_database_url(connection_id)
     logger.info(f"Using connection: connection_id={connection_id}, url_type={'excel' if _is_excel_connection(database_url) else 'database'}")
 
     # 如果是 Excel 连接，使用 Excel 查询

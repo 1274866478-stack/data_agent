@@ -45,6 +45,21 @@ from .models import VisualizationResponse, ChartConfig
 logger = logging.getLogger(__name__)
 
 
+def _strip_unwanted_notices(text: Optional[str]) -> str:
+    """
+    去除前端不需要的固定提示语。
+    """
+    if not text:
+        return ""
+    unwanted = [
+        "查询已完成，请查看上方的处理步骤。",
+        "查询已完成，请查看上方的处理步骤",
+    ]
+    for phrase in unwanted:
+        text = text.replace(phrase, "")
+    return text.strip()
+
+
 def format_api_response(response: VisualizationResponse) -> Dict[str, Any]:
     """
     将 VisualizationResponse 转换为前端期望的 API 响应格式
@@ -56,7 +71,7 @@ def format_api_response(response: VisualizationResponse) -> Dict[str, Any]:
         前端期望的响应字典，包含 answer, table, chart 等字段
     """
     result: Dict[str, Any] = {
-        "answer": response.answer or "",
+        "answer": _strip_unwanted_notices(response.answer),
         "success": response.success,
     }
     
@@ -185,5 +200,4 @@ def format_error_response(error_message: str, sql: Optional[str] = None) -> Dict
         result["sql"] = sql
     
     return result
-
 

@@ -103,6 +103,13 @@ from src.app.services.minio_client import minio_service
 from src.app.services.database_interface import PostgreSQLAdapter
 from src.app.services.zhipu_client import zhipu_service
 from src.app.services.sql_error_memory_service import SQLErrorMemoryService
+from src.app.services.agent.tools import (
+    list_available_tables,
+    get_table_schema,
+    execute_sql_safe,
+    sanitize_sql,
+    validate_sql_safety
+)
 import re
 import duckdb
 
@@ -1846,6 +1853,21 @@ async def _execute_sql_if_needed(
             max_retries = 2
             last_error = None
             execution_success = False
+
+            # 🔥 时间聚合强制修正：年度/按月趋势查询必须按月分组
+            try:
+                from src.app.services.agent.tools import validate_time_aggregation_sql
+
+                is_valid, corrected_sql, error_msg = validate_time_aggregation_sql(
+                    current_sql,
+                    user_question=original_question,
+                    db_type=data_source.db_type
+                )
+                if not is_valid:
+                    logger.warning(f"⚠️ {error_msg}")
+                    current_sql = corrected_sql
+            except Exception as e:
+                logger.warning(f"时间聚合修正失败: {e}")
 
             while retry_count <= max_retries and not execution_success:
                 try:

@@ -642,8 +642,8 @@ export const useChatStore = create<ChatState>()(
               }
             })
 
-            // 检查是否使用 V2 流式 (默认使用 V2)
-            const useV2Stream = queryRequest.use_v2 !== false
+            // 🔧 临时修复：默认使用 V1 流式（V2 有 DeepAgents 框架兼容性问题）
+            const useV2Stream = queryRequest.use_v2 === true
 
             if (useV2Stream) {
               // ============================================================

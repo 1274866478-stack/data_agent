@@ -41,13 +41,14 @@
 **依赖深度**: 2 层
 """
 import asyncio
+import copy
 import json
 import logging
 import os
 import re
 import sys
 import traceback
-from typing import Literal, Optional, Dict, Any, List
+from typing import Literal, Optional, Dict, Any, List, Tuple
 
 import anyio
 
@@ -104,6 +105,159 @@ from .data_validator import (
 from .response_formatter import format_api_response, format_error_response
 
 logger = logging.getLogger(__name__)
+
+
+def _infer_db_type_from_url(database_url: Optional[str]) -> Optional[str]:
+    if not database_url:
+        return None
+    url_lower = database_url.lower()
+    if url_lower.startswith("postgres"):
+        return "postgresql"
+    if url_lower.startswith("mysql"):
+        return "mysql"
+    if url_lower.startswith("sqlite"):
+        return "sqlite"
+    if (
+        url_lower.startswith("file://") or
+        url_lower.startswith("local://") or
+        url_lower.endswith((".xlsx", ".xls", ".csv")) or
+        ".xlsx" in url_lower or ".xls" in url_lower or ".csv" in url_lower
+    ):
+        return "duckdb"
+    return None
+
+
+def _normalize_tool_call(tc: Dict[str, Any]) -> Tuple[str, Dict[str, Any], str]:
+    """
+    归一化 LangChain / OpenAI 风格的 tool_call，提取工具名与参数。
+
+    Returns:
+        (tool_name, args_dict, format_tag)
+        format_tag ∈ {"function", "flat"} 用于写回
+    """
+    tool_name = ""
+    args_dict: Dict[str, Any] = {}
+    format_tag = "flat"
+
+    if isinstance(tc, dict):
+        func_block = tc.get("function")
+        if func_block:
+            format_tag = "function"
+            tool_name = func_block.get("name") or tc.get("name") or ""
+            raw_args = func_block.get("arguments")
+        else:
+            tool_name = tc.get("name", "") or ""
+            raw_args = tc.get("args") or tc.get("input_data") or {}
+    else:
+        func_block = getattr(tc, "function", None)
+        if func_block:
+            format_tag = "function"
+            tool_name = getattr(func_block, "name", "") or getattr(tc, "name", "") or ""
+            raw_args = getattr(func_block, "arguments", None)
+        else:
+            tool_name = getattr(tc, "name", "") or ""
+            raw_args = getattr(tc, "args", None)
+
+    if isinstance(raw_args, str):
+        try:
+            args_dict = json.loads(raw_args) or {}
+        except Exception:
+            args_dict = {}
+    elif isinstance(raw_args, dict):
+        args_dict = raw_args
+    else:
+        args_dict = {}
+
+    # 兼容 input_data 结构
+    if not args_dict and isinstance(tc, dict):
+        input_data = tc.get("input_data")
+        if isinstance(input_data, dict):
+            args_dict = input_data
+            format_tag = "input"
+
+    return tool_name, args_dict, format_tag
+
+
+def _write_back_tool_call(tc: Dict[str, Any], args: Dict[str, Any], format_tag: str) -> None:
+    """根据原始格式写回修正后的参数。"""
+    if format_tag == "function":
+        if isinstance(tc, dict):
+            func_block = tc.get("function") or {}
+            func_block["arguments"] = json.dumps(args, ensure_ascii=False)
+            tc["function"] = func_block
+            tc["args"] = args  # langgraph/ToolNode 常用 args 字段
+        else:
+            func_block = getattr(tc, "function", None)
+            if func_block is not None:
+                try:
+                    func_block.arguments = json.dumps(args, ensure_ascii=False)
+                except Exception:
+                    pass
+            try:
+                tc.args = args
+            except Exception:
+                pass
+    elif format_tag == "input":
+        if isinstance(tc, dict):
+            tc["input_data"] = args
+        else:
+            try:
+                tc.input_data = args
+            except Exception:
+                pass
+    else:
+        if isinstance(tc, dict):
+            tc["args"] = args
+        else:
+            try:
+                tc.args = args
+            except Exception:
+                pass
+
+
+def apply_time_aggregation_fix_to_tool_calls(
+    tool_calls: List[Dict[str, Any]],
+    question: str,
+    database_url: Optional[str]
+) -> List[Dict[str, Any]]:
+    """
+    对工具调用列表执行时间聚合修正，确保年度/月份趋势按月聚合。
+
+    返回修正后的新列表，兼容 tuple/自定义对象不可变场景。
+    """
+    if not tool_calls:
+        return tool_calls
+
+    fixed_calls = []
+    db_type_hint = _infer_db_type_from_url(database_url)
+    from src.app.services.agent.tools import validate_time_aggregation_sql
+
+    for tc in tool_calls:
+        # 使用浅拷贝避免影响原消息不可变结构
+        tc_copy = copy.deepcopy(tc)
+        tool_name, args_dict, fmt = _normalize_tool_call(tc_copy)
+        if tool_name not in ("query", "execute_sql_safe", "execute_query"):
+            fixed_calls.append(tc_copy)
+            continue
+
+        executed_sql = args_dict.get("query") or args_dict.get("sql")
+        if not executed_sql:
+            fixed_calls.append(tc_copy)
+            continue
+
+        is_valid, corrected_sql, error_msg = validate_time_aggregation_sql(
+            executed_sql,
+            question,
+            db_type=db_type_hint
+        )
+        if not is_valid:
+            logger.warning(f"⚠️ [时间聚合修正] {error_msg}")
+            args_dict["query"] = corrected_sql
+            args_dict["sql"] = corrected_sql
+            _write_back_tool_call(tc_copy, args_dict, fmt)
+        fixed_calls.append(tc_copy)
+
+    return fixed_calls
 
 # ============================================================
 # Configuration
@@ -1282,6 +1436,32 @@ async def build_agent(
             else:
                 raise Exception(f"所有LLM Provider都不可用。原始错误: {e}")
 
+        # 🔧 时间聚合修正：年度趋势类查询必须按月分组
+        if getattr(response, "tool_calls", None):
+            try:
+                fixed_tool_calls = apply_time_aggregation_fix_to_tool_calls(
+                    list(response.tool_calls),
+                    question,
+                    database_url
+                )
+                # AIMessage 可能是不可变的，直接新建一条替换
+                try:
+                    response = AIMessage(
+                        content=response.content,
+                        tool_calls=fixed_tool_calls,
+                        name=getattr(response, "name", None),
+                        additional_kwargs=getattr(response, "additional_kwargs", {}),
+                        response_metadata=getattr(response, "response_metadata", {}),
+                    )
+                except Exception:
+                    # 如果构造失败，尝试原位赋值（部分实现可变）
+                    try:
+                        response.tool_calls = fixed_tool_calls
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning(f"时间聚合修正失败: {e}")
+
         # 🔧 强制工具调用逻辑：如果是拆分/合并请求但LLM没有调用工具，强制提取SQL并创建工具调用
         if (is_split_request or is_merge_request) and not response.tool_calls:
             logger.warning(f"📊 [强制工具调用] 检测到{'拆分' if is_split_request else '合并'}请求但LLM未调用工具，尝试强制执行...")
@@ -1726,8 +1906,26 @@ async def run_agent(
                                                 if verbose:
                                                     logger.info(f"Detected chart tool call: {tool_name}")
 
-                                            if tc.get("name") in ("query", "execute_sql_safe"):
+                                            if tc.get("name") in ("query", "execute_sql_safe", "execute_query"):
                                                 executed_sql = tc.get("args", {}).get("query") or tc.get("args", {}).get("sql")
+
+                                                # 🔥 时间聚合验证（年度趋势查询修正）
+                                                from src.app.services.agent.tools import validate_time_aggregation_sql
+                                                is_valid, corrected_sql, error_msg = validate_time_aggregation_sql(
+                                                    executed_sql,
+                                                    question,
+                                                    db_type=_infer_db_type_from_url(database_url)
+                                                )
+
+                                                if not is_valid:
+                                                    logger.warning(f"⚠️ {error_msg}")
+                                                    # 使用修正后的 SQL 替换原始 SQL
+                                                    executed_sql = corrected_sql
+                                                    # 修改工具调用参数
+                                                    if "args" not in tc:
+                                                        tc["args"] = {}
+                                                    tc["args"]["query"] = corrected_sql
+                                                    tc["args"]["sql"] = corrected_sql
 
                                 # Capture tool results
                                 elif isinstance(msg, ToolMessage):
@@ -2923,6 +3121,7 @@ __all__ = [
     "create_llm",
     "get_mcp_config",
     "MAX_RECURSION_LIMIT",
+    "apply_time_aggregation_fix_to_tool_calls",
     "AgentRequest",
     "VisualizationResponse",
 ]

@@ -423,6 +423,187 @@ class SQLValidator:
         return sql
 
     @classmethod
+    def fix_time_aggregation_sql(
+        cls,
+        sql: str,
+        user_query: str = "",
+        db_type: Optional[str] = None
+    ) -> str:
+        """
+        修正年度趋势查询的时间聚合 SQL
+
+        当用户问年度趋势时，SQL 必须按月分组，不能按天分组
+
+        检测条件：
+        1. 用户查询包含年度关键词（年、年度、2023-2025）
+        2. SQL 包含 GROUP BY 日期列但没有 DATE_TRUNC('month', ...)
+        3. SQL 有年度范围的 WHERE 条件
+
+        修正策略：
+        - 将 GROUP BY date_col 改为 GROUP BY DATE_TRUNC('month', date_col)
+        - 将 SELECT 中的 date_col 改为 DATE_TRUNC('month', date_col) as month
+
+        Args:
+            sql: 原始 SQL 语句
+            user_query: 用户查询（用于判断是否为年度趋势查询）
+
+        Returns:
+            str: 修正后的 SQL（如果需要），否则返回原始 SQL
+        """
+        import re
+        logger = __import__('logging').getLogger(__name__)
+
+        if not sql or not sql.strip():
+            return sql
+
+        def _has_explicit_fine_grain(q: str) -> bool:
+            fine_keywords = [
+                "按天", "按日", "每天", "每日", "日度",
+                "按周", "每周", "每星期", "周度", "7天",
+            ]
+            return any(kw in q for kw in fine_keywords)
+
+        def _is_annual_trend_query(q: str) -> bool:
+            has_year = bool(re.search(r"\b20\d{2}\b", q)) or any(
+                kw in q for kw in ["年", "年度", "今年", "去年", "前年", "year", "annual"]
+            )
+            has_trend = any(
+                kw in q for kw in ["趋势", "变化", "走势", "增长", "下降", "按月", "每月", "月度", "trend"]
+            )
+            return has_year and has_trend
+
+        def _has_monthly_aggregation(sql_text: str) -> bool:
+            sql_upper = sql_text.upper()
+            monthly_patterns = [
+                r"DATE_TRUNC\s*\(\s*'MONTH'",
+                r"DATE_TRUNC\s*\(\s*\"MONTH\"",
+                r"DATE_FORMAT\s*\(.*'%Y-%m'",
+                r"TO_CHAR\s*\(.*'YYYY-MM'",
+                r"STRFTIME\s*\(\s*'%Y-%m'",
+                r"STRFTIME\s*\(\s*[^,]+,\s*'%Y-%m'",
+                r"SUBSTRING\s*\(\s*[^,]+,\s*1\s*,\s*7\s*\)",
+                r"SUBSTR\s*\(\s*[^,]+,\s*1\s*,\s*7\s*\)",
+            ]
+            return any(re.search(pat, sql_upper, re.IGNORECASE) for pat in monthly_patterns)
+
+        def _normalize_db_type(value: Optional[str]) -> str:
+            return (value or "").strip().lower()
+
+        def _pick_month_expr(
+            sql_text: str,
+            date_col: str,
+            db_type_value: Optional[str]
+        ) -> str:
+            db_type_lower = _normalize_db_type(db_type_value)
+            if db_type_lower in ["duckdb", "xlsx", "xls", "excel", "csv"]:
+                return f"strftime(CAST({date_col} AS DATE), '%Y-%m')"
+            if db_type_lower in ["sqlite", "sqlite3"]:
+                return f"strftime('%Y-%m', {date_col})"
+            if db_type_lower in ["mysql", "mariadb"]:
+                return f"DATE_FORMAT({date_col}, '%Y-%m')"
+            if db_type_lower in ["postgres", "postgresql"]:
+                return f"DATE_TRUNC('month', {date_col})"
+            sql_upper = sql_text.upper()
+            if "STRFTIME" in sql_upper:
+                return f"strftime('%Y-%m', {date_col})"
+            if "DATE_FORMAT" in sql_upper:
+                return f"DATE_FORMAT({date_col}, '%Y-%m')"
+            if "TO_CHAR" in sql_upper:
+                return f"TO_CHAR({date_col}, 'YYYY-MM')"
+            if "SUBSTR(" in sql_upper:
+                return f"SUBSTR({date_col}, 1, 7)"
+            if "SUBSTRING(" in sql_upper:
+                return f"SUBSTRING({date_col}, 1, 7)"
+            return f"DATE_TRUNC('month', {date_col})"
+
+        def _extract_group_by_date_col(sql_text: str) -> Optional[str]:
+            patterns = [
+                r"GROUP BY\s+DATE_TRUNC\s*\(\s*'DAY'\s*,\s*([A-Za-z_][\w\.]*)\s*\)",
+                r"GROUP BY\s+DATE_TRUNC\s*\(\s*\"DAY\"\s*,\s*([A-Za-z_][\w\.]*)\s*\)",
+                r"GROUP BY\s+STRFTIME\s*\(\s*'%Y-%m-%d'\s*,\s*([A-Za-z_][\w\.]*)\s*\)",
+                r"GROUP BY\s+DATE_FORMAT\s*\(\s*([A-Za-z_][\w\.]*)\s*,\s*'%Y-%m-%d'\s*\)",
+                r"GROUP BY\s+TO_CHAR\s*\(\s*([A-Za-z_][\w\.]*)\s*,\s*'YYYY-MM-DD'\s*\)",
+                r"GROUP BY\s+DATE\s*\(\s*([A-Za-z_][\w\.]*)\s*\)",
+                r"GROUP BY\s+CAST\s*\(\s*([A-Za-z_][\w\.]*)\s+AS\s+DATE\s*\)",
+                r"GROUP BY\s+([A-Za-z_][\w\.]*)\s*::\s*DATE",
+                r"GROUP BY\s+([A-Za-z_][\w\.]*)",
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, sql_text, re.IGNORECASE)
+                if match:
+                    return match.group(1)
+            return None
+
+        # 1. Annual trend detection + explicit fine-grain override
+        is_year_query = _is_annual_trend_query(user_query)
+        if is_year_query and _has_explicit_fine_grain(user_query):
+            return sql
+
+        if not is_year_query:
+            return sql  # 不是年度查询，不修正
+
+        # 2. Already monthly aggregation
+        if _has_monthly_aggregation(sql):
+            return sql  # 已按月分组，通过
+
+        # 3. 检测年度查询 + 按天分组的错误模式
+        # 模式：GROUP BY 日期列 + WHERE 有年度范围
+        date_col = _extract_group_by_date_col(sql)
+
+        if is_year_query and date_col:
+            # 提取日期列名
+
+            # 避免处理已经是聚合的列（如 SUM、COUNT 等）
+            if any(agg in sql.upper() for agg in ["SUM(", "COUNT(", "AVG(", "MAX(", "MIN("]):
+                corrected_sql = sql
+                month_expr = _pick_month_expr(corrected_sql, date_col, db_type)
+
+                # 替换 SELECT 中的日期列（更宽松的模式）
+                # 处理 SELECT date_col, ... 或 SELECT date_col as xxx, ...
+                date_col_pattern = re.escape(date_col)
+                daily_expr_pattern = (
+                    rf"DATE_TRUNC\s*\(\s*'DAY'\s*,\s*{date_col_pattern}\s*\)|"
+                    rf"DATE_TRUNC\s*\(\s*\"DAY\"\s*,\s*{date_col_pattern}\s*\)|"
+                    rf"STRFTIME\s*\(\s*'%Y-%m-%d'\s*,\s*{date_col_pattern}\s*\)|"
+                    rf"DATE_FORMAT\s*\(\s*{date_col_pattern}\s*,\s*'%Y-%m-%d'\s*\)|"
+                    rf"TO_CHAR\s*\(\s*{date_col_pattern}\s*,\s*'YYYY-MM-DD'\s*\)"
+                )
+                select_pattern = rf"SELECT\s+((?:{daily_expr_pattern})|{date_col_pattern}(?:\s+as\s+\w+)?)(?=[,\s]|$)"
+                corrected_sql = re.sub(
+                    select_pattern,
+                    f"{month_expr} as month",
+                    corrected_sql,
+                    flags=re.IGNORECASE
+                )
+
+                # 替换 GROUP BY 中的日期列
+                group_by_pattern = rf"GROUP BY\s+({date_col_pattern}\b|DATE\s*\(\s*{date_col_pattern}\s*\)|CAST\s*\(\s*{date_col_pattern}\s+AS\s+DATE\s*\)|{date_col_pattern}\s*::\s*DATE|{daily_expr_pattern})"
+                corrected_sql = re.sub(
+                    group_by_pattern,
+                    f"GROUP BY {month_expr}",
+                    corrected_sql,
+                    flags=re.IGNORECASE
+                )
+                order_by_pattern = rf"ORDER BY\s+({date_col_pattern}\b|DATE\s*\(\s*{date_col_pattern}\s*\)|CAST\s*\(\s*{date_col_pattern}\s+AS\s+DATE\s*\)|{date_col_pattern}\s*::\s*DATE|{daily_expr_pattern})"
+                corrected_sql = re.sub(
+                    order_by_pattern,
+                    f"ORDER BY {month_expr}",
+                    corrected_sql,
+                    flags=re.IGNORECASE
+                )
+
+                # 检查是否真的修改了
+                if corrected_sql != sql:
+                    logger.warning(
+                        f"[SQL修正] 年度趋势查询SQL已自动修正:\n"
+                        f"  原分组: GROUP BY {date_col}\n"
+                        f"  修正后: GROUP BY {month_expr}"
+                    )
+                    return corrected_sql
+
+        return sql
+
+    @classmethod
     def sanitize_for_logging(cls, sql: str, max_length: int = 200) -> str:
         """
         清理 SQL 用于日志记录（截断过长的查询）

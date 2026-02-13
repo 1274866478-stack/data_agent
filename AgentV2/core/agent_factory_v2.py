@@ -40,7 +40,8 @@ from ..middleware import (
     TenantIsolationMiddleware,
     SQLSecurityMiddleware,
     CHART_GUIDANCE_TEMPLATE,
-    SemanticPriorityMiddleware
+    SemanticPriorityMiddleware,
+    create_time_aggregation_middleware
 )
 from ..subagents import SubAgentManager, create_subagent_manager
 from ..tools import get_database_tools, get_chart_tools
@@ -422,6 +423,15 @@ class AgentFactory:
                 enable_logging=True
             )
             middleware.append(semantic_middleware)
+
+        # 6. 🔧 月度聚合修正中间件 - 修正年度趋势查询的 SQL
+        if session_id and tenant_id:
+            time_agg_middleware = create_time_aggregation_middleware(
+                session_id=session_id,
+                tenant_id=tenant_id,
+                db_type="postgres"  # 默认 PostgreSQL，运行时会根据连接动态调整
+            )
+            middleware.append(time_agg_middleware)
 
         # 注意: ChartGuidanceMiddleware 已禁用，因为图表指南已通过 _build_system_prompt 实现
         # DeepAgents 框架要求中间件实现 AgentMiddleware 接口

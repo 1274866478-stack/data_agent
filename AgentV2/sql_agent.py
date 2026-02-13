@@ -1,4 +1,4 @@
-"""
+﻿"""
 # [SQL AGENT] LangGraph SQL智能代理主程序
 
 ## [HEADER]
@@ -80,10 +80,148 @@ import logging
 import re
 import sys
 import os
-from typing import Annotated, Literal, Optional, Dict, Any
+import copy
+from typing import Annotated, Literal, Optional, Dict, Any, List, Tuple
 
 # 配置日志记录器
-logger = logging.getLogger(__name__)
+
+def _looks_like_year_trend(question: str) -> bool:
+    if not question:
+        return False
+    has_year = bool(re.search(r"\b20\d{2}\b", question)) or any(
+        kw in question for kw in ["年", "年度", "今年", "去年", "往年"]
+    )
+    has_trend = any(kw in question for kw in ["趋势", "走势", "变化", "按月", "月度", "同比", "环比", "销售趋势"])
+    return has_year and has_trend
+
+
+def _has_month_aggregation(sql: str) -> bool:
+    patterns = [
+        r"DATE_TRUNC\s*\(\s*'month'",
+        r"DATE_TRUNC\s*\(\s*\"month\"",
+        r"strftime\s*\(.*%Y-%m",
+        r"TO_CHAR\s*\(.*YYYY-MM",
+        r"DATE_FORMAT\s*\(.*%Y-%m",
+    ]
+    return any(re.search(pat, sql, re.IGNORECASE) for pat in patterns)
+
+
+def _rewrite_sql_monthly(sql: str) -> str:
+    """粗暴但有效：把日级 order_date 聚合改成按月。"""
+    month_expr = "DATE_TRUNC('month', order_date)"
+    sql_new = re.sub(r"DATE_TRUNC\s*\(\s*'day'\s*,\s*order_date\s*\)", month_expr, sql, flags=re.IGNORECASE)
+    sql_new = re.sub(r"\border_date\b", f"{month_expr} AS month", sql_new, count=1, flags=re.IGNORECASE)
+    sql_new = re.sub(r"GROUP BY\s+order_date", f"GROUP BY {month_expr}", sql_new, flags=re.IGNORECASE)
+    sql_new = re.sub(r"ORDER BY\s+order_date", f"ORDER BY {month_expr}", sql_new, flags=re.IGNORECASE)
+    return sql_new
+
+
+def _normalize_tool_call_v2(tc: Dict[str, Any]) -> Tuple[str, Dict[str, Any], str]:
+    """
+    兼容 OpenAI function-call / 平铺格式的 tool_call，提取工具名和参数。
+    返回 (tool_name, args_dict, format_tag)
+    """
+    tool_name = ""
+    args_dict: Dict[str, Any] = {}
+    format_tag = "flat"
+
+    if isinstance(tc, dict):
+        func_block = tc.get("function")
+        if func_block:
+            format_tag = "function"
+            tool_name = func_block.get("name") or tc.get("name") or ""
+            raw_args = func_block.get("arguments")
+        else:
+            tool_name = tc.get("name", "") or tc.get("tool", "") or ""
+            raw_args = tc.get("args") or tc.get("input_data") or {}
+    else:
+        func_block = getattr(tc, "function", None)
+        if func_block:
+            format_tag = "function"
+            tool_name = getattr(func_block, "name", "") or getattr(tc, "name", "") or ""
+            raw_args = getattr(func_block, "arguments", None)
+        else:
+            tool_name = getattr(tc, "name", "") or getattr(tc, "tool", "") or ""
+            raw_args = getattr(tc, "args", None)
+
+    if isinstance(raw_args, str):
+        try:
+            args_dict = json.loads(raw_args) or {}
+        except Exception:
+            args_dict = {}
+    elif isinstance(raw_args, dict):
+        args_dict = raw_args
+    else:
+        args_dict = {}
+
+    # 兼容 input_data 结构
+    if not args_dict and isinstance(tc, dict):
+        input_data = tc.get("input_data")
+        if isinstance(input_data, dict):
+            args_dict = input_data
+            format_tag = "input"
+
+    return tool_name, args_dict, format_tag
+
+
+def _write_back_tool_call_v2(tc: Dict[str, Any], args: Dict[str, Any], format_tag: str) -> None:
+    """按原始格式写回参数，兼容 function/flat。"""
+    if format_tag == "function":
+        if isinstance(tc, dict):
+            func_block = tc.get("function") or {}
+            func_block["arguments"] = json.dumps(args, ensure_ascii=False)
+            tc["function"] = func_block
+            tc["args"] = args
+        else:
+            func_block = getattr(tc, "function", None)
+            if func_block is not None:
+                try:
+                    func_block.arguments = json.dumps(args, ensure_ascii=False)
+                except Exception:
+                    pass
+            try:
+                tc.args = args
+            except Exception:
+                pass
+    elif format_tag == "input":
+        if isinstance(tc, dict):
+            tc["input_data"] = args
+        else:
+            try:
+                tc.input_data = args
+            except Exception:
+                pass
+    else:
+        if isinstance(tc, dict):
+            tc["args"] = args
+        else:
+            try:
+                tc.args = args
+            except Exception:
+                pass
+
+
+def apply_time_aggregation_fix_to_tool_calls_v2(
+    tool_calls: List[Dict[str, Any]],
+    question: str
+) -> List[Dict[str, Any]]:
+    """在 AgentV2 中对工具调用强制月度聚合。"""
+    if not tool_calls or not _looks_like_year_trend(question):
+        return tool_calls
+
+    fixed = []
+    for tc in tool_calls:
+        tc_copy = copy.deepcopy(tc)
+        name, args, fmt = _normalize_tool_call_v2(tc_copy)
+        sql = args.get("sql") or args.get("query")
+        if name in ("query", "execute_query", "execute_sql_safe") and sql:
+            if not _has_month_aggregation(sql):
+                corrected = _rewrite_sql_monthly(sql)
+                args["sql"] = corrected
+                args["query"] = corrected
+                _write_back_tool_call_v2(tc_copy, args, fmt)
+        fixed.append(tc_copy)
+    return fixed
 
 # Fix Windows GBK encoding issue
 if sys.platform == 'win32':
@@ -2576,6 +2714,16 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 
         response = await llm_with_tools.ainvoke(messages)
 
+        # 🔧 时间聚合修正：年度/月份趋势必须按月分组
+        if getattr(response, "tool_calls", None):
+            try:
+                response.tool_calls = apply_time_aggregation_fix_to_tool_calls_v2(
+                    list(response.tool_calls),
+                    question
+                )
+            except Exception as e:
+                print(f"⚠️ [时间聚合修正失败] {e}")
+
         # 🔴 记录工具调用数量
         if response.tool_calls:
             tool_names = [tc.get('name') for tc in response.tool_calls]
@@ -3472,4 +3620,5 @@ if __name__ == "__main__":
 
     # Run interactive mode
     asyncio.run(interactive_mode())
+
 

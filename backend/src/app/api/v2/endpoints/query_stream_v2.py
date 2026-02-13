@@ -38,7 +38,8 @@ from src.app.services.cache_service import (
 )
 
 # 数据库依赖导入
-from src.app.data.database import SessionLocal
+from src.app.data.database import SessionLocal, get_db
+from sqlalchemy.orm.session import Session
 
 logger = logging.getLogger(__name__)
 
@@ -1011,6 +1012,26 @@ def log_performance(
 router = APIRouter(prefix="/query", tags=["query-v2-stream"])
 
 # ============================================================================
+# 依赖项
+# ============================================================================
+
+# 延迟导入 AgentFactory（可能不可用）
+try:
+    from AgentV2.core import AgentFactory, get_default_factory
+    AGENTV2_AVAILABLE = True
+except ImportError:
+    AGENTV2_AVAILABLE = False
+    AgentFactory = None
+
+
+def get_agent_factory() -> AgentFactory:
+    """获取 AgentFactory 实例"""
+    if not AGENTV2_AVAILABLE:
+        raise RuntimeError("AgentV2 不可用")
+    return get_default_factory()
+
+
+# ============================================================================
 # 请求模型
 # ============================================================================
 
@@ -1030,7 +1051,9 @@ class StreamQueryRequestV2(BaseModel):
 async def create_stream_query_v2(
     request: StreamQueryRequestV2,
     tenant_id: str = "default_tenant",
-    user_id: str = "default_user"
+    user_id: str = "default_user",
+    agent_factory: AgentFactory = Depends(get_agent_factory),
+    db: Session = Depends(get_db)
 ):
     """
     流式查询端点 (Server-Sent Events)
@@ -1226,32 +1249,28 @@ async def create_stream_query_v2(
                 # 缓存未命中 - 执行 AgentV2 查询
                 step_start = time.time()
                 try:
-                    from AgentV2.core import get_default_factory
+                    # 🔧 修复：使用依赖注入的 agent_factory（包含中间件）
+                    # 而不是直接调用 get_default_factory()
+                    # 🔧 使用依赖注入的 db 会话（FastAPI 自动管理生命周期）
+                    agent = agent_factory.get_or_create_agent(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        session_id=request.session_id,
+                        connection_id=request.connection_id,
+                        db_session=db,
+                        force_refresh=True  # 🔧 强制刷新以确保使用最新的系统提示词
+                    )
 
-                    agent_factory = get_default_factory()
+                    # 🔧 使用原始用户查询（CHART_GUIDANCE_TEMPLATE 已包含图表生成指令）
+                    agent_input = {
+                        "messages": [
+                            {"role": "user", "content": request.query}
+                        ]
+                    }
 
-                    # 获取数据库会话用于查询数据源配置
-                    db_session = SessionLocal()
-                    try:
-                        agent = agent_factory.get_or_create_agent(
-                            tenant_id=tenant_id,
-                            user_id=user_id,
-                            session_id=request.session_id,
-                            connection_id=request.connection_id,
-                            db_session=db_session,
-                            force_refresh=True  # 🔧 强制刷新以确保使用最新的系统提示词
-                        )
-
-                        # 🔧 使用原始用户查询（CHART_GUIDANCE_TEMPLATE 已包含图表生成指令）
-                        agent_input = {
-                            "messages": [
-                                {"role": "user", "content": request.query}
-                            ]
-                        }
-
-                        # 🔧 删除了 AgentV2 处理步骤的发送，直接进入实际工具调用
-                        for event in send_event("progress", {"value": 20}):
-                            yield event
+                    # 🔧 删除了 AgentV2 处理步骤的发送，直接进入实际工具调用
+                    for event in send_event("progress", {"value": 20}):
+                        yield event
 
                         # 🔧🔧🔧 使用 astream_events 实现真正的 token 级别流式输出
                         # 参考: LangGraph 文档 - Streaming Events
@@ -2114,8 +2133,8 @@ async def create_stream_query_v2(
 
                         for event in send_event("progress", {"value": 100}):
                             yield event
-                    finally:
-                        db_session.close()
+                    # 🔧 注意：不再需要手动关闭 db_session，因为使用依赖注入的 db 会话
+                    # FastAPI 会自动管理会话生命周期
 
                 except ImportError:
                     # AgentV2 不可用

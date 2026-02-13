@@ -37,6 +37,7 @@
 **依赖深度**: 2 层
 """
 from typing import List, Dict, Any, Tuple, Optional
+import re
 
 from .models import ChartConfig, ChartType
 
@@ -136,6 +137,73 @@ def supplement_proportion_data(
             return sql_result + [other_row]
 
     return sql_result
+
+
+def _should_fill_missing_months(user_query: str) -> bool:
+    if not user_query:
+        return False
+    if any(kw in user_query for kw in ["按天", "每日", "每天", "按周", "每周", "周度", "日度", "最近一周", "近7天", "7天"]):
+        return False
+    has_year = bool(re.search(r"\b20\d{2}\b", user_query)) or any(
+        kw in user_query for kw in ["年", "年度", "今年", "去年", "前年"]
+    )
+    has_month_trend = any(
+        kw in user_query for kw in ["趋势", "按月", "月度", "每月", "月份"]
+    )
+    return has_year and has_month_trend
+
+
+def fill_missing_months(
+    sql_result: List[Dict[str, Any]],
+    x_field: Optional[str],
+    y_field: Optional[str],
+    user_query: str = ""
+) -> List[Dict[str, Any]]:
+    if not sql_result or not x_field or not y_field:
+        return sql_result
+    if not _should_fill_missing_months(user_query):
+        return sql_result
+
+    month_totals: Dict[str, float] = {}
+    years = set()
+    for row in sql_result:
+        raw_value = row.get(x_field)
+        if raw_value is None:
+            return sql_result
+        raw_text = str(raw_value)
+        match = re.search(r"(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?", raw_text)
+        if not match:
+            return sql_result
+        year = int(match.group(1))
+        month = int(match.group(2))
+        day = match.group(3)
+        if day and int(day) != 1:
+            return sql_result
+        years.add(year)
+        month_key = f"{year:04d}-{month:02d}"
+        try:
+            value = float(row.get(y_field, 0) or 0)
+        except (ValueError, TypeError):
+            value = 0.0
+        month_totals[month_key] = month_totals.get(month_key, 0.0) + value
+
+    query_year = re.search(r"\b(20\d{2})\b", user_query)
+    if query_year:
+        target_year = int(query_year.group(1))
+    elif len(years) == 1:
+        target_year = next(iter(years))
+    else:
+        return sql_result
+
+    filled = []
+    for month in range(1, 13):
+        month_key = f"{target_year:04d}-{month:02d}"
+        filled.append({
+            x_field: month_key,
+            y_field: month_totals.get(month_key, 0.0)
+        })
+
+    return filled
 
 
 def sql_result_to_echarts_data(
@@ -256,6 +324,9 @@ def sql_result_to_mcp_echarts_data(
     else:
         remaining = [c for c in columns if c != actual_x]
         actual_y = remaining[0] if remaining else columns[1]
+
+    if chart_type == "line":
+        sql_result = fill_missing_months(sql_result, actual_x, actual_y, user_query)
 
     # 根据图表类型转换数据格式
     data = []
@@ -630,4 +701,3 @@ def extract_simple_charts_from_text(text: str) -> List[Dict[str, Any]]:
             continue
 
     return charts
-

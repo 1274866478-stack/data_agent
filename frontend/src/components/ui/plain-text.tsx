@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { cn } from '@/lib/utils'
 import { useMemo } from 'react'
@@ -6,78 +6,78 @@ import { useMemo } from 'react'
 interface PlainTextProps {
   content: string
   className?: string
-  isLoading?: boolean  // 新增：加载状态
+  isLoading?: boolean  // 鏂板锛氬姞杞界姸鎬?
 }
 
 /**
- * 移除Markdown格式符号，转换为纯文本
- * 保留段落结构，移除所有格式标记
+ * 绉婚櫎Markdown鏍煎紡绗﹀彿锛岃浆鎹负绾枃鏈?
+ * 淇濈暀娈佃惤缁撴瀯锛岀Щ闄ゆ墍鏈夋牸寮忔爣璁?
  */
 function stripMarkdownFormatting(content: string): string {
   let cleaned = content
 
-  // 1. 移除标题符号 (###, ##, #)
+  // 1. 绉婚櫎鏍囬绗﹀彿 (###, ##, #)
   cleaned = cleaned.replace(/^#{1,6}\s+/gm, '')
 
-  // 2. 移除无序列表符号 (-, *, +)
+  // 2. 绉婚櫎鏃犲簭鍒楄〃绗﹀彿 (-, *, +)
   cleaned = cleaned.replace(/^[\s]*[-*+]\s+/gm, '')
 
-  // 3. 移除有序列表符号 (1., 2., etc.)
+  // 3. 绉婚櫎鏈夊簭鍒楄〃绗﹀彿 (1., 2., etc.)
   cleaned = cleaned.replace(/^\d+\.\s+/gm, '')
 
-  // 4. 移除加粗符号 (**, __)
+  // 4. 绉婚櫎鍔犵矖绗﹀彿 (**, __)
   cleaned = cleaned.replace(/\*\*/g, '')
   cleaned = cleaned.replace(/__/g, '')
 
-  // 5. 移除斜体符号 (*, _)
+  // 5. 绉婚櫎鏂滀綋绗﹀彿 (*, _)
   cleaned = cleaned.replace(/(?<!\*)\*(?!\*)/g, '')
   cleaned = cleaned.replace(/(?<!_)_(?!_)/g, '')
 
-  // 6. 移除代码块标记 (```)
+  // 6. 绉婚櫎浠ｇ爜鍧楁爣璁?(```)
   cleaned = cleaned.replace(/```[\s\S]*?```/g, (match) => {
-    // 提取代码内容，移除 ``` 和语言标记
+    // 鎻愬彇浠ｇ爜鍐呭锛岀Щ闄?``` 鍜岃瑷€鏍囪
     return match.replace(/```\w*\n?/g, '').replace(/```/g, '')
   })
 
-  // 7. 移除行内代码标记 (`)
+  // 7. 绉婚櫎琛屽唴浠ｇ爜鏍囪 (`)
   cleaned = cleaned.replace(/`([^`]+)`/g, '$1')
 
-  // 8. 移除链接格式 [text](url)，保留文本
+  // 8. 绉婚櫎閾炬帴鏍煎紡 [text](url)锛屼繚鐣欐枃鏈?
   cleaned = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
 
-  // 9. 移除图片格式 ![alt](url)
+  // 9. 绉婚櫎鍥剧墖鏍煎紡 ![alt](url)
   cleaned = cleaned.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
 
-  // 10. 移除引用符号 >
+  // 10. 绉婚櫎寮曠敤绗﹀彿 >
   cleaned = cleaned.replace(/^>\s+/gm, '')
 
-  // 11. 移除水平线符号
+  // 11. 绉婚櫎姘村钩绾跨鍙?
   cleaned = cleaned.replace(/^[-*_]{3,}\s*$/gm, '')
 
-  // 12. 移除删除线标记
+  // 12. 绉婚櫎鍒犻櫎绾挎爣璁?
   cleaned = cleaned.replace(/~~(.+?)~~/g, '$1')
 
-  // 13. 清理多余空行，保留段落分隔（最多两个连续换行）
+  // 13. 娓呯悊澶氫綑绌鸿锛屼繚鐣欐钀藉垎闅旓紙鏈€澶氫袱涓繛缁崲琛岋級
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
 
-  // 14. 移除行首行尾多余空格
+  // 14. 绉婚櫎琛岄琛屽熬澶氫綑绌烘牸
   cleaned = cleaned.split('\n').map(line => line.trim()).join('\n')
 
   return cleaned.trim()
 }
 
 /**
- * PlainText 组件 - 将Markdown格式内容转换为纯文本显示
- * 移除所有Markdown格式符号，保留段落结构
+ * PlainText 缁勪欢 - 灏哅arkdown鏍煎紡鍐呭杞崲涓虹函鏂囨湰鏄剧ず
+ * 绉婚櫎鎵€鏈塎arkdown鏍煎紡绗﹀彿锛屼繚鐣欐钀界粨鏋?
  */
 export function PlainText({ content, className, isLoading = false }: PlainTextProps) {
   const plainContent = useMemo(() => stripMarkdownFormatting(content), [content])
 
-  // 将内容按段落分割，为每个段落创建 <p> 标签
+  // 灏嗗唴瀹规寜娈佃惤鍒嗗壊锛屼负姣忎釜娈佃惤鍒涘缓 <p> 鏍囩
   const paragraphs = useMemo(() => {
     return plainContent
-      .split(/\n\n+/)  // 按双换行分割段落
-      .filter(p => p.trim())  // 过滤空段落
+      .split(/\n\n+/)  // 鎸夊弻鎹㈣鍒嗗壊娈佃惤
+      .filter(p => p.trim())  // 杩囨护绌烘钀?
       .map((p, idx) => ({
         id: idx,
         content: p.trim(),
@@ -102,10 +102,12 @@ export function PlainText({ content, className, isLoading = false }: PlainTextPr
             ? "AI 正在思考..."
             : (content && content.trim())
               ? "暂无内容"
-              : "查询已完成，请查看上方的处理步骤。"
-          }
+              : ""}
         </p>
       )}
     </div>
   )
 }
+
+
+

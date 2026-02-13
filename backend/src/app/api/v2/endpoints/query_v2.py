@@ -376,12 +376,25 @@ async def create_query_v2(
         logger.info(f"[V2] 执行查询: {request.query}")
         # 注意：由于中间件暂未实现异步方法，使用 to_thread 运行同步调用
         import asyncio
+        from contextvars import copy_context
+
+        user_query_set = False
+        clear_user_query = None
+        if AGENTV2_AVAILABLE:
+            try:
+                from AgentV2.tools.database_tools import _set_user_query, _clear_user_query
+                _set_user_query(request.query)
+                user_query_set = True
+                clear_user_query = _clear_user_query
+            except Exception as e:
+                logger.warning(f"[V2] 设置用户查询上下文失败: {e}")
 
         # 🔧 添加超时保护，防止 Agent 调用无限期挂起
         QUERY_TIMEOUT = 120.0  # 120秒超时
         try:
+            ctx = copy_context()
             result = await asyncio.wait_for(
-                asyncio.to_thread(agent.invoke, agent_input),
+                asyncio.to_thread(ctx.run, agent.invoke, agent_input),
                 timeout=QUERY_TIMEOUT
             )
             logger.info(f"[V2] 查询完成，结果类型: {type(result)}")
@@ -397,6 +410,12 @@ async def create_query_v2(
                     "timeout_seconds": QUERY_TIMEOUT
                 }
             )
+        finally:
+            if user_query_set and clear_user_query:
+                try:
+                    clear_user_query()
+                except Exception as e:
+                    logger.warning(f"[V2] 清理用户查询上下文失败: {e}")
 
         # 7. 解析返回结果
         processing_time = int((time.time() - start_time) * 1000)

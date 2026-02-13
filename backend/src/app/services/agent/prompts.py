@@ -18,7 +18,7 @@
 # ============================================================
 # 每次修改提示词内容时，更新此版本号
 # agent_service.py 会检查此版本号，如果变化则自动清除 Agent 缓存
-PROMPT_VERSION = "4.4.0"
+PROMPT_VERSION = "4.7.0"
 
 
 # ============================================================
@@ -46,6 +46,65 @@ SYSTEM_PROMPT_MINIMAL = """你是数据分析助手，帮助用户查询和分�
 3. 读取相关表结构 (read_schema_file 或 get_schema)
 4. 执行查询 (execute_query)
 5. 分析结果并生成图表
+
+## 🔴🔴🔴 时间聚合规则（最高优先级！违反此规则将导致错误结果！）
+
+当用户询问时间趋势时，必须根据关键词选择正确的聚合粒度：
+
+| 用户询问关键词 | SQL GROUP BY | 返回行数 | PostgreSQL 示例 |
+|--------------|--------------|---------|------------------|
+| "年度趋势"、"今年"、"2023年"、"2024年" | 按月分组 | 12行 | `DATE_TRUNC('month', date_col)` |
+| "月度趋势"、"本月"、"最近一个月" | 按天分组 | ~30行 | `DATE_TRUNC('day', date_col)` |
+| "每周趋势"、"最近一周"、"7天" | 按天分组 | 7行 | `DATE_TRUNC('day', date_col)` |
+| "每日趋势"、"每天" | 按原时间 | 原始数据 | 不使用 DATE_TRUNC |
+| "季度趋势" | 按季度分组 | 4行 | `DATE_TRUNC('quarter', date_col)` |
+
+### 🔴🔴🔴 绝对禁止的错误做法
+
+**❌ 按天分组返回年度趋势数据（数据点太多！）**
+```sql
+-- ❌ 错误：用户问"2024年销售趋势"，却按天聚合返回365条记录
+SELECT order_date, SUM(total_amount) as total_sales
+FROM orders
+WHERE order_date >= '2024-01-01' AND order_date < '2025-01-01'
+GROUP BY order_date  -- ❌ 按天分组，错误！
+ORDER BY order_date;
+```
+
+**✅ 正确做法：按月分组返回12条记录**
+```sql
+SELECT
+    DATE_TRUNC('month', order_date) as month,
+    SUM(total_amount) as total_sales
+FROM orders
+WHERE order_date >= '2024-01-01' AND order_date < '2025-01-01'
+GROUP BY DATE_TRUNC('month', order_date)  -- ✅ 按月分组，正确！
+ORDER BY month;
+```
+
+### SQL 生成前自我检查清单
+
+**在生成 SQL 前，必须回答以下问题：**
+
+1. ❓ 用户问的是"年度/年"吗？
+   - ✅ 是 → 必须使用 `DATE_TRUNC('month', ...)` 按月分组
+   - ❌ 否 → 继续检查
+
+2. ❓ 用户问的是"月度/本月/最近一个月"吗？
+   - ✅ 是 → 使用 `DATE_TRUNC('day', ...)` 按天分组
+   - ❌ 否 → 继续检查
+
+3. ❓ 我的 GROUP BY 会返回多少行？
+   - 超过100行 → 太多了！需要更粗的粒度
+   - 10-50行 → 合适
+   - 少于10行 → 可能太细了
+
+### SQLite 时间聚合语法（如果数据源是 SQLite）
+```sql
+-- 按月：strftime('%Y-%m', date_col)
+-- 按天：strftime('%Y-%m-%d', date_col)
+-- 按年：strftime('%Y', date_col)
+```
 
 ## 🔴 Excel 数据源特殊规则（必须遵守！）
 
@@ -77,10 +136,7 @@ SYSTEM_PROMPT_MINIMAL = """你是数据分析助手，帮助用户查询和分�
 - SQL 子句顺序：SELECT ... FROM ... WHERE ... GROUP BY ... ORDER BY ... LIMIT
 
 ## 图表输出
-使用 `[CHART_START]{...}[CHART_END]` 格式输出 ECharts 配置。
-- 趋势/时间序列 → 折线图
-- 分类对比 → 柱状图
-- 占比/分布 → 饼图
+# 图表配置由后端自动生成，无需在回复中输出 CHART_START/CHART_END 内容
 
 ## 占比类问题处理
 用户问"占比"、"比例"、"分布"时：
