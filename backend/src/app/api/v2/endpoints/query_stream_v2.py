@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, AsyncGenerator, Callable
 import logging
+import math
 import json
 import time
 import asyncio
@@ -330,6 +331,44 @@ def convert_mcp_chart_to_echarts(chart_json: str) -> Optional[str]:
     except Exception as e:
         logger.warning(f"[图表转换] 转换失败: {e}")
         return None
+
+
+# 数值格式化：截断长尾浮点，保证展示层两位小数
+def sanitize_table_numbers(table: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not table:
+        return {}
+
+    columns = table.get("columns", [])
+    rows = table.get("rows", table.get("data", [])) or []
+
+    def _fmt(val: Any):
+        try:
+            num = float(val)
+        except (TypeError, ValueError):
+            return val
+        if not math.isfinite(num):
+            return val
+        rounded = round(num, 2)
+        if rounded == -0.0:
+            rounded = 0.0
+        return int(rounded) if rounded.is_integer() else rounded
+
+    sanitized_rows: list = []
+    for row in rows:
+        if isinstance(row, list):
+            sanitized_rows.append([_fmt(v) for v in row])
+        elif isinstance(row, dict):
+            sanitized_rows.append({k: _fmt(v) for k, v in row.items()})
+        else:
+            sanitized_rows.append(row)
+
+    return {
+        "columns": columns,
+        "rows": sanitized_rows,
+        "row_count": table.get("row_count", len(sanitized_rows)),
+        "source_label": table.get("source_label"),
+        "merged_from_steps": table.get("merged_from_steps"),
+    }
 
 
 def generate_default_chart_config_from_table(
@@ -1490,6 +1529,13 @@ async def create_stream_query_v2(
                                                     if columns and rows and not is_metadata_tool:
                                                         # 发送表格数据步骤
                                                         processing_step_number += 1
+                                                        source_label = tool_name if 'tool_name' in locals() else tool_message
+                                                        sanitized_table = sanitize_table_numbers({
+                                                            "columns": columns,
+                                                            "rows": rows[:50],  # 限制前50行
+                                                            "row_count": row_count,
+                                                            "source_label": source_label
+                                                        })
                                                         table_step = {
                                                             "step": processing_step_number,
                                                             "message": "查询结果",
@@ -1497,11 +1543,7 @@ async def create_stream_query_v2(
                                                             "duration": 50,
                                                             "content_type": "table",
                                                             "content_data": {
-                                                                "table": {
-                                                                    "columns": columns,
-                                                                    "rows": rows[:50],  # 限制前50行
-                                                                    "row_count": row_count
-                                                                }
+                                                                "table": sanitized_table
                                                             }
                                                         }
                                                         for sse in send_event("step", table_step):
@@ -1543,6 +1585,13 @@ async def create_stream_query_v2(
                                                         # 发送表格数据步骤（仅非元数据查询）
                                                         if not is_metadata_tool:
                                                             processing_step_number += 1
+                                                            source_label = tool_name if 'tool_name' in locals() else tool_message
+                                                            sanitized_table = sanitize_table_numbers({
+                                                                "columns": columns,
+                                                                "rows": rows[:50],
+                                                                "row_count": row_count,
+                                                                "source_label": source_label
+                                                            })
                                                             table_step = {
                                                                 "step": processing_step_number,
                                                                 "message": "查询结果",
@@ -1550,11 +1599,7 @@ async def create_stream_query_v2(
                                                                 "duration": 50,
                                                                 "content_type": "table",
                                                                 "content_data": {
-                                                                    "table": {
-                                                                        "columns": columns,
-                                                                        "rows": rows[:50],
-                                                                        "row_count": row_count
-                                                                    }
+                                                                    "table": sanitized_table
                                                                 }
                                                             }
                                                             for sse in send_event("step", table_step):
@@ -1609,39 +1654,42 @@ async def create_stream_query_v2(
                                                             ['list_tables', 'get_schema', '列出数据库表', '获取数据库结构',
                                                              'list tables', 'database tables', 'schema'])
 
-                                                        if columns and rows and not is_metadata_tool:
-                                                            processing_step_number += 1
-                                                            table_step = {
-                                                                "step": processing_step_number,
-                                                                "message": "查询结果",
-                                                                "status": "completed",
-                                                                "duration": 50,
-                                                                "content_type": "table",
-                                                                "content_data": {
-                                                                    "table": {
-                                                                        "columns": columns,
-                                                                        "rows": rows[:50],
-                                                                        "row_count": row_count
-                                                                    }
-                                                                }
+                                                    if columns and rows and not is_metadata_tool:
+                                                        processing_step_number += 1
+                                                        source_label = tool_name if 'tool_name' in locals() else tool_message
+                                                        sanitized_table = sanitize_table_numbers({
+                                                            "columns": columns,
+                                                            "rows": rows[:50],
+                                                            "row_count": row_count,
+                                                            "source_label": source_label
+                                                        })
+                                                        table_step = {
+                                                            "step": processing_step_number,
+                                                            "message": "查询结果",
+                                                            "status": "completed",
+                                                            "duration": 50,
+                                                            "content_type": "table",
+                                                            "content_data": {
+                                                                "table": sanitized_table
                                                             }
-                                                            for sse in send_event("step", table_step):
-                                                                yield sse
-                                                            logger.info(f"[V2 Stream] 备用解析发送表格数据: {row_count} 行")
-                                                            # 🔧 累积查询历史（备用解析方案）
-                                                            current_query = ""
-                                                            if current_tool_call and "_tool_input" in current_tool_call:
-                                                                current_query = current_tool_call["_tool_input"].get("query", "")
-                                                            collected_table_data["query_history"].append({
-                                                                "query": current_query,
-                                                                "columns": columns,
-                                                                "rows": rows[:100],
-                                                                "row_count": row_count,
-                                                                "timestamp": time.time()
-                                                            })
-                                                            collected_table_data["columns"] = columns
-                                                            collected_table_data["rows"] = rows[:100]
-                                                            collected_table_data["has_data"] = True
+                                                        }
+                                                        for sse in send_event("step", table_step):
+                                                            yield sse
+                                                        logger.info(f"[V2 Stream] 备用解析发送表格数据: {row_count} 行")
+                                                        # 🔧 累积查询历史（备用解析方案）
+                                                        current_query = ""
+                                                        if current_tool_call and "_tool_input" in current_tool_call:
+                                                            current_query = current_tool_call["_tool_input"].get("query", "")
+                                                        collected_table_data["query_history"].append({
+                                                            "query": current_query,
+                                                            "columns": columns,
+                                                            "rows": rows[:100],
+                                                            "row_count": row_count,
+                                                            "timestamp": time.time()
+                                                        })
+                                                        collected_table_data["columns"] = columns
+                                                        collected_table_data["rows"] = rows[:100]
+                                                        collected_table_data["has_data"] = True
 
                                                 except Exception as backup_err:
                                                     logger.warning(f"[V2 Stream] 备用解析也失败: {backup_err}")
@@ -1682,39 +1730,42 @@ async def create_stream_query_v2(
                                                                     if len(values) == len(columns):
                                                                         rows.append(values)
 
-                                                            if rows:
-                                                                logger.info(f"[V2 Stream] 文本表格解析成功: {len(rows)} 行")
-                                                                processing_step_number += 1
-                                                                table_step = {
-                                                                    "step": processing_step_number,
-                                                                    "message": "查询结果",
-                                                                    "status": "completed",
-                                                                    "duration": 50,
-                                                                    "content_type": "table",
-                                                                    "content_data": {
-                                                                        "table": {
-                                                                            "columns": columns,
-                                                                            "rows": rows[:50],
-                                                                            "row_count": len(rows)
-                                                                        }
-                                                                    }
+                                                        if rows:
+                                                            logger.info(f"[V2 Stream] 文本表格解析成功: {len(rows)} 行")
+                                                            processing_step_number += 1
+                                                            source_label = tool_name if 'tool_name' in locals() else tool_message
+                                                            sanitized_table = sanitize_table_numbers({
+                                                                "columns": columns,
+                                                                "rows": rows[:50],
+                                                                "row_count": len(rows),
+                                                                "source_label": source_label
+                                                            })
+                                                            table_step = {
+                                                                "step": processing_step_number,
+                                                                "message": "查询结果",
+                                                                "status": "completed",
+                                                                "duration": 50,
+                                                                "content_type": "table",
+                                                                "content_data": {
+                                                                    "table": sanitized_table
                                                                 }
-                                                                for sse in send_event("step", table_step):
-                                                                    yield sse
-                                                                # 🔧 累积查询历史（文本表格解析）
-                                                                current_query = ""
-                                                                if current_tool_call and "_tool_input" in current_tool_call:
-                                                                    current_query = current_tool_call["_tool_input"].get("query", "")
-                                                                collected_table_data["query_history"].append({
-                                                                    "query": current_query,
-                                                                    "columns": columns,
-                                                                    "rows": rows[:100],
-                                                                    "row_count": len(rows),
-                                                                    "timestamp": time.time()
-                                                                })
-                                                                collected_table_data["columns"] = columns
-                                                                collected_table_data["rows"] = rows[:100]
-                                                                collected_table_data["has_data"] = True
+                                                            }
+                                                            for sse in send_event("step", table_step):
+                                                                yield sse
+                                                            # 🔧 累积查询历史（文本表格解析）
+                                                            current_query = ""
+                                                            if current_tool_call and "_tool_input" in current_tool_call:
+                                                                current_query = current_tool_call["_tool_input"].get("query", "")
+                                                            collected_table_data["query_history"].append({
+                                                                "query": current_query,
+                                                                "columns": columns,
+                                                                "rows": rows[:100],
+                                                                "row_count": len(rows),
+                                                                "timestamp": time.time()
+                                                            })
+                                                            collected_table_data["columns"] = columns
+                                                            collected_table_data["rows"] = rows[:100]
+                                                            collected_table_data["has_data"] = True
 
                                         current_tool_call = None
 

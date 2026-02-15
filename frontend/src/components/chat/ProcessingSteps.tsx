@@ -49,6 +49,7 @@ import { PlainText } from '@/components/ui/plain-text'
 import { PulseIndicator } from '@/components/ui/PulseIndicator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { formatNumeric } from '@/utils/numberFormat'
 import { ProcessingStep, StepChartData, StepTableData } from '@/types/chat'
 import ReactECharts from 'echarts-for-react'
 import {
@@ -182,6 +183,141 @@ function formatDuration(ms?: number) {
   if (!ms) return ''
   if (ms < 1000) return `${ms}ms`
   return `${(ms / 1000).toFixed(2)}s`
+}
+
+// 🔧 表格辅助：选择维度键（优先字符串列）
+function pickKeyColumn(columns: string[], rows: any[]): string {
+  if (!columns || columns.length === 0) return ''
+  const sampleRow = rows && rows.length > 0 ? rows[0] : null
+  if (sampleRow) {
+    for (const col of columns) {
+      const val = Array.isArray(sampleRow) ? sampleRow[columns.indexOf(col)] : (sampleRow as any)[col]
+      if (typeof val === 'string' && val.trim().length > 0) return col
+    }
+  }
+  // 兜底使用首列
+  return columns[0]
+}
+
+// 🔧 将行转换为对象，兼容数组与对象形式
+function rowToObj(columns: string[], row: any): Record<string, any> {
+  if (Array.isArray(row)) {
+    const obj: Record<string, any> = {}
+    columns.forEach((col, idx) => {
+      obj[col] = row[idx]
+    })
+    return obj
+  }
+  return { ...(row as Record<string, any>) }
+}
+
+// 🔧 计算列名 Jaccard 相似度
+function columnSimilarity(colsA: string[], colsB: string[]): number {
+  const setA = new Set(colsA.map(c => c.toLowerCase()))
+  const setB = new Set(colsB.map(c => c.toLowerCase()))
+  const intersection = [...setA].filter(x => setB.has(x)).length
+  const union = new Set([...setA, ...setB]).size || 1
+  return intersection / union
+}
+
+// 🔧 合并相邻相似表格步骤（减少步骤8/9重复表）
+function mergeSimilarTableSteps(steps: ProcessingStep[]): ProcessingStep[] {
+  if (!steps || steps.length === 0) return steps
+
+  const merged: ProcessingStep[] = []
+  let i = 0
+  while (i < steps.length) {
+    const current = steps[i]
+    const next = steps[i + 1]
+
+    const isCurrentTable = current.content_type === 'table' && current.content_data?.table
+    const isNextTable = next && next.content_type === 'table' && next.content_data?.table
+
+    // 仅处理相邻表格
+    if (isCurrentTable && isNextTable) {
+      const tableA = current.content_data!.table as StepTableData
+      const tableB = next.content_data!.table as StepTableData
+
+      const sim = columnSimilarity(tableA.columns, tableB.columns)
+      const rowClose = Math.abs((tableA.row_count || 0) - (tableB.row_count || 0)) <= 1
+
+      if (sim >= 0.8 && rowClose) {
+        // 选择维度键
+        const keyCol = pickKeyColumn(tableA.columns, tableA.rows)
+
+        const sources = [
+          tableA.source_label || current.title || current.message || `step-${current.step}`,
+          tableB.source_label || next!.title || next!.message || `step-${next!.step}`
+        ]
+
+        // 初始化合并列：保留 key 列，其余列带来源后缀防冲突
+        const mergedColumns: string[] = []
+        const suffixCache = new Map<string, string>()
+        const ensureColumn = (col: string, sourceLabel: string) => {
+          if (!mergedColumns.includes(col)) {
+            mergedColumns.push(col)
+            suffixCache.set(col, '')
+          } else if (col !== keyCol) {
+            const withSuffix = `${col}（${sourceLabel}）`
+            if (!mergedColumns.includes(withSuffix)) {
+              mergedColumns.push(withSuffix)
+              suffixCache.set(col, sourceLabel)
+            }
+          }
+        }
+
+        tableA.columns.forEach(col => ensureColumn(col, sources[0]))
+        tableB.columns.forEach(col => ensureColumn(col, sources[1]))
+
+        // 行外连接
+        const mergedRowMap: Record<string, Record<string, any>> = {}
+        const ingest = (table: StepTableData, sourceLabel: string) => {
+          table.rows.forEach((row, idx) => {
+            const obj = rowToObj(table.columns, row)
+            const keyValRaw = obj[keyCol]
+            const keyVal = (keyValRaw === undefined || keyValRaw === null)
+              ? `__idx_${idx}_${sourceLabel}`
+              : String(keyValRaw)
+            if (!mergedRowMap[keyVal]) {
+              mergedRowMap[keyVal] = { [keyCol]: keyValRaw }
+            }
+            for (const col of table.columns) {
+              const targetCol = (col !== keyCol && suffixCache.get(col)) ? `${col}（${sourceLabel}）` : col
+              mergedRowMap[keyVal][targetCol] = obj[col]
+            }
+          })
+        }
+
+        ingest(tableA, sources[0])
+        ingest(tableB, sources[1])
+
+        const mergedRows = Object.values(mergedRowMap)
+
+        const mergedStep: ProcessingStep = {
+          ...current,
+          content_data: {
+            ...(current.content_data || {}),
+            table: {
+              columns: mergedColumns,
+              rows: mergedRows,
+              row_count: mergedRows.length,
+              source_label: sources.join(' / '),
+              merged_from_steps: [current.step, next!.step],
+            }
+          }
+        }
+
+        merged.push(mergedStep)
+        i += 2
+        continue
+      }
+    }
+
+    merged.push(current)
+    i += 1
+  }
+
+  return merged
 }
 
 // 渲染SQL代码块（可折叠版本）
@@ -497,9 +633,15 @@ function normalizeEChartsOption(option: any): any {
         if (axis.axisLabel && axis.axisLabel.margin === undefined) {
           axis.axisLabel.margin = 20
         }
+        if (axis.axisLabel && !axis.axisLabel.formatter) {
+          axis.axisLabel.formatter = (val: any) => formatNumeric(val)
+        }
       })
     } else if (normalized.yAxis.axisLabel && normalized.yAxis.axisLabel.margin === undefined) {
       normalized.yAxis.axisLabel.margin = 20
+      if (!normalized.yAxis.axisLabel.formatter) {
+        normalized.yAxis.axisLabel.formatter = (val: any) => formatNumeric(val)
+      }
     }
   }
 
@@ -510,9 +652,15 @@ function normalizeEChartsOption(option: any): any {
         if (axis.axisLabel && axis.axisLabel.margin === undefined) {
           axis.axisLabel.margin = 15
         }
+        if (axis.axisLabel && !axis.axisLabel.formatter) {
+          axis.axisLabel.formatter = (val: any) => formatNumeric(val)
+        }
       })
     } else if (normalized.xAxis.axisLabel && normalized.xAxis.axisLabel.margin === undefined) {
       normalized.xAxis.axisLabel.margin = 15
+      if (!normalized.xAxis.axisLabel.formatter) {
+        normalized.xAxis.axisLabel.formatter = (val: any) => formatNumeric(val)
+      }
     }
   }
 
@@ -649,15 +797,22 @@ function renderVisualization(
   ) : null
 
   const tableElement = table ? (
-    <div className="border-b border-primary/30">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-primary/5">
-        <span className="text-xs font-medium text-primary flex items-center gap-1.5">
-          <TableProperties className="w-3.5 h-3.5" />
-          查询数据
+      <div className="border-b border-primary/30">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-primary/5">
+          <span className="text-xs font-medium text-primary flex items-center gap-1.5">
+            <TableProperties className="w-3.5 h-3.5" />
+            查询数据
+          </span>
+        <span className="text-xs text-primary/70 flex items-center gap-2">
+          {table.source_label && (
+            <span className="px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+              {table.source_label}
+            </span>
+          )}
+          {table.row_count} 行 × {table.columns.length} 列
         </span>
-        <span className="text-xs text-primary/70">{table.row_count} 行 × {table.columns.length} 列</span>
-      </div>
-      <ScrollArea>
+        </div>
+        <ScrollArea>
         <table className="w-full text-xs border-collapse">
           <thead className="bg-muted sticky top-0 z-10">
             <tr>
@@ -677,11 +832,18 @@ function renderVisualization(
                 <tr key={rowIndex} className="odd:bg-card even:bg-muted hover:bg-primary/5">
                   {table.columns.slice(0, 10).map((col, colIndex) => {
                     // 如果 row 是数组，使用索引访问；如果是对象，使用列名访问
-                    const cellValue = isArrayRow ? row[colIndex] : row[col]
+                    const rawValue = isArrayRow ? row[colIndex] : row[col]
+                    const formatted = rawValue !== undefined && rawValue !== null
+                      ? formatNumeric(rawValue, { thousandSeparator: false })
+                      : ''
+                    const cellValue =
+                      formatted !== '' || rawValue === 0
+                        ? formatted
+                        : (rawValue !== undefined && rawValue !== null ? String(rawValue) : '')
                     return (
                       <td key={col} className="px-3 py-1.5 border-b border-border text-foreground align-top">
                         <span className="break-words whitespace-pre-wrap">
-                          {cellValue !== undefined && cellValue !== null ? String(cellValue) : ''}
+                          {cellValue}
                         </span>
                       </td>
                     )
@@ -1201,7 +1363,10 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
   if (!steps || steps.length === 0) return null
 
   // 🆕 过滤技术性步骤，只展示业务相关步骤
-  const filteredSteps = useMemo(() => filterTechnicalSteps(steps), [steps])
+  const filteredSteps = useMemo(
+    () => mergeSimilarTableSteps(filterTechnicalSteps(steps)),
+    [steps]
+  )
 
   // 如果过滤后没有步骤，不渲染
   if (filteredSteps.length === 0) return null

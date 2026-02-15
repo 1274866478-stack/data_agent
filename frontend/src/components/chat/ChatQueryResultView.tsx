@@ -46,6 +46,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ChatQueryChart, ChatQueryResultTable, ChartType } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
+import { formatNumeric } from '@/utils/numberFormat'
 import { DynamicChart } from './DynamicChart'
 
 interface ChatQueryResultViewProps {
@@ -166,9 +167,12 @@ export function ChatQueryResultView({ table, chart }: ChatQueryResultViewProps) 
                           className="px-3 py-1.5 border-b text-gray-800 align-top max-w-xs"
                         >
                           <span className="line-clamp-3 break-words">
-                            {row[col] !== undefined && row[col] !== null
-                              ? String(row[col])
-                              : ''}
+                            {(() => {
+                              const raw = row[col]
+                              if (raw === undefined || raw === null) return ''
+                              const formatted = formatNumeric(raw)
+                              return formatted !== '' || raw === 0 ? formatted : String(raw)
+                            })()}
                           </span>
                         </td>
                       ))}

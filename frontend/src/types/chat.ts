@@ -58,8 +58,10 @@ export type StepContentType = 'text' | 'sql' | 'table' | 'chart' | 'error' | 'an
 // 表格数据结构
 export interface StepTableData {
   columns: string[];
-  rows: Record<string, any>[];
+  rows: Array<Record<string, any> | any[]>; // 兼容对象/数组两种行格式
   row_count: number;
+  source_label?: string;        // 数据来源标签（用于合并后展示）
+  merged_from_steps?: number[]; // 合并来源的步骤编号
 }
 
 // 图表数据结构
