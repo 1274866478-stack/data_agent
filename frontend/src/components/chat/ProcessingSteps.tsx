@@ -81,6 +81,43 @@ interface ProcessingStepsProps {
   outputFormat?: 'markdown' | 'plain'
 }
 
+// 统一的乱码修正常量
+const STEP_MOJIBAKE_MAP: Record<string, string> = {
+  '鐞嗚В闂': '理解问题',
+  '鐞嗚В闂': '理解问题',
+  '鍒╃敤鍔涙ā寮�': '调用工具',
+}
+
+// 清洗步骤标题/描述的辅助函数
+const sanitizeStepText = (text?: string | null, fallback?: string): string | undefined => {
+  if (text === undefined || text === null) return fallback
+  let result = String(text)
+  // 已知乱码映射
+  for (const [bad, good] of Object.entries(STEP_MOJIBAKE_MAP)) {
+    if (result.includes(bad)) result = result.replace(new RegExp(bad, 'g'), good)
+  }
+  // 兜底：遇到“鐞嗚”直接替换
+  if (result.includes('鐞嗚')) result = '理解问题'
+  // 移除不可见字符
+  result = result.replace(/[^\x20-\x7E\u4e00-\u9fa5，。？！：；、（）【】《》“”‘’·]/g, '').trim()
+  return result.length > 0 ? result : fallback
+}
+
+const sanitizeStep = (step: ProcessingStep, idxFallback?: number): ProcessingStep => ({
+  ...step,
+  title: sanitizeStepText(step.title, idxFallback !== undefined ? `步骤${idxFallback}` : step.title),
+  description: sanitizeStepText(step.description),
+  message: sanitizeStepText((step as any).message),
+})
+
+// 判断是否为数字（字符串或数字类型均可）
+function isNumeric(value: any): boolean {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (typeof value === 'string') return /^-?\d+(\.\d+)?$/.test(value.trim())
+  return false
+}
+
 function getStepIcon(step: number, title: string, status: ProcessingStep['status']) {
   const iconClass = 'w-4 h-4'
   // 状态优先：运行/错误
@@ -427,10 +464,14 @@ const TableDataRenderer = React.memo(function TableDataRenderer({ table }: Table
                 <tr key={rowIndex} className="odd:bg-card even:bg-muted hover:bg-primary/5">
                   {limitedColumns.map((col, colIndex) => {
                     const cellValue = isArrayRow ? row[colIndex] : row[col]
+                    const numeric = isNumeric(cellValue)
                     return (
                       <td
                         key={col}
-                        className="px-3 py-1.5 border-b text-foreground align-top"
+                        className={cn(
+                          'px-3 py-1.5 border-b text-foreground align-top',
+                          numeric && 'text-right tabular-nums'
+                        )}
                       >
                         <span className="break-words whitespace-pre-wrap">
                           {cellValue !== undefined && cellValue !== null
@@ -1344,8 +1385,13 @@ function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex
   return renderStepContent(step, outputFormat)
 }
 
-export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, className, defaultExpanded = true, outputFormat = 'markdown' }: ProcessingStepsProps) {
+export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, className, defaultExpanded = false, outputFormat = 'markdown' }: ProcessingStepsProps) {
   const [isExpanded, setIsExpanded] = React.useState(defaultExpanded)
+
+  // 当 props 变化时同步折叠状态，确保首屏默认收起
+  React.useEffect(() => {
+    setIsExpanded(defaultExpanded)
+  }, [defaultExpanded])
 
   // 使用 useCallback 稳定回调函数
   const handleToggle = useCallback(() => {
@@ -1359,10 +1405,10 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
   if (!steps || steps.length === 0) return null
 
   // 🆕 过滤技术性步骤，只展示业务相关步�?
-  const filteredSteps = useMemo(
-    () => mergeSimilarTableSteps(filterTechnicalSteps(steps)),
-    [steps]
-  )
+  const filteredSteps = useMemo(() => {
+    const cleaned = steps.map((s, i) => sanitizeStep(s, s.step ?? i + 1))
+    return mergeSimilarTableSteps(filterTechnicalSteps(cleaned))
+  }, [steps])
 
   // 如果过滤后没有步骤，不渲�?
   if (filteredSteps.length === 0) return null
@@ -1627,6 +1673,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
     </div>
   )
 })
+
 
 
 
