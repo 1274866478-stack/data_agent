@@ -1,40 +1,40 @@
-/**
+﻿/**
  * # ProcessingSteps AI处理步骤展示组件
  *
  * ## [MODULE]
- * **文件名**: ProcessingSteps.tsx
+ * **文件�?*: ProcessingSteps.tsx
  * **职责**: 可视化展示AI推理和SQL生成的各个处理步骤，支持折叠展开和耗时统计
- * **作者**: Data Agent Team
+ * **作�?*: Data Agent Team
  * **版本**: 1.1.0
  *
  * ## [INPUT]
  * - **steps**: ProcessingStep[] - 处理步骤数组
- * - **className**: string (可选) - 自定义样式类名
- * - **defaultExpanded**: boolean (可选) - 默认是否展开，默认true
+ * - **className**: string (可�? - 自定义样式类�?
+ * - **defaultExpanded**: boolean (可�? - 默认是否展开，默认true
  *
  * ## [OUTPUT]
- * - **返回值**: JSX.Element - 折叠卡片式的步骤列表或null
- * - **副作用**: 无副作用
+ * - **返回�?*: JSX.Element - 折叠卡片式的步骤列表或null
+ * - **副作�?*: 无副作用
  *
  * ## [LINK]
  * **上游依赖**:
- * - [react](https://react.dev) - React核心库
- * - [@/lib/utils.ts](../../lib/utils.ts) - 工具函数（cn）
+ * - [react](https://react.dev) - React核心�?
+ * - [@/lib/utils.ts](../../lib/utils.ts) - 工具函数（cn�?
  * - [lucide-react](https://lucide.dev) - 图标库（12种步骤图标）
  * - [@/types/chat.ts](../../types/chat.ts) - ProcessingStep类型定义
  *
  * **下游依赖**:
- * - 无直接下游组件
+ * - 无直接下游组�?
  *
- * **调用方**:
+ * **调用�?*:
  * - [./MessageList.tsx](./MessageList.tsx) - 消息列表中展示AI推理过程
  *
  * ## [STATE]
- * - **isExpanded**: boolean - 步骤列表展开/折叠状态
+ * - **isExpanded**: boolean - 步骤列表展开/折叠状�?
  *
  * ## [SIDE-EFFECTS]
- * - 根据步骤状态自动选择对应图标（6步AI流程）
- * - 自动计算总耗时和完成进度
+ * - 根据步骤状态自动选择对应图标�?步AI流程�?
+ * - 自动计算总耗时和完成进�?
  * - 支持查看详情（如SQL语句）的折叠面板
  *
  * ## [PERFORMANCE]
@@ -50,6 +50,7 @@ import { PulseIndicator } from '@/components/ui/PulseIndicator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { formatNumeric } from '@/utils/numberFormat'
+import { friendlyFieldName } from '@/utils/fieldDisplay'
 import { ProcessingStep, StepChartData, StepTableData } from '@/types/chat'
 import ReactECharts from 'echarts-for-react'
 import {
@@ -63,8 +64,8 @@ import {
     Database,
     FileCode,
     Loader2,
-    MessageSquare, // 新增：内容生成
-    Shield, // 新增：思考/上下文检索
+    MessageSquare, // 新增：内容生�?
+    Shield, // 新增：思�?上下文检�?
     Sparkles,
     TableProperties,
     Wand2,
@@ -80,75 +81,55 @@ interface ProcessingStepsProps {
   outputFormat?: 'markdown' | 'plain'
 }
 
-// 根据步骤编号和标题返回对应的图标
 function getStepIcon(step: number, title: string, status: ProcessingStep['status']) {
   const iconClass = 'w-4 h-4'
+  // 状态优先：运行/错误
+  if (status === 'running') return <Loader2 className={cn(iconClass, 'animate-spin text-primary')} />
+  if (status === 'error') return <XCircle className={cn(iconClass, 'text-destructive')} />
 
-  // 根据状态返回状态图标
-  if (status === 'running') {
-    return <Loader2 className={cn(iconClass, 'animate-spin text-primary')} />
-  }
-  if (status === 'error') {
-    return <XCircle className={cn(iconClass, 'text-destructive')} />
-  }
+  const t = (title || '').toLowerCase()
+
   if (status === 'completed') {
-    // 🔧 新增：步骤 0 特殊处理（理解问题/思考规划阶段）
-    if (step === 0) {
+    if (t.includes('意图') || t.includes('理解') || t.includes('用户问题') || t.includes('intent') || step === 0) {
       return <Brain className={cn(iconClass, 'text-green-500')} />
     }
-    // 智能匹配：基于标题关键词（优先级最高，支持不同场景）
-    // 意图理解类
-    if (title.includes('意图') || title.includes('理解') || title.includes('用户问题')) {
-      return <MessageSquare className={cn(iconClass, 'text-green-500')} />
-    }
-    // 上下文检索/思考类
-    if (title.includes('检索') || title.includes('上下文') || title.includes('知识')) {
+    if (t.includes('检索') || t.includes('上下文') || t.includes('知识') || t.includes('retriev') || t.includes('context')) {
       return <Brain className={cn(iconClass, 'text-green-500')} />
     }
-    // Schema/数据库类
-    if (title.includes('Schema') || title.includes('数据库') || title.includes('表结构')) {
+    if (t.includes('schema') || t.includes('数据库') || t.includes('表结构')) {
       return <TableProperties className={cn(iconClass, 'text-green-500')} />
     }
-    // 策略/Prompt构建类
-    if (title.includes('策略') || title.includes('Prompt') || title.includes('构建')) {
+    if (t.includes('策略') || t.includes('prompt') || t.includes('构建')) {
       return <Wand2 className={cn(iconClass, 'text-green-500')} />
     }
-    // SQL生成类
-    if (title.includes('SQL') && (title.includes('生成') || title.includes('构建'))) {
+    if (t.includes('sql') && (t.includes('生成') || t.includes('构建'))) {
       return <Code2 className={cn(iconClass, 'text-green-500')} />
     }
-    // 内容生成类（非SQL）
-    if (title.includes('生成') || title.includes('回复') || title.includes('内容')) {
+    if (t.includes('生成') || t.includes('回复') || t.includes('内容')) {
       return <Sparkles className={cn(iconClass, 'text-green-500')} />
     }
-    // 安全检查类
-    if (title.includes('安全') || title.includes('检查') || title.includes('合规')) {
+    if (t.includes('安全') || t.includes('检测') || t.includes('合规')) {
       return <Shield className={cn(iconClass, 'text-green-500')} />
     }
-    // 优化/输出完成类
-    if (title.includes('优化') || title.includes('输出') || title.includes('完成') || title.includes('最终')) {
+    if (t.includes('优化') || t.includes('输出') || t.includes('完成') || t.includes('最终')) {
       return <CheckCircle2 className={cn(iconClass, 'text-green-500')} />
     }
-    // SQL提取/代码类
-    if (title.includes('提取') || title.includes('代码')) {
+    if (t.includes('提取') || t.includes('代码')) {
       return <FileCode className={cn(iconClass, 'text-green-500')} />
     }
-    // 执行/查询类
-    if (title.includes('执行') || title.includes('查询') || title.includes('运行')) {
+    if (t.includes('执行') || t.includes('查询') || t.includes('运行')) {
       return <Zap className={cn(iconClass, 'text-green-500')} />
     }
-    // 图表可视化类
-    if (title.includes('图表') || title.includes('可视化') || title.includes('展示')) {
+    if (t.includes('图表') || t.includes('可视化') || t.includes('展示')) {
       return <BarChart3 className={cn(iconClass, 'text-green-500')} />
     }
-    // 数据源类
-    if (title.includes('数据源') || title.includes('连接')) {
+    if (t.includes('数据源') || t.includes('连接')) {
       return <Database className={cn(iconClass, 'text-green-500')} />
     }
 
-    // 回退到步骤编号映射（0-8步Agent SQL流程）
+    // 兜底按步骤编号映射
     switch (step) {
-      case 0: return <Brain className={cn(iconClass, 'text-green-500')} />  // 🔧 新增：理解问题/思考规划
+      case 0: return <Brain className={cn(iconClass, 'text-green-500')} />
       case 1: return <MessageSquare className={cn(iconClass, 'text-green-500')} />
       case 2: return <TableProperties className={cn(iconClass, 'text-green-500')} />
       case 3: return <Wand2 className={cn(iconClass, 'text-green-500')} />
@@ -164,7 +145,7 @@ function getStepIcon(step: number, title: string, status: ProcessingStep['status
   return <Clock className={cn(iconClass, 'text-muted-foreground')} />
 }
 
-// 获取步骤的状态颜色 - DataLab Tiffany 色系
+// 获取步骤的状态颜�?- DataLab Tiffany 色系
 function getStatusColor(status: ProcessingStep['status']) {
   switch (status) {
     case 'completed':
@@ -185,7 +166,7 @@ function formatDuration(ms?: number) {
   return `${(ms / 1000).toFixed(2)}s`
 }
 
-// 🔧 表格辅助：选择维度键（优先字符串列）
+// 🔧 表格辅助：选择维度键（优先字符串列�?
 function pickKeyColumn(columns: string[], rows: any[]): string {
   if (!columns || columns.length === 0) return ''
   const sampleRow = rows && rows.length > 0 ? rows[0] : null
@@ -199,7 +180,7 @@ function pickKeyColumn(columns: string[], rows: any[]): string {
   return columns[0]
 }
 
-// 🔧 将行转换为对象，兼容数组与对象形式
+// 🔧 将行转换为对象，兼容数组与对象形�?
 function rowToObj(columns: string[], row: any): Record<string, any> {
   if (Array.isArray(row)) {
     const obj: Record<string, any> = {}
@@ -211,7 +192,7 @@ function rowToObj(columns: string[], row: any): Record<string, any> {
   return { ...(row as Record<string, any>) }
 }
 
-// 🔧 计算列名 Jaccard 相似度
+// 🔧 计算列名 Jaccard 相似�?
 function columnSimilarity(colsA: string[], colsB: string[]): number {
   const setA = new Set(colsA.map(c => c.toLowerCase()))
   const setB = new Set(colsB.map(c => c.toLowerCase()))
@@ -220,7 +201,7 @@ function columnSimilarity(colsA: string[], colsB: string[]): number {
   return intersection / union
 }
 
-// 🔧 合并相邻相似表格步骤（减少步骤8/9重复表）
+// 🔧 合并相邻相似表格步骤（减少步�?/9重复表）
 function mergeSimilarTableSteps(steps: ProcessingStep[]): ProcessingStep[] {
   if (!steps || steps.length === 0) return steps
 
@@ -233,7 +214,7 @@ function mergeSimilarTableSteps(steps: ProcessingStep[]): ProcessingStep[] {
     const isCurrentTable = current.content_type === 'table' && current.content_data?.table
     const isNextTable = next && next.content_type === 'table' && next.content_data?.table
 
-    // 仅处理相邻表格
+    // 仅处理相邻表�?
     if (isCurrentTable && isNextTable) {
       const tableA = current.content_data!.table as StepTableData
       const tableB = next.content_data!.table as StepTableData
@@ -242,7 +223,7 @@ function mergeSimilarTableSteps(steps: ProcessingStep[]): ProcessingStep[] {
       const rowClose = Math.abs((tableA.row_count || 0) - (tableB.row_count || 0)) <= 1
 
       if (sim >= 0.8 && rowClose) {
-        // 选择维度键
+        // 选择维度�?
         const keyCol = pickKeyColumn(tableA.columns, tableA.rows)
 
         const sources = [
@@ -250,7 +231,7 @@ function mergeSimilarTableSteps(steps: ProcessingStep[]): ProcessingStep[] {
           tableB.source_label || next!.title || next!.message || `step-${next!.step}`
         ]
 
-        // 初始化合并列：保留 key 列，其余列带来源后缀防冲突
+        // 初始化合并列：保�?key 列，其余列带来源后缀防冲�?
         const mergedColumns: string[] = []
         const suffixCache = new Map<string, string>()
         const ensureColumn = (col: string, sourceLabel: string) => {
@@ -366,7 +347,7 @@ const SQLCodeRenderer = React.memo(function SQLCodeRenderer({ sql, defaultExpand
   )
 })
 
-// 渲染SQL代码块（简单版本，用于非步骤4）- DataLab 深色风格
+// 渲染SQL代码块（简单版本，用于非步�?�? DataLab 深色风格
 function renderSQLCode(sql: string) {
   return (
     <div className="mt-2 rounded-md bg-slate-900 overflow-hidden border border-slate-700">
@@ -396,7 +377,7 @@ const TableDataRenderer = React.memo(function TableDataRenderer({ table }: Table
     setIsExpanded(prev => !prev)
   }, [])
 
-  // 🔧 默认只显示前5行，避免占用过多空间（从50改为5）
+  // 🔧 默认只显示前5行，避免占用过多空间（从50改为5�?
   const DEFAULT_MAX_ROWS = 5
   const MAX_COLUMNS = 10  // 增加列数限制
 
@@ -417,10 +398,10 @@ const TableDataRenderer = React.memo(function TableDataRenderer({ table }: Table
   return (
     <div className="mt-2 rounded-md border border-primary/20 overflow-hidden bg-card">
       <div className="flex items-center justify-between px-3 py-1.5 bg-primary/5 border-b border-primary/20">
-        <span className="text-xs font-medium text-primary">可视化数据</span>
+        <span className="text-xs font-medium text-primary">可视化数据表</span>
         <span className="text-xs text-primary/70">
           表格 · {table.row_count} 行 × {table.columns.length} 列
-          {hasMoreColumns && ` (显示前${MAX_COLUMNS}列)`}
+          {hasMoreColumns && ` (仅展示前 ${MAX_COLUMNS} 列)`}
         </span>
       </div>
       <ScrollArea>
@@ -432,14 +413,14 @@ const TableDataRenderer = React.memo(function TableDataRenderer({ table }: Table
                   key={col}
                   className="px-3 py-2 border-b text-left font-medium text-foreground whitespace-nowrap bg-muted"
                 >
-                  {col}
+                  {friendlyFieldName(col)}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {displayRows.map((row, rowIndex) => {
-              // 🔧 修复：支持两种 rows 格式（数组格式和对象格式）
+              // 🔧 修复：支持两�?rows 格式（数组格式和对象格式�?
               const isArrayRow = Array.isArray(row)
               
               return (
@@ -471,7 +452,7 @@ const TableDataRenderer = React.memo(function TableDataRenderer({ table }: Table
           <span className="text-xs text-primary">
             {isExpanded
               ? `显示全部 ${table.row_count} 行`
-              : `共 ${table.row_count} 行，当前显示前 ${Math.min(DEFAULT_MAX_ROWS, table.row_count)} 行`
+              : `共 ${table.row_count} 行，当前显示 ${Math.min(DEFAULT_MAX_ROWS, table.row_count)} 行`
             }
             {hasMoreColumns && ` · 仅展示前 ${MAX_COLUMNS} 列`}
           </span>
@@ -490,7 +471,7 @@ const TableDataRenderer = React.memo(function TableDataRenderer({ table }: Table
 })
 
 /**
- * 解析数据分析文本，提取总结和图表说明
+ * 解析数据分析文本，提取总结和图表说�?
  * 返回: { summary: 总结部分, chartDescriptions: 图表说明数组 }
  */
 function parseAnalysisText(text: string): { summary: string; chartDescriptions: string[] } {
@@ -499,11 +480,11 @@ function parseAnalysisText(text: string): { summary: string; chartDescriptions: 
   // 🔧 先过滤详细分析模块（数据概览、数值统计、数据预览）
   const filteredText = filterDetailedAnalysis(text)
 
-  // 查找第一个图表标题的位置（如"第一个图表"、"图表1"等）
-  const chartTitlePattern = /(?:第\s*[一二三四五六七八九十\d]+\s*个?图表[:：]?\s*)|(?:图表\s*[一二三四五六七八九十\d]+[:：]?\s*)/i
+  // 查找第一个图表标题的位置（如"第一个图�?�?图表1"等）
+  const chartTitlePattern = /(?:第\s*[一二三四五六七八九十\d]+\s*�?图表[:：]?\s*)|(?:图表\s*[一二三四五六七八九十\d]+[:：]?\s*)/i
   const firstChartIndex = filteredText.search(chartTitlePattern)
 
-  // 如果找到图表标题，分割文本
+  // 如果找到图表标题，分割文�?
   if (firstChartIndex > 0) {
     const summaryPart = filteredText.substring(0, firstChartIndex).trim()
     const chartPart = filteredText.substring(firstChartIndex)
@@ -512,8 +493,8 @@ function parseAnalysisText(text: string): { summary: string; chartDescriptions: 
     const chartDescriptions: string[] = []
     const parts = chartPart.split(chartTitlePattern)
 
-    // 找到所有图表标题
-    const chartTitles = chartPart.match(/(?:第\s*[一二三四五六七八九十\d]+\s*个?图表[:：]?\s*[^。\n]*)|(?:图表\s*[一二三四五六七八九十\d]+[:：]?\s*[^。\n]*)/gi)
+    // 找到所有图表标�?
+    const chartTitles = chartPart.match(/(?:第\s*[一二三四五六七八九十\d]+\s*�?图表[:：]?\s*[^。\n]*)|(?:图表\s*[一二三四五六七八九十\d]+[:：]?\s*[^。\n]*)/gi)
 
     if (chartTitles && chartTitles.length > 0) {
       let contentIndex = 1  // 跳过第一个空部分
@@ -539,34 +520,34 @@ function parseAnalysisText(text: string): { summary: string; chartDescriptions: 
 
 /**
  * 🔧 清理图表标题中的 Markdown 符号
- * 移除 **、*、# 等 Markdown 格式标记
+ * 移除 **�?�? �?Markdown 格式标记
  */
 function cleanMarkdownSymbols(text: string): string {
   if (!text || typeof text !== 'string') return text
   return text
     .replace(/\*\*/g, '')        // 移除加粗标记
     .replace(/\*/g, '')          // 移除斜体标记
-    .replace(/^#+\s*/, '')       // 移除标题级标记
+    .replace(/^#+\s*/, '')       // 移除标题级标�?
     .trim()
 }
 
 /**
- * 安全深拷贝，避免循环引用导致的 JSON 序列化失败
- * 使用 structuredClone 或递归浅拷贝作为后备方案
+ * 安全深拷贝，避免循环引用导致�?JSON 序列化失�?
+ * 使用 structuredClone 或递归浅拷贝作为后备方�?
  */
 function safeDeepClone<T>(obj: T): T {
   if (!obj || typeof obj !== 'object') return obj
 
-  // 优先使用 structuredClone（现代浏览器支持）
+  // 优先使用 structuredClone（现代浏览器支持�?
   if (typeof structuredClone !== 'undefined') {
     try {
       return structuredClone(obj)
     } catch {
-      // 如果 structuredClone 失败，使用后备方案
+      // 如果 structuredClone 失败，使用后备方�?
     }
   }
 
-  // 后备方案：递归浅拷贝（处理常见对象结构）
+  // 后备方案：递归浅拷贝（处理常见对象结构�?
   if (Array.isArray(obj)) {
     return obj.map(item => safeDeepClone(item)) as any
   }
@@ -583,8 +564,8 @@ function safeDeepClone<T>(obj: T): T {
 }
 
 /**
- * 规范化 ECharts 配置，确保纵坐标标签完整显示
- * 自动添加合理的 grid 配置和坐标轴边距
+ * 规范�?ECharts 配置，确保纵坐标标签完整显示
+ * 自动添加合理�?grid 配置和坐标轴边距
  */
 function normalizeEChartsOption(option: any): any {
   if (!option || typeof option !== 'object') return option
@@ -592,16 +573,16 @@ function normalizeEChartsOption(option: any): any {
   // 深拷贝避免修改原始配置，使用安全拷贝方法
   const normalized = safeDeepClone(option)
 
-  // 🔧 新增：清理标题中的 Markdown 符号
+  // 🔧 新增：清理标题中�?Markdown 符号
   if (normalized.title?.text) {
     normalized.title.text = cleanMarkdownSymbols(normalized.title.text)
   }
 
-  // 修复：如果有 grid 配置，强制修正可能导致截断的值
+  // 修复：如果有 grid 配置，强制修正可能导致截断的�?
   if (normalized.grid) {
     if (Array.isArray(normalized.grid)) {
       normalized.grid.forEach((g: any) => {
-        // 强制设置合理值，防止图表被截断
+        // 强制设置合理值，防止图表被截�?
         g.left = '15%'
         g.right = '5%'
         g.bottom = '10%'
@@ -669,7 +650,7 @@ function normalizeEChartsOption(option: any): any {
 
 // 渲染图表
 function renderChart(chart: StepChartData, description?: string) {
-  // 🔧 新增：调试日志
+  // 🔧 新增：调试日�?
   console.log('[ProcessingSteps] renderChart 调用，chart 数据:', {
     has_echarts_option: !!chart.echarts_option,
     has_chart_image: !!chart.chart_image,
@@ -677,7 +658,7 @@ function renderChart(chart: StepChartData, description?: string) {
     title: chart.title,
   })
 
-  // 图表说明文字（显示在图表上方）
+  // 图表说明文字（显示在图表上方�?
   const descriptionElement = description && description.trim() && (
     <div className="mb-2 p-3 rounded-md bg-primary/5 border border-primary/20">
       <div className="text-xs font-medium text-primary mb-1">图表说明</div>
@@ -688,8 +669,8 @@ function renderChart(chart: StepChartData, description?: string) {
   )
 
   if (chart.echarts_option) {
-    console.log('[ProcessingSteps] ✅ 使用 echarts_option 渲染图表')
-    // 规范化配置，确保坐标轴标签完整显示
+    console.log('[ProcessingSteps] �?使用 echarts_option 渲染图表')
+    // 规范化配置，确保坐标轴标签完整显�?
     const normalizedOption = normalizeEChartsOption(chart.echarts_option)
 
     return (
@@ -737,9 +718,9 @@ function renderChart(chart: StepChartData, description?: string) {
     )
   }
 
-  // 🔧 计划修复4：图表配置存在但渲染失败时显示错误提示
+  // 🔧 计划修复4：图表配置存在但渲染失败时显示错误提�?
   if (chart && !chart.echarts_option && !chart.chart_image) {
-    console.warn('[ProcessingSteps] ⚠️ 图表配置存在但无可渲染内容:', chart)
+    console.warn('[ProcessingSteps] ⚠️ 图表配置存在但无可渲染内�?', chart)
     return (
       <div className="mt-2 p-3 rounded-md bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700">
         <div className="text-xs text-yellow-700 dark:text-yellow-300">
@@ -752,13 +733,13 @@ function renderChart(chart: StepChartData, description?: string) {
   return null
 }
 
-// 🔧 新增：将图表和表格合并渲染到同一个"可视化数据"区域
+// 🔧 新增：将图表和表格合并渲染到同一�?可视化数�?区域
 function renderVisualization(
   chart: StepChartData | null,
   table: StepTableData | null,
   description?: string
 ) {
-  // 🔧 新增：调试日志
+  // 🔧 新增：调试日�?
   console.log('[ProcessingSteps] renderVisualization 调用:', {
     has_chart: !!chart,
     has_table: !!table,
@@ -817,21 +798,23 @@ function renderVisualization(
           <thead className="bg-muted sticky top-0 z-10">
             <tr>
               {table.columns.slice(0, 10).map(col => (
-                <th key={col} className="px-3 py-2 border-b border-border text-left font-medium text-foreground whitespace-nowrap bg-muted">{col}</th>
+                <th key={col} className="px-3 py-2 border-b border-border text-left font-medium text-foreground whitespace-nowrap bg-muted">
+                  {friendlyFieldName(col)}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {table.rows.slice(0, 20).map((row, rowIndex) => {
-              // 🔧 修复：支持两种 rows 格式
-              // 格式1: 数组格式 [[val1, val2], ...] - 后端 execute_query 返回的格式
-              // 格式2: 对象格式 [{col1: val1, col2: val2}, ...] - 某些其他来源的格式
+              // 🔧 修复：支持两�?rows 格式
+              // 格式1: 数组格式 [[val1, val2], ...] - 后端 execute_query 返回的格�?
+              // 格式2: 对象格式 [{col1: val1, col2: val2}, ...] - 某些其他来源的格�?
               const isArrayRow = Array.isArray(row)
               
               return (
                 <tr key={rowIndex} className="odd:bg-card even:bg-muted hover:bg-primary/5">
                   {table.columns.slice(0, 10).map((col, colIndex) => {
-                    // 如果 row 是数组，使用索引访问；如果是对象，使用列名访问
+                    // 如果 row 是数组，使用索引访问；如果是对象，使用列名访�?
                     const rawValue = isArrayRow ? row[colIndex] : row[col]
                     const formatted = rawValue !== undefined && rawValue !== null
                       ? formatNumeric(rawValue, { thousandSeparator: false })
@@ -889,7 +872,7 @@ function renderVisualization(
             {table && '数据表格'}{table && chartElementWithTitle && ' + '}{chartElementWithTitle && '图表分析'}
           </span>
         </div>
-        {/* 先显示表格数据，再显示图表 */}
+        {/* 先显示表格数据，再显示图�?*/}
         {tableElement}
         {chartElementWithTitle}
       </div>
@@ -898,35 +881,31 @@ function renderVisualization(
 }
 
 /**
- * 🆕 过滤技术性步骤，只展示业务相关步骤
+ * 🆕 过滤技术性步骤，只展示业务相关步�?
  *
  * 需要隐藏的技术性步骤（内部实现细节）：
  * - list_tables: 获取表列表（元数据操作）
  * - get_schema: 获取表结构（元数据操作）
- * - connect_db: 连接数据库（基础设施）
+ * - connect_db: 连接数据库（基础设施�?
  * - validate_query: SQL验证（内部校验）
- * - 调用工具: 所有工具调用步骤
+ * - 调用工具: 所有工具调用步�?
  *
- * 更新：扩展隐藏关键词列表，包含更多技术细节步骤
+ * 更新：扩展隐藏关键词列表，包含更多技术细节步�?
  */
 function filterTechnicalSteps(steps: ProcessingStep[]): ProcessingStep[] {
-  // 需要隐藏的步骤标题关键词（这些是技术实现细节，用户不需要看到）
   const HIDDEN_STEP_KEYWORDS = [
-    // 原有关键词
     'list_tables',
     'get_schema',
     'get_recommended_tables',
-    '获取表列表',
+    '获取表列',
     '获取表结构',
-    '连接数据库',
-    'SQL验证',
+    '连接数据源',
+    'sql验证',
     'validate_query',
     '元数据获取',
-    'Schema检索',
-    // 🆕 新增：根据截图实际标题（计划修复1）
-    '列出数据库表',           // 截图中的实际标题
-    '获取数据库结构',         // 截图中的实际标题
-    // 🆕 新增：过滤重复的技术步骤
+    'schema检索',
+    '列出数据库表',
+    '获取数据库结构',
     '数据源连接中',
     '模式加载中',
     '知识库查询中',
@@ -943,22 +922,19 @@ function filterTechnicalSteps(steps: ProcessingStep[]): ProcessingStep[] {
     '准备中',
   ]
 
-  // 🆕 需要去重的步骤关键词（相同标题只保留最后一个 completed 状态）
   const DUPLICATE_STEP_KEYWORDS = [
-    'SQL生成中',
-    '生成SQL中',
-    '执行查询中',
-    '数据分析中',
-    '处理中',
-    '生成中',
-    '查询结果',  // 🆕 计划修复3：合并重复的"查询结果"步骤
+    'sql生成',
+    '生成sql',
+    '执行查询',
+    '数据分析',
+    '处理',
+    '生成',
+    '查询结果',
   ]
 
-  // 第一步：过滤掉技术性步骤
   let filtered = steps.filter(step => {
     const titleLower = (step.title || '').toLowerCase()
 
-    // 🔧 计划修复5：明确保留图表和可视化相关步骤
     const isChartStep = (
       titleLower.includes('图表') ||
       titleLower.includes('可视化') ||
@@ -975,12 +951,10 @@ function filterTechnicalSteps(steps: ProcessingStep[]): ProcessingStep[] {
       return true
     }
 
-    // 🆕 计划修复2：通用过滤 - 所有以"调用工具:"开头的步骤都隐藏
     if (titleLower.startsWith('调用工具:') || titleLower.startsWith('调用工具：')) {
       return false
     }
 
-    // 检查是否是隐藏的技术性步骤
     const isHidden = HIDDEN_STEP_KEYWORDS.some(keyword =>
       titleLower.includes(keyword.toLowerCase())
     )
@@ -988,67 +962,52 @@ function filterTechnicalSteps(steps: ProcessingStep[]): ProcessingStep[] {
     return !isHidden
   })
 
-  // 🆕 第二步：去重逻辑 - 相同标题的步骤只保留最后一个（特别是 completed 状态的）
   const stepMap = new Map<string, ProcessingStep>()
 
   for (const step of filtered) {
     const title = step.title || ''
-    // 检查是否是需要去重的步骤类型
+    const titleLower = title.toLowerCase()
     const isDuplicateType = DUPLICATE_STEP_KEYWORDS.some(keyword =>
-      title.includes(keyword)
+      titleLower.includes(keyword.toLowerCase())
     )
 
     if (isDuplicateType) {
-      // 对于需要去重的步骤，总是用新的覆盖旧的（保留最后一个）
-      // 🆕 计划修复3：对于"查询结果"步骤，优先保留有数据的
-      const existing = stepMap.get(title)
-      if (title.includes('查询结果')) {
+      const existing = stepMap.get(titleLower)
+      if (titleLower.includes('查询结果')) {
         const existingRowCount = existing?.content_data?.table?.row_count ?? 0
         const currentRowCount = step?.content_data?.table?.row_count ?? 0
         const existingHasData = existingRowCount > 0
         const currentHasData = currentRowCount > 0
         if (currentHasData || !existingHasData) {
-          stepMap.set(title, step)
+          stepMap.set(titleLower, step)
         }
       } else {
-        stepMap.set(title, step)
+        stepMap.set(titleLower, step)
       }
     } else {
-      // 对于不需要去重的步骤，使用 step + title 作为唯一键
       const uniqueKey = `${step.step}_${title}`
       stepMap.set(uniqueKey, step)
     }
   }
 
-  // 转换回数组
   filtered = Array.from(stepMap.values())
-
-  // 第三步：按步骤号排序
   filtered.sort((a, b) => a.step - b.step)
 
-  // 重新编号步骤，使其连续
-  return filtered.map((step, index) => ({
-    ...step,
-    step: index + 1, // 重新编号从1开始
-  }))
+  return filtered
 }
 
-/**
- * 过滤硬编码的示例内容（通过特征指纹识别）
- * 只过滤包含特定硬编码数值的段落
- */
 function filterExampleContent(text: string): string {
   // 硬编码示例内容的特征指纹（这些数值不会出现在真实数据中）
   const EXAMPLE_FINGERPRINTS = [
     '11.53亿元',      // 硬编码的年度销售额
     '9,610万元',      // 硬编码的月均销售额
-    '约1.10亿元',     // 硬编码的峰值
+    '�?.10亿元',     // 硬编码的峰�?
   ]
 
-  // 按段落分割
+  // 按段落分�?
   const paragraphs = text.split(/\n\n+/)
 
-  // 只过滤包含特征指纹的段落，其他段落保留
+  // 只过滤包含特征指纹的段落，其他段落保�?
   const filtered = paragraphs
     .filter(para => {
       return !EXAMPLE_FINGERPRINTS.some(fingerprint =>
@@ -1070,10 +1029,10 @@ function filterMarkdownLeaks(text: string): string {
   const lines = text.split('\n')
   const filteredLines: string[] = []
 
-  // 源码泄露检测模式
+  // 源码泄露检测模�?
   const LEAK_PATTERNS = [
     /^#{2,}\s+\w+.*#{2,}\s*[📊📈📉💼🔍]/,  // 多级标题 + emoji
-    /^#{2,}\s+202[0-9]年.*#{2,}/,             // 年份标题组合
+    /^#{2,}\s+202[0-9].*#{2,}/,             // 年份标题组合
     /^##\s+.*###\s*$/,                        // 任意 ##...### 模式
     /^(##|###)\s+.*\1\s+/,                   // 重复标题标记
     /^(##|###)\s.*(数据概览|趋势分析|📊)/,   // 特征词汇组合
@@ -1094,13 +1053,13 @@ function filterMarkdownLeaks(text: string): string {
  * 🆕 过滤详细数据分析模块
  * 隐藏数据概览、数值统计、数据预览等技术细节，只保留简洁的分析总结
  *
- * 需要过滤的区块：
+ * 需要过滤的区块�?
  * - 📈 数据概览
- * - 🔢 数值统计
+ * - 🔢 数值统�?
  * - 📋 数据预览
- * - 返回 X 条记录
- * - 包含 X 个字段
- * - 各字段统计信息
+ * - 返回 X 条记�?
+ * - 包含 X 个字�?
+ * - 各字段统计信�?
  */
 function filterDetailedAnalysis(text: string): string {
   if (!text) return text
@@ -1125,15 +1084,15 @@ function filterDetailedAnalysis(text: string): string {
   const DETAIL_LINE_PATTERNS = [
     /^•\s+返回\s+\d+\s+条记录/,
     /^•\s+包含\s+\d+\s+个字段/,
-    /^•\s+\w+:\s+最小=.*,\s+最大=.*,\s+平均=/,
-    /^\s*\w+:\s*最小=.*,\s*最大=/,
+    /^•\s+\w+:\s+最小.*,\s+最大.*,\s+平均=/,
+    /^\s*\w+:\s*最小.*,\s*最大.*/,
     /^\s*总记录数:/,
     /^\s*字段列表:/,
   ]
 
   for (const line of lines) {
     const trimmed = line.trim()
-    const originalLine = line  // 保留原始行（包括缩进）
+    const originalLine = line  // 保留原始行（包括缩进�?
 
     // 检查是否进入需要跳过的区块
     const isSectionStart = SECTION_START_PATTERNS.some(pattern => pattern.test(trimmed))
@@ -1148,22 +1107,22 @@ function filterDetailedAnalysis(text: string): string {
       continue
     }
 
-    // 遇到新的主要区块时停止跳过（如"📊 可视化"、"## 分析结论"等）
+    // 遇到新的主要区块时停止跳过（�?📊 可视�?�?## 分析结论"等）
     if (skipSection) {
       if (/^(📊|##\s|###\s|^分析结论|^数据洞察)/.test(trimmed)) {
         skipSection = false
       } else {
-        continue  // 跳过当前行
+        continue  // 跳过当前�?
       }
     }
 
     filteredLines.push(originalLine)
   }
 
-  // 清理多余的空行
+  // 清理多余的空�?
   const result = filteredLines
     .join('\n')
-    .replace(/\n{3,}/g, '\n\n')  // 最多保留两个连续换行
+    .replace(/\n{3,}/g, '\n\n')  // 最多保留两个连续换�?
     .trim()
 
   return result
@@ -1206,7 +1165,7 @@ function renderStepContent(step: ProcessingStep, outputFormat: 'markdown' | 'pla
             {suggestion && (
               <div className="mt-2 p-2 bg-red-100 rounded border border-red-300">
                 <div className="text-xs font-medium text-red-800 mb-1 flex items-center gap-1">
-                  💡 修复建议：
+                  💡 修复建议�?
                 </div>
                 <p className="text-xs text-red-700 whitespace-pre-wrap leading-relaxed">{suggestion}</p>
               </div>
@@ -1217,7 +1176,7 @@ function renderStepContent(step: ProcessingStep, outputFormat: 'markdown' | 'pla
       break
     case 'text':
       if (step.content_data.text) {
-        // 🔧 先应用详细分析过滤，再应用 Markdown 源码泄露过滤
+        // 🔧 先应用详细分析过滤，再应�?Markdown 源码泄露过滤
         const detailFiltered = filterDetailedAnalysis(step.content_data.text)
         const filteredText = filterMarkdownLeaks(detailFiltered)
         return (
@@ -1235,13 +1194,13 @@ function renderStepContent(step: ProcessingStep, outputFormat: 'markdown' | 'pla
         // 🔧 先应用详细分析过滤，再过滤硬编码示例内容
         const detailFiltered = filterDetailedAnalysis(step.content_data.text)
         const filteredText = filterExampleContent(detailFiltered)
-        const isLoading = step.status === 'running'  // 新增：检测加载状态
+        const isLoading = step.status === 'running'  // 新增：检测加载状�?
 
         return outputFormat === 'plain' ? (
           <PlainText
             content={filteredText}
             className="text-sm leading-relaxed"
-            isLoading={isLoading}  // 新增：传递加载状态
+            isLoading={isLoading}  // 新增：传递加载状�?
           />
         ) : (
           <Markdown content={filteredText} className="text-sm prose-base" />
@@ -1258,19 +1217,19 @@ interface RenderStepContentOptions {
   step: ProcessingStep
   chartDescriptions: string[]
   chartIndex: number
-  summary?: string  // 数据分析总结（非图表部分）
-  step6Table?: StepTableData | null  // 🔧 步骤6的表格数据，用于与图表合并显示
+  summary?: string  // 数据分析总结（非图表部分�?
+  step6Table?: StepTableData | null  // 🔧 步骤6的表格数据，用于与图表合并显�?
   outputFormat?: 'markdown' | 'plain'
 }
 
 function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex, summary, step6Table, outputFormat = 'markdown' }: RenderStepContentOptions) {
   if (!step.content_type || !step.content_data) return null
 
-  // 🔧 修改：任何图表类型的步骤都使用 renderVisualization 合并表格和图表（不再检查固定步骤号）
+  // 🔧 修改：任何图表类型的步骤都使�?renderVisualization 合并表格和图表（不再检查固定步骤号�?
   if (step.content_type === 'chart') {
     const description = chartDescriptions[chartIndex]
 
-    // 🔧 修复：兼容两种数据格式
+    // 🔧 修复：兼容两种数据格�?
     // 格式1: { content_data: { chart: { echarts_option: {...} } } }
     // 格式2: { content_data: { chart: {...} } }  (chart 本身就是 echarts_option)
     const stepLevelChart = (step as any).echarts_option
@@ -1280,18 +1239,18 @@ function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex
     const chartToRender: StepChartData = {}
 
     // 如果 contentChart 本身就是 ECharts 配置（有 title/xAxis/yAxis/series 等字段）
-    // 使用浅拷贝将其包装到 echarts_option 中
+    // 使用浅拷贝将其包装到 echarts_option �?
     if (contentChart && !contentChart.echarts_option) {
       const hasEChartsFields = contentChart.title || contentChart.xAxis ||
                               contentChart.yAxis || contentChart.series ||
                               contentChart.legend || contentChart.grid ||
                               contentChart.tooltip || contentChart.dataset
       if (hasEChartsFields) {
-        chartToRender.echarts_option = { ...contentChart }  // 浅拷贝打破循环
+        chartToRender.echarts_option = { ...contentChart }  // 浅拷贝打破循�?
       }
     }
 
-    // 如果 contentChart 已经有 echarts_option，直接使用
+    // 如果 contentChart 已经�?echarts_option，直接使�?
     if (contentChart?.echarts_option && !chartToRender.echarts_option) {
       chartToRender.echarts_option = contentChart.echarts_option
     }
@@ -1307,25 +1266,62 @@ function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex
     }
 
     if (chartToRender && (chartToRender.echarts_option || chartToRender.chart_image)) {
-      // 使用新的 renderVisualization 函数合并图表和表格
+      // 使用新的 renderVisualization 函数合并图表和表�?
       return renderVisualization(chartToRender, step6Table || null, description)
     }
   }
 
-  // 如果是数据分析步骤（text类型），显示总结部分（如果有）
-  // 优先检查 message/title 是否包含"数据分析"，兜底检查步骤号8（向后兼容）
+  // 如果是数据分析步骤（text类型），显示总结部分（如果有�?
+  // 优先检�?message/title 是否包含"数据分析"，兜底检查步骤号8（向后兼容）
   const isDataAnalysisStep = (
     (step.message === '数据分析' || step.title === '数据分析') ||
     step.step === 8
   ) && step.content_type === 'text'
 
   if (isDataAnalysisStep) {
-    // 如果有总结（summary），显示总结；否则显示过滤后的原始文本
+    // 如果有总结（summary），显示总结；否则显示过滤后的原始文�?
     let textToShow = summary && summary.trim() ? summary : step.content_data.text
 
     // 🔧 应用详细分析过滤（如果使用的是原始文本）
     if (!summary || !summary.trim()) {
       textToShow = filterDetailedAnalysis(step.content_data.text || '')
+    }
+
+    // 🔧 数据时间跨度提示：若仅包含到 11 月且缺少 12 月，则补充说明
+    const shouldAddDecemberNote = (() => {
+      if (!step6Table || !step6Table.columns || !step6Table.rows) return false
+      const monthColIndex = step6Table.columns.findIndex(col => {
+        if (typeof col !== 'string') return false
+        const lower = col.toLowerCase()
+        return lower.includes('month') || col.includes('月份')
+      })
+      if (monthColIndex === -1) return false
+
+      const parseMonth = (val: any): number | null => {
+        if (val === undefined || val === null) return null
+        if (typeof val === 'number') return val
+        const str = String(val)
+        const ym = str.match(/20\d{2}[-/](1[0-2]|0?[1-9])/)
+        if (ym) return parseInt(ym[1], 10)
+        const zh = str.match(/(1[0-2]|0?[1-9])\s*月/)
+        if (zh) return parseInt(zh[1], 10)
+        const pure = str.match(/^(1[0-2]|0?[1-9])$/)
+        if (pure) return parseInt(pure[1], 10)
+        return null
+      }
+
+      const monthValues = step6Table.rows
+        .map(row => Array.isArray(row) ? row[monthColIndex] : (row as any)[step6Table.columns[monthColIndex]])
+        .map(parseMonth)
+        .filter((m): m is number => typeof m === 'number' && m >= 1 && m <= 12)
+
+      if (monthValues.length === 0) return false
+      const maxMonth = Math.max(...monthValues)
+      return maxMonth === 11 && !monthValues.includes(12)
+    })()
+
+    if (shouldAddDecemberNote && textToShow && !textToShow.includes('12月数据暂缺')) {
+      textToShow = `${textToShow.trim()}\n\n注：12月数据暂缺或尚未产生。`
     }
 
     if (!textToShow) return null
@@ -1356,27 +1352,27 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
     setIsExpanded(prev => !prev)
   }, [])
 
-  // 🔧 第三次修复：详细的调试日志
+  // 🔧 第三次修复：详细的调试日�?
   console.log('[ProcessingSteps] 🔧 渲染，steps:', steps?.map(s => ({ step: s.step, status: s.status, title: s.title?.substring(0, 20) })))
   console.log('[ProcessingSteps] 🔧 completedSteps:', steps?.filter(s => s.status === 'completed').length, '/', steps?.length)
 
   if (!steps || steps.length === 0) return null
 
-  // 🆕 过滤技术性步骤，只展示业务相关步骤
+  // 🆕 过滤技术性步骤，只展示业务相关步�?
   const filteredSteps = useMemo(
     () => mergeSimilarTableSteps(filterTechnicalSteps(steps)),
     [steps]
   )
 
-  // 如果过滤后没有步骤，不渲染
+  // 如果过滤后没有步骤，不渲�?
   if (filteredSteps.length === 0) return null
 
   // 🔧 新增：提取和配对图表说明
-  // 1. 查找数据分析文本步骤（动态查找最后一个 content_type === 'text' 的步骤）
-  // 优先查找 message/title 包含"数据分析"的步骤，否则查找最后一个 text 类型步骤
+  // 1. 查找数据分析文本步骤（动态查找最后一�?content_type === 'text' 的步骤）
+  // 优先查找 message/title 包含"数据分析"的步骤，否则查找最后一�?text 类型步骤
   const analysisStep = useMemo(
     () => {
-      // 优先查找明确标记为"数据分析"的步骤
+      // 优先查找明确标记�?数据分析"的步�?
       const dataAnalysisStep = filteredSteps.find(s =>
         (s.message === '数据分析' || s.title === '数据分析') &&
         s.content_type === 'text' &&
@@ -1384,7 +1380,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
       )
       if (dataAnalysisStep) return dataAnalysisStep
 
-      // 兜底：查找最后一个 text 类型的步骤（通常是数据分析）
+      // 兜底：查找最后一�?text 类型的步骤（通常是数据分析）
       const textSteps = filteredSteps.filter(s => s.content_type === 'text' && s.content_data?.text)
       return textSteps.length > 0 ? textSteps[textSteps.length - 1] : null
     },
@@ -1392,13 +1388,13 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
   )
   const analysisText = analysisStep?.content_data?.text || ''
 
-  // 2. 解析文本：提取总结和图表说明
+  // 2. 解析文本：提取总结和图表说�?
   const { summary, chartDescriptions } = useMemo(
     () => parseAnalysisText(analysisText),
     [analysisText]
   )
 
-  // 🔧 修改：按内容类型提取表格数据（不再依赖固定步骤号）- 使用过滤后的步骤
+  // 🔧 修改：按内容类型提取表格数据（不再依赖固定步骤号�? 使用过滤后的步骤
   // 找到最后一个包含表格数据的步骤
   const tableDataStep = useMemo(() => {
     const tableSteps = filteredSteps.filter(s => s.content_type === 'table' && s.content_data?.table)
@@ -1409,12 +1405,12 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
     return tableSteps.length > 0 ? tableSteps[tableSteps.length - 1] : null
   }, [filteredSteps])
   const tableData = tableDataStep?.content_data?.table || null
-  console.log('[ProcessingSteps] 提取的表格数据:', tableData ? `${tableData.row_count} 行 x ${tableData.columns?.length} 列` : 'null')
+  console.log('[ProcessingSteps] 提取的表格数�?', tableData ? `${tableData.row_count} �?x ${tableData.columns?.length} 列` : 'null')
 
-  // 🔧 新增：如果没有找到表格数据但有步骤，打印所有步骤详情用于诊断
+  // 🔧 新增：如果没有找到表格数据但有步骤，打印所有步骤详情用于诊�?
   useEffect(() => {
     if (!tableData && filteredSteps.length > 0) {
-      console.warn('[ProcessingSteps] ⚠️ 没有找到表格数据，所有步骤详情:', filteredSteps.map(s => ({
+      console.warn('[ProcessingSteps] ⚠️ 没有找到表格数据，所有步骤详�?', filteredSteps.map(s => ({
         step: s.step,
         title: s.title,
         content_type: s.content_type,
@@ -1426,7 +1422,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
     }
   }, [filteredSteps, tableData])
 
-  // 🔧 修改：按内容类型检测是否有图表（不再依赖固定步骤号）- 使用过滤后的步骤
+  // 🔧 修改：按内容类型检测是否有图表（不再依赖固定步骤号�? 使用过滤后的步骤
   const hasChart = useMemo(() => {
     return filteredSteps.some(s => s.content_type === 'chart' && s.content_data?.chart)
   }, [filteredSteps])
@@ -1440,7 +1436,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
     return { totalDuration, completedSteps, hasError, isRunning }
   }, [filteredSteps])
 
-  // 4. 使用 useMemo 缓存容器类名 - DataLab 玻璃态风格
+  // 4. 使用 useMemo 缓存容器类名 - DataLab 玻璃态风�?
   const containerClassName = useMemo(
     () => cn(
       'mt-4 rounded-2xl border overflow-hidden shadow-lg',
@@ -1452,7 +1448,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
     [stats.hasError, stats.isRunning, className]
   )
 
-  // 5. 使用 useMemo 缓存标题栏类名 - Tiffany 色系
+  // 5. 使用 useMemo 缓存标题栏类�?- Tiffany 色系
   const headerClassName = useMemo(
     () => cn(
       'w-full px-4 py-3 flex items-center justify-between text-sm font-semibold',
@@ -1466,7 +1462,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
 
   return (
     <div className={containerClassName}>
-      {/* 标题栏 */}
+      {/* 标题�?*/}
       <button
         onClick={handleToggle}
         className={headerClassName}
@@ -1483,7 +1479,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
             Reasoning Process
             <span className="ml-2 text-xs font-normal opacity-75 font-mono">
               ({stats.completedSteps}/{filteredSteps.length} steps
-              {stats.totalDuration > 0 && ` • ${formatDuration(stats.totalDuration)}`})
+              {stats.totalDuration > 0 && ` · ${formatDuration(stats.totalDuration)}`})
             </span>
           </span>
         </div>
@@ -1494,7 +1490,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
         )}
       </button>
 
-      {/* Tiffany 渐变进度条 - 更细更精致 */}
+      {/* Tiffany 渐变进度�?- 更细更精�?*/}
       <div className="px-4 pb-3">
         <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden shadow-inner">
           <div
@@ -1517,24 +1513,24 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
       {isExpanded && (
         <div className="px-3 pb-3 space-y-2">
           {(() => {
-            // 🔧 在 map 外部维护图表索引计数器
+            // 🔧 �?map 外部维护图表索引计数�?
             let currentChartIndex = 0
 
             return filteredSteps.map((step, index) => {
-              // 🔧 重构：支持多图表 - 使用 step号 + chart_index 作为唯一key
+              // 🔧 重构：支持多图表 - 使用 step�?+ chart_index 作为唯一key
               const chartIndexAttr = step.content_data?.chart?.chart_index
               const uniqueKey = chartIndexAttr !== undefined
                 ? `step-${step.step}-chart-${chartIndexAttr}`
                 : `step-${step.step || index}`
 
-              // 🔧 修改：按内容类型计算图表索引（不再依赖固定步骤号）
+              // 🔧 修改：按内容类型计算图表索引（不再依赖固定步骤号�?
               let thisChartIndex = currentChartIndex
               if (step.content_type === 'chart') {
                 thisChartIndex = currentChartIndex
                 currentChartIndex++  // 为下一个图表递增索引
               }
 
-              // 🔧 修改：按内容类型判断，如果有表格数据且有图表，则跳过表格步骤的独立渲染
+              // 🔧 修改：按内容类型判断，如果有表格数据且有图表，则跳过表格步骤的独立渲�?
               const shouldSkipTableStep = step.content_type === 'table' && hasChart
 
               return (
@@ -1572,7 +1568,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
                     )}
 
                     {/* 🔧 实时内容预览（当步骤正在运行时），支持打字机光标效果 */}
-                    {/* 🔧 修改：步骤0即使在 completed 状态也显示 content_preview（用于显示临时内容） */}
+                    {/* 🔧 修改：步�?即使�?completed 状态也显示 content_preview（用于显示临时内容） */}
                     {(step.status === 'running' || (step.step === 0 && step.content_preview)) && step.content_preview && (
                       <div className="mt-2 p-2 rounded-md bg-primary/10 border border-primary/30">
                         <div className="flex items-center gap-1.5 mb-1">
@@ -1598,8 +1594,8 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
                       </div>
                     )}
 
-                    {/* 🔧 渲染步骤内容（使用配对版本的函数） */}
-                    {/* 🔧 步骤6表格在有步骤7图表时跳过（会合并到步骤7显示） */}
+                    {/* 🔧 渲染步骤内容（使用配对版本的函数�?*/}
+                    {/* 🔧 步骤6表格在有步骤7图表时跳过（会合并到步骤7显示�?*/}
                     {!shouldSkipTableStep && renderStepContentWithDescriptions({
                       step,
                       chartDescriptions,
@@ -1609,7 +1605,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
                       outputFormat
                     })}
 
-                  {/* 详情（如SQL内容） - 仅当没有content_type时显示 */}
+                  {/* 详情（如SQL内容�?- 仅当没有content_type时显�?*/}
                   {step.details && !step.content_type && (
                     <details className="mt-1">
                       <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
@@ -1631,4 +1627,6 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
     </div>
   )
 })
+
+
 
