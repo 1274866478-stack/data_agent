@@ -329,3 +329,9 @@ charts/
 !frontend/public/**/*.png
 !frontend/public/**/*.jpg
 !frontend/public/**/*.jpeg
+# Refactor backups
+.backup_refactor_*/
+
+# Refactor metadata
+scripts/refactor/file_mappings.json
+scripts/refactor/refactor_log_*.txt
