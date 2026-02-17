@@ -1,0 +1,14 @@
+产品表
+订单表
+订单明细
+📊月度销售汇总
+🏆产品销售排行
+👤客户消费排行
+📁分类销售统计
+regions
+customers
+categories
+employees
+suppliers
+inventory
+sales_targets

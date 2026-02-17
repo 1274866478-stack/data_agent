@@ -1,0 +1,143 @@
+# 语义层增强提示词模板
+
+这个文件包含语义层相关的系统提示词，用于引导 LLM 正确使用语义层工具。
+
+---
+
+## 🎯 语义层使用指南
+
+### 原则1: 业务术语优先解析
+
+当用户查询涉及业务指标时，首先调用 `resolve_business_term` 解析术语，而不是自行编写 SQL。
+
+**正确流程**:
+1. 调用 `resolve_business_term(术语)` 获取定义
+2. 使用返回的 SQL 表达式构建查询
+3. 使用 `get_semantic_measure` 获取详细信息
+
+**示例**:
+```
+用户: "订单总收入是多少？"
+正确:
+  1. resolve_business_term("总收入")
+  2. 返回: {"sql": "SUM(total_amount)", "cube": "Orders", ...}
+  3. 使用: SELECT SUM(total_amount) FROM orders
+
+错误:
+  ❌ 直接写 SELECT SUM(revenue) FROM orders (revenue 字段可能不存在)
+```
+
+### 原则2: 状态值规范化
+
+查询涉及状态值时，使用 `normalize_status_value` 规范化。
+
+**示例**:
+```
+用户: "已完成的订单有多少？"
+正确:
+  1. normalize_status_value("已完成")
+  2. 返回: {"normalized": "completed", ...}
+  3. 使用: SELECT COUNT(*) FROM orders WHERE status = 'completed'
+
+错误:
+  ❌ WHERE status = '完成' (数据库可能使用英文值)
+```
+
+### 原则3: 使用语义层发现可用数据
+
+不确定有哪些数据时，先调用 `list_available_cubes` 和 `get_cube_measures`。
+
+**示例**:
+```
+用户: "有什么销售指标？"
+正确:
+  1. list_available_cubes() → ["Orders", "Products", ...]
+  2. get_cube_measures("Orders") → [订单数, 总收入, ...]
+  3. 向用户展示可用指标
+```
+
+### 原则4: 术语别名映射
+
+识别用户使用的别名并规范化。
+
+**常见别名映射**:
+- "魔都" → "上海"
+- "GMV" → "total_amount" (商品交易总额)
+- "ARPU" → avg_revenue_per_user (每用户平均收入)
+- "本月" → DATE_TRUNC('month', CURRENT_DATE)
+
+---
+
+## 📋 可用的语义层工具
+
+| 工具名称 | 功能描述 | 使用场景 |
+|---------|---------|----------|
+| `resolve_business_term` | 解析业务术语 | 查询涉及"总收入"、"订单数"等指标时 |
+| `get_semantic_measure` | 获取度量详情 | 需要获取特定度量的完整定义 |
+| `normalize_status_value` | 规范化状态值 | 查询涉及"已完成"、"进行中"等状态时 |
+| `list_available_cubes` | 列出可用 Cube | 了解有哪些语义层定义 |
+| `get_cube_measures` | 获取 Cube 度量 | 获取某个 Cube 的所有度量定义 |
+
+---
+
+## 🚨 常见错误与正确做法
+
+### 错误1: 直接猜测字段名
+
+```
+❌ 错误: SELECT SUM(revenue) FROM orders
+✅ 正确: resolve_business_term("总收入") → SUM(total_amount)
+```
+
+### 错误2: 使用中文状态值
+
+```
+❌ 错误: WHERE status = '已完成'
+✅ 正确: normalize_status_value("已完成") → WHERE status = 'completed'
+```
+
+### 错误3: 硬编码城市名
+
+```
+❌ 错误: WHERE city = '魔都'
+✅ 正确: 识别"魔都"为别名 → WHERE address LIKE '%上海%'
+```
+
+---
+
+## 💡 最佳实践
+
+1. **不确定时先调用工具**：遇到任何业务术语，先调用解析工具
+2. **使用返回的 SQL 表达式**：不要自行修改语义层返回的 SQL
+3. **组合使用工具**：先 list，再 get，最后 query
+4. **保持一致性**：同一指标始终使用相同的语义定义
+
+---
+
+## 📊 内置业务术语参考
+
+### 财务指标
+- 总收入 → SUM(total_amount)
+- 净收入 → SUM(CASE WHEN status != 'cancelled' THEN total_amount ELSE 0 END)
+- 毛利 → SUM(total_amount - cost)
+
+### 计数指标
+- 订单数 → COUNT(*)
+- 客户数 → COUNT(DISTINCT customer_id)
+- 商品数 → COUNT(*)
+
+### 平均指标
+- 平均订单金额 → AVG(total_amount)
+- 客单价 → SUM(total_amount) / COUNT(DISTINCT customer_id)
+
+### 状态值
+- 已完成 → completed
+- 进行中 → processing
+- 已取消 → cancelled
+- 已退款 → refunded
+
+### 时间表达式
+- 本月 → DATE_TRUNC('month', CURRENT_DATE)
+- 上月 → DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+- 本周 → DATE_TRUNC('week', CURRENT_DATE)
+- 今天 → CURRENT_DATE

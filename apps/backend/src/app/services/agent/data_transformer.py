@@ -37,8 +37,173 @@
 **依赖深度**: 2 层
 """
 from typing import List, Dict, Any, Tuple, Optional
+import re
 
 from .models import ChartConfig, ChartType
+
+
+def supplement_proportion_data(
+    sql_result: List[Dict[str, Any]],
+    sql: str = "",
+    user_query: str = ""
+) -> List[Dict[str, Any]]:
+    """
+    为占比类查询补全"其他"类别数据
+
+    当只有一个数据点时，自动添加"其他"类别使饼图完整。
+
+    Args:
+        sql_result: SQL 查询返回的字典列表
+        sql: SQL 查询语句（用于检测占比类查询）
+        user_query: 用户原始查询（用于检测占比类查询）
+
+    Returns:
+        补全后的数据列表
+
+    Example:
+        >>> result = [{"province": "安徽", "count": 42}]
+        >>> supplement_proportion_data(result, user_query="安徽省的客户占比是多少？")
+        [{"province": "安徽", "count": 42}, {"province": "其他", "count": 958}]  # 假设总数1000
+    """
+    if not sql_result or len(sql_result) != 1:
+        return sql_result
+
+    # 检测是否为占比类查询
+    proportion_keywords = ['占比', '比例', '分布', '多少']
+    combined_text = (sql + " " + user_query).lower()
+    if not any(kw in combined_text for kw in proportion_keywords):
+        return sql_result
+
+    row = sql_result[0]
+    columns = list(row.keys())
+
+    if len(columns) < 2:
+        return sql_result
+
+    # 找类别列和数值列
+    value_col = None
+    category_col = None
+    for col in columns:
+        val = row.get(col)
+        if isinstance(val, (int, float)):
+            value_col = col
+        else:
+            category_col = col
+
+    if not value_col or not category_col:
+        # 尝试按列名推断
+        for col in columns:
+            col_lower = col.lower()
+            if any(kw in col_lower for kw in ['count', 'num', 'amount', '值', '数', '量', 'percent', '%']):
+                value_col = col
+            else:
+                category_col = col
+
+    if not value_col or not category_col:
+        return sql_result
+
+    try:
+        current_value = float(row[value_col])
+    except (ValueError, TypeError):
+        return sql_result
+
+    # 🔧 修复：改进补集检测逻辑
+    # 无论数值大小，都需要补集
+    other_value = None
+
+    if current_value > 0:
+        # 判断是否可能是百分比
+        # 1. 检查列名是否包含百分比关键词
+        col_has_percent_hint = any(kw in value_col.lower() for kw in ['percent', 'ratio', 'proportion', '%', '率', '占比'])
+
+        # 2. 检查值是否在合理百分比范围内 (0-100 且不太接近整数计数)
+        # 小于1000可能是百分比或小计数，大于1000通常是计数
+        is_likely_percentage = col_has_percent_hint or (current_value <= 100 and current_value != int(current_value))
+
+        if is_likely_percentage:
+            # 如果是百分比，补齐100
+            if current_value < 100:
+                other_value = round(100 - current_value, 1)
+        else:
+            # 如果是计数，添加等量的"其他"作为示例
+            other_value = current_value
+
+        if other_value and other_value > 0:
+            other_row = {category_col: "其他", value_col: other_value}
+            # 保留原始行中的其他字段
+            for col in columns:
+                if col != category_col and col != value_col:
+                    other_row[col] = row.get(col)
+            return sql_result + [other_row]
+
+    return sql_result
+
+
+def _should_fill_missing_months(user_query: str) -> bool:
+    if not user_query:
+        return False
+    if any(kw in user_query for kw in ["按天", "每日", "每天", "按周", "每周", "周度", "日度", "最近一周", "近7天", "7天"]):
+        return False
+    has_year = bool(re.search(r"\b20\d{2}\b", user_query)) or any(
+        kw in user_query for kw in ["年", "年度", "今年", "去年", "前年"]
+    )
+    has_month_trend = any(
+        kw in user_query for kw in ["趋势", "按月", "月度", "每月", "月份"]
+    )
+    return has_year and has_month_trend
+
+
+def fill_missing_months(
+    sql_result: List[Dict[str, Any]],
+    x_field: Optional[str],
+    y_field: Optional[str],
+    user_query: str = ""
+) -> List[Dict[str, Any]]:
+    if not sql_result or not x_field or not y_field:
+        return sql_result
+    if not _should_fill_missing_months(user_query):
+        return sql_result
+
+    month_totals: Dict[str, float] = {}
+    years = set()
+    for row in sql_result:
+        raw_value = row.get(x_field)
+        if raw_value is None:
+            return sql_result
+        raw_text = str(raw_value)
+        match = re.search(r"(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?", raw_text)
+        if not match:
+            return sql_result
+        year = int(match.group(1))
+        month = int(match.group(2))
+        day = match.group(3)
+        if day and int(day) != 1:
+            return sql_result
+        years.add(year)
+        month_key = f"{year:04d}-{month:02d}"
+        try:
+            value = float(row.get(y_field, 0) or 0)
+        except (ValueError, TypeError):
+            value = 0.0
+        month_totals[month_key] = month_totals.get(month_key, 0.0) + value
+
+    query_year = re.search(r"\b(20\d{2})\b", user_query)
+    if query_year:
+        target_year = int(query_year.group(1))
+    elif len(years) == 1:
+        target_year = next(iter(years))
+    else:
+        return sql_result
+
+    filled = []
+    for month in range(1, 13):
+        month_key = f"{target_year:04d}-{month:02d}"
+        filled.append({
+            x_field: month_key,
+            y_field: month_totals.get(month_key, 0.0)
+        })
+
+    return filled
 
 
 def sql_result_to_echarts_data(
@@ -109,7 +274,9 @@ def sql_result_to_mcp_echarts_data(
     sql_result: List[Dict[str, Any]],
     chart_type: str = "bar",
     x_field: Optional[str] = None,
-    y_field: Optional[str] = None
+    y_field: Optional[str] = None,
+    sql: str = "",
+    user_query: str = ""
 ) -> Tuple[List[Dict[str, Any]], str, str]:
     """
     将 SQL 查询结果转换为 mcp-echarts 需要的格式
@@ -119,6 +286,8 @@ def sql_result_to_mcp_echarts_data(
         chart_type: 图表类型 ("bar", "pie", "line" 等)
         x_field: X轴/分类字段名（可选）
         y_field: Y轴/数值字段名（可选）
+        sql: SQL 查询语句（用于占比类查询检测）
+        user_query: 用户原始查询（用于占比类查询检测）
 
     Returns:
         (data, x_field_name, y_field_name) 元组
@@ -131,6 +300,10 @@ def sql_result_to_mcp_echarts_data(
         >>> data, x, y = sql_result_to_mcp_echarts_data(result, "bar")
         >>> print(data)  # [{"category": "技术部", "value": 45}]
     """
+    # 🔧 饼图数据补全：为占比类单点数据添加"其他"类别
+    if chart_type == "pie":
+        sql_result = supplement_proportion_data(sql_result, sql, user_query)
+
     if not sql_result:
         return [], "", ""
 
@@ -151,6 +324,9 @@ def sql_result_to_mcp_echarts_data(
     else:
         remaining = [c for c in columns if c != actual_x]
         actual_y = remaining[0] if remaining else columns[1]
+
+    if chart_type == "line":
+        sql_result = fill_missing_months(sql_result, actual_x, actual_y, user_query)
 
     # 根据图表类型转换数据格式
     data = []
@@ -264,7 +440,7 @@ def prepare_mcp_chart_request(
 ) -> Tuple[List[Dict[str, Any]], ChartConfig, Optional[Dict[str, Any]]]:
     """
     准备 ECharts MCP 的请求参数，并返回 ChartConfig 和 ECharts 选项
-    
+
     Args:
         sql_result: SQL 查询结果
         sql: SQL 语句
@@ -273,23 +449,53 @@ def prepare_mcp_chart_request(
         y_field: Y轴字段（可选）
         chart_type: 图表类型（可选，不传则自动推断）
         question: 用户原始问题（可选，用于更准确的图表类型推断）
-    
+
     Returns:
         (mcp_data, chart_config, echarts_option) 元组
         - mcp_data: mcp-echarts 格式的数据
         - chart_config: ChartConfig 对象
         - echarts_option: ECharts 配置选项（可选）
     """
+    # ========================================================================
+    # 🔥 字段验证：确保传入的字段存在于查询结果中
+    # ========================================================================
+    # 获取实际存在的列名
+    actual_columns = []
+    if sql_result and len(sql_result) > 0:
+        actual_columns = list(sql_result[0].keys())
+
+    # 验证 x_field 是否存在
+    if x_field and x_field not in actual_columns:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"⚠️ [字段验证] X轴字段 '{x_field}' 不存在于查询结果中。"
+            f"实际字段: {actual_columns}。将使用智能映射。"
+        )
+        x_field = None  # 清除无效字段，让 sql_result_to_mcp_echarts_data 自动选择
+
+    # 验证 y_field 是否存在
+    if y_field and y_field not in actual_columns:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"⚠️ [字段验证] Y轴字段 '{y_field}' 不存在于查询结果中。"
+            f"实际字段: {actual_columns}。将使用智能映射。"
+        )
+        y_field = None  # 清除无效字段，让 sql_result_to_mcp_echarts_data 自动选择
+
     # 推断图表类型（如果未指定）
     if not chart_type or chart_type in ("table", "none"):
         chart_type = infer_chart_type(sql, sql_result, question or "")
     
     # 转换数据
     mcp_data, actual_x, actual_y = sql_result_to_mcp_echarts_data(
-        sql_result, 
-        chart_type, 
-        x_field, 
-        y_field
+        sql_result,
+        chart_type,
+        x_field,
+        y_field,
+        sql,
+        question or ""
     )
     
     # 即使类型是 table，如果有数据也生成基础 ECharts 配置（用于前端展示）
@@ -495,4 +701,3 @@ def extract_simple_charts_from_text(text: str) -> List[Dict[str, Any]]:
             continue
 
     return charts
-

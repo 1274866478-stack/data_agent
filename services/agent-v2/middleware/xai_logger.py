@@ -10,12 +10,14 @@ XAI Logger Middleware - 可解释性日志中间件
     - 工具调用追踪
     - 决策点日志
     - 性能指标收集
+    - 双通道写入（数据库 + 文件）
 
+版本: 2.1.0 - 集成 AgentLogger 双通道写入
 作者: BMad Master
-版本: 2.0.0
 """
 
 import time
+import asyncio
 from typing import Any, Dict, List, Optional, Callable, Awaitable
 from dataclasses import dataclass, field
 
@@ -23,7 +25,8 @@ from dataclasses import dataclass, field
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langchain_core.messages.tool import ToolMessage
 from langgraph.types import Command
-from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse, ModelCallResult
+from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse, ModelCallResult, AgentState
+from langgraph.runtime import Runtime
 
 
 # ============================================================================
@@ -155,9 +158,10 @@ class XAILog:
 
 class XAILoggerMiddleware(AgentMiddleware):
     """
-    可解释性日志中间件
+    可解释性日志中间件（增强版）
 
     记录 AI 推理过程，提供完整的决策透明度。
+    支持双通道写入：数据库 + 文件。
 
     使用示例:
     ```python
@@ -165,7 +169,8 @@ class XAILoggerMiddleware(AgentMiddleware):
 
     middleware = XAILoggerMiddleware(
         session_id="session_123",
-        tenant_id="tenant_abc"
+        tenant_id="tenant_abc",
+        enable_persistence=True  # 启用持久化
     )
     ```
     """
@@ -176,7 +181,9 @@ class XAILoggerMiddleware(AgentMiddleware):
         tenant_id: str,
         enable_detailed_logging: bool = True,
         log_to_file: bool = False,
-        log_file_path: Optional[str] = None
+        log_file_path: Optional[str] = None,
+        enable_persistence: bool = True,  # 新增：启用持久化
+        user_id: Optional[str] = None
     ):
         """
         初始化 XAI 日志中间件
@@ -187,12 +194,16 @@ class XAILoggerMiddleware(AgentMiddleware):
             enable_detailed_logging: 是否启用详细日志
             log_to_file: 是否记录到文件
             log_file_path: 日志文件路径
+            enable_persistence: 是否启用持久化（双通道写入）
+            user_id: 用户 ID
         """
         self.session_id = session_id
         self.tenant_id = tenant_id
+        self.user_id = user_id
         self.enable_detailed_logging = enable_detailed_logging
         self.log_to_file = log_to_file
         self.log_file_path = log_file_path
+        self.enable_persistence = enable_persistence
 
         # 当前日志
         self._current_log: Optional[XAILog] = None
@@ -200,15 +211,226 @@ class XAILoggerMiddleware(AgentMiddleware):
         # 历史日志
         self._log_history: List[XAILog] = []
 
-    def pre_process(self, agent_input: Dict[str, Any]) -> Dict[str, Any]:
+        # AgentLogger 实例（用于持久化）
+        self._agent_logger = None
+
+        # 初始化 AgentLogger
+        if enable_persistence:
+            try:
+                from ..utils.agent_logger import AgentLogger
+                self._agent_logger = AgentLogger(
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    log_to_db=True,
+                    log_to_file=True
+                )
+            except ImportError:
+                # 如果无法导入，继续使用内存日志
+                pass
+
+    # ========================================================================
+    # DeepAgents 框架接口实现
+    # ========================================================================
+
+    def before_agent(self, state: AgentState, runtime: Runtime) -> Dict[str, Any] | None:
         """
-        在 Agent 执行前开始日志记录
+        在 Agent 执行前开始日志记录（同步版本）
+
+        这是 DeepAgents 框架的标准接口方法。
 
         Args:
-            agent_input: Agent 输入数据
+            state: Agent 状态（包含 messages 等信息）
+            runtime: 运行时上下文
 
         Returns:
-            处理后的输入数据
+            状态更新字典或 None
+        """
+        # 提取用户查询
+        messages = state.get("messages", [])
+        user_query = str(messages[-1]) if messages else ""
+
+        # 创建新的日志会话
+        self._current_log = XAILog(
+            session_id=self.session_id,
+            tenant_id=self.tenant_id,
+            user_query=user_query
+        )
+
+        # 记录初始步骤
+        self._current_log.add_reasoning_step(
+            description="接收用户查询",
+            input_data={"query": user_query}
+        )
+
+        # 🔧 同步版本：创建后台任务记录持久化日志
+        if self._agent_logger:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # 在运行的事件循环中创建后台任务
+                    asyncio.create_task(self._agent_logger.log_step(
+                        step=0,
+                        node="agent_start",
+                        message_type="agent_start",
+                        content={"user_query": user_query},
+                        raw_message=f"[Agent Start] Session: {self.session_id}, Query: {user_query[:100]}"
+                    ))
+            except RuntimeError:
+                # 没有事件循环，跳过持久化
+                pass
+
+        # 在状态中注入日志记录器引用
+        return {"__xai_logger__": self}
+
+    async def abefore_agent(
+        self, state: AgentState, runtime: Runtime
+    ) -> Dict[str, Any] | None:
+        """
+        在 Agent 执行前开始日志记录（异步版本）
+
+        这是 DeepAgents 框架的标准接口方法。
+
+        Args:
+            state: Agent 状态
+            runtime: 运行时上下文
+
+        Returns:
+            状态更新字典或 None
+        """
+        # 提取用户查询
+        messages = state.get("messages", [])
+        user_query = str(messages[-1]) if messages else ""
+
+        # 创建新的日志会话
+        self._current_log = XAILog(
+            session_id=self.session_id,
+            tenant_id=self.tenant_id,
+            user_query=user_query
+        )
+
+        # 记录初始步骤
+        self._current_log.add_reasoning_step(
+            description="接收用户查询",
+            input_data={"query": user_query}
+        )
+
+        # 持久化：记录开始日志
+        if self._agent_logger:
+            await self._agent_logger.log_step(
+                step=0,
+                node="agent_start",
+                message_type="agent_start",
+                content={"user_query": user_query},
+                raw_message=f"[Agent Start] Session: {self.session_id}, Query: {user_query[:100]}"
+            )
+
+        # 在状态中注入日志记录器引用
+        return {"__xai_logger__": self}
+
+    def after_agent(self, state: AgentState, runtime: Runtime) -> Dict[str, Any] | None:
+        """
+        在 Agent 执行后完成日志记录（同步版本）
+
+        这是 DeepAgents 框架的标准接口方法。
+
+        Args:
+            state: Agent 状态
+            runtime: 运行时上下文
+
+        Returns:
+            状态更新字典或 None
+        """
+        if self._current_log:
+            # 完成日志
+            self._current_log.finalize()
+
+            # 保存到历史
+            self._log_history.append(self._current_log)
+
+            # 可选：写入文件
+            if self.log_to_file and self.log_file_path:
+                self._write_to_file()
+
+            # 🔧 同步版本：创建后台任务记录结束日志并关闭
+            if self._agent_logger:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # 记录结束日志
+                        asyncio.create_task(self._agent_logger.log_step(
+                            node="agent_end",
+                            message_type="agent_end",
+                            content=self._extract_summary(),
+                            raw_message=f"[Agent End] Session: {self.session_id}, Steps: {len(self._current_log.reasoning_steps)}"
+                        ))
+                        # 创建关闭任务
+                        asyncio.create_task(self._flush_and_close())
+                except RuntimeError:
+                    # 没有事件循环，忽略
+                    pass
+
+        # 返回日志摘要
+        return {"__xai_log__": self._extract_summary()}
+
+    async def aafter_agent(
+        self, state: Dict[str, Any], runtime: Any
+    ) -> Dict[str, Any] | None:
+        """
+        在 Agent 执行后完成日志记录（异步版本）
+
+        这是 DeepAgents 框架的标准接口方法。
+
+        Args:
+            state: Agent 状态
+            runtime: 运行时上下文
+
+        Returns:
+            状态更新字典或 None
+        """
+        if self._current_log:
+            # 完成日志
+            self._current_log.finalize()
+
+            # 保存到历史
+            self._log_history.append(self._current_log)
+
+            # 可选：写入文件
+            if self.log_to_file and self.log_file_path:
+                self._write_to_file()
+
+            # 🔧 异步版本：直接关闭持久化日志记录器
+            if self._agent_logger:
+                await self._agent_logger.log_step(
+                    node="agent_end",
+                    message_type="agent_end",
+                    content=self._extract_summary(),
+                    raw_message=f"[Agent End] Session: {self.session_id}, Steps: {len(self._current_log.reasoning_steps)}"
+                )
+                await self._agent_logger.close()
+
+        # 返回日志摘要
+        return {"__xai_log__": self._extract_summary()}
+
+    async def _flush_and_close(self):
+        """异步刷新并关闭日志记录器（用于后台任务）"""
+        if self._agent_logger:
+            try:
+                await self._agent_logger.close()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"关闭AgentLogger时出错: {e}")
+
+    # ========================================================================
+    # 向后兼容的接口（保留但不使用）
+    # ========================================================================
+
+    def pre_process(self, agent_input: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        向后兼容方法：在 Agent 执行前开始日志记录
+
+        .. deprecated::
+            请使用 before_agent/abefore_agent 代替。此方法仅为向后兼容保留。
         """
         # 创建新的日志会话
         self._current_log = XAILog(
@@ -230,13 +452,10 @@ class XAILoggerMiddleware(AgentMiddleware):
 
     def post_process(self, agent_output: Dict[str, Any]) -> Dict[str, Any]:
         """
-        在 Agent 执行后完成日志记录
+        向后兼容方法：在 Agent 执行后完成日志记录
 
-        Args:
-            agent_output: Agent 输出数据
-
-        Returns:
-            处理后的输出数据
+        .. deprecated::
+            请使用 after_agent/aafter_agent 代替。此方法仅为向后兼容保留。
         """
         if self._current_log:
             # 完成日志
@@ -252,6 +471,32 @@ class XAILoggerMiddleware(AgentMiddleware):
             if self.log_to_file and self.log_file_path:
                 self._write_to_file()
 
+            # 🔧 新增：关闭持久化日志记录器
+            if self._agent_logger:
+                try:
+                    # 尝试异步关闭
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # 创建后台任务关闭
+                        asyncio.create_task(self._flush_and_close())
+                    else:
+                        # 没有运行的事件循环，在后台线程中关闭
+                        import threading
+                        def close_logger():
+                            try:
+                                new_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(new_loop)
+                                new_loop.run_until_complete(self._agent_logger.close())
+                                new_loop.close()
+                            except Exception as e:
+                                import logging
+                                logging.getLogger(__name__).warning(f"关闭AgentLogger失败: {e}")
+                        thread = threading.Thread(target=close_logger, daemon=True)
+                        thread.start()
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(f"关闭AgentLogger时出错: {e}")
+
         return agent_output
 
     def log_tool_call(
@@ -262,7 +507,7 @@ class XAILoggerMiddleware(AgentMiddleware):
         success: bool = True,
         error_message: Optional[str] = None
     ):
-        """记录工具调用"""
+        """记录工具调用（同步版本）"""
         if self._current_log and self.enable_detailed_logging:
             self._current_log.add_tool_call(
                 tool_name=tool_name,
@@ -280,6 +525,28 @@ class XAILoggerMiddleware(AgentMiddleware):
                 output_data=output_data
             )
 
+            # 持久化写入 - 创建后台任务
+            if self._agent_logger:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # 在事件循环中运行，创建任务
+                        asyncio.create_task(self._agent_logger.log_step(
+                            node=tool_name,
+                            message_type="tool_call",
+                            content={
+                                "tool_name": tool_name,
+                                "input_data": input_data,
+                                "output_data": output_data,
+                                "success": success
+                            },
+                            raw_message=f"调用工具: {tool_name}",
+                            metadata={"error": error_message} if error_message else None
+                        ))
+                except RuntimeError:
+                    # 没有事件循环，忽略持久化
+                    pass
+
     def log_reasoning_step(
         self,
         description: str,
@@ -287,7 +554,7 @@ class XAILoggerMiddleware(AgentMiddleware):
         input_data: Optional[Dict[str, Any]] = None,
         output_data: Optional[Dict[str, Any]] = None
     ):
-        """记录推理步骤"""
+        """记录推理步骤（同步版本）"""
         if self._current_log and self.enable_detailed_logging:
             self._current_log.add_reasoning_step(
                 description=description,
@@ -295,6 +562,25 @@ class XAILoggerMiddleware(AgentMiddleware):
                 input_data=input_data,
                 output_data=output_data
             )
+
+            # 持久化写入 - 创建后台任务
+            if self._agent_logger:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.create_task(self._agent_logger.log_step(
+                            node=tool_used or "reasoning",
+                            message_type="ai_message",
+                            content={
+                                "description": description,
+                                "tool_used": tool_used,
+                                "input_data": input_data,
+                                "output_data": output_data
+                            },
+                            raw_message=description
+                        ))
+                except RuntimeError:
+                    pass
 
     def log_decision(
         self,
@@ -387,7 +673,7 @@ class XAILoggerMiddleware(AgentMiddleware):
         handler: Callable[[ToolCallRequest], ToolMessage | Command],
     ) -> ToolMessage | Command:
         """
-        包装工具调用以记录 XAI 日志
+        包装工具调用以记录 XAI 日志（同步版本）
 
         这是 deepagents 中间件接口的要求。
 
@@ -412,6 +698,20 @@ class XAILoggerMiddleware(AgentMiddleware):
                 error_message=None
             )
 
+        # 🔧 同步版本：创建后台任务记录工具调用开始
+        if self._agent_logger:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(self._agent_logger.log_step(
+                        node=tool_name,
+                        message_type="tool_call_start",
+                        content={"tool_name": tool_name, "input_data": tool_input},
+                        raw_message=f"[Tool Call] {tool_name}"
+                    ))
+            except RuntimeError:
+                pass
+
         # 执行工具调用
         try:
             result = handler(request)
@@ -424,6 +724,24 @@ class XAILoggerMiddleware(AgentMiddleware):
                         self._current_log.tool_calls[-1].output_data = {"result": result.content}
                         self._current_log.tool_calls[-1].success = True
 
+            # 🔧 同步版本：创建后台任务记录工具调用成功
+            if self._agent_logger:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.create_task(self._agent_logger.log_step(
+                            node=tool_name,
+                            message_type="tool_call_success",
+                            content={
+                                "tool_name": tool_name,
+                                "input_data": tool_input,
+                                "output_data": result.content if hasattr(result, 'content') else str(result)
+                            },
+                            raw_message=f"[Tool Success] {tool_name}"
+                        ))
+                except RuntimeError:
+                    pass
+
             return result
 
         except Exception as e:
@@ -432,6 +750,25 @@ class XAILoggerMiddleware(AgentMiddleware):
                 if self._current_log and self._current_log.tool_calls:
                     self._current_log.tool_calls[-1].success = False
                     self._current_log.tool_calls[-1].error_message = str(e)
+
+            # 🔧 同步版本：创建后台任务记录工具调用失败
+            if self._agent_logger:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.create_task(self._agent_logger.log_step(
+                            node=tool_name,
+                            message_type="tool_call_error",
+                            content={
+                                "tool_name": tool_name,
+                                "input_data": tool_input,
+                                "error": str(e)
+                            },
+                            raw_message=f"[Tool Error] {tool_name}: {str(e)[:100]}",
+                            metadata={"error_type": type(e).__name__}
+                        ))
+                except RuntimeError:
+                    pass
 
             # 重新抛出异常
             raise
@@ -467,6 +804,15 @@ class XAILoggerMiddleware(AgentMiddleware):
                 error_message=None
             )
 
+        # 🔧 持久化：记录工具调用开始
+        if self._agent_logger:
+            await self._agent_logger.log_step(
+                node=tool_name,
+                message_type="tool_call_start",
+                content={"tool_name": tool_name, "input_data": tool_input},
+                raw_message=f"[Tool Call] {tool_name}"
+            )
+
         # 执行异步工具调用
         try:
             result = await handler(request)
@@ -479,6 +825,19 @@ class XAILoggerMiddleware(AgentMiddleware):
                         self._current_log.tool_calls[-1].output_data = {"result": result.content}
                         self._current_log.tool_calls[-1].success = True
 
+            # 🔧 持久化：记录工具调用成功
+            if self._agent_logger:
+                await self._agent_logger.log_step(
+                    node=tool_name,
+                    message_type="tool_call_success",
+                    content={
+                        "tool_name": tool_name,
+                        "input_data": tool_input,
+                        "output_data": result.content if hasattr(result, 'content') else str(result)
+                    },
+                    raw_message=f"[Tool Success] {tool_name}"
+                )
+
             return result
 
         except Exception as e:
@@ -487,6 +846,20 @@ class XAILoggerMiddleware(AgentMiddleware):
                 if self._current_log and self._current_log.tool_calls:
                     self._current_log.tool_calls[-1].success = False
                     self._current_log.tool_calls[-1].error_message = str(e)
+
+            # 🔧 持久化：记录工具调用失败
+            if self._agent_logger:
+                await self._agent_logger.log_step(
+                    node=tool_name,
+                    message_type="tool_call_error",
+                    content={
+                        "tool_name": tool_name,
+                        "input_data": tool_input,
+                        "error": str(e)
+                    },
+                    raw_message=f"[Tool Error] {tool_name}: {str(e)[:100]}",
+                    metadata={"error_type": type(e).__name__}
+                )
 
             # 重新抛出异常
             raise

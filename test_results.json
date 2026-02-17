@@ -1,0 +1,9 @@
+[
+  {
+    "question_id": 1,
+    "question_name": "销售趋势分析",
+    "success": false,
+    "error": "relation \"订单表\" does not exist",
+    "elapsed_seconds": 46.380463
+  }
+]

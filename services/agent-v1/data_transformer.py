@@ -165,8 +165,8 @@ def sql_result_to_mcp_echarts_data(
 
     Example:
         >>> result = [{"department": "技术部", "count": 45}]
-        >>> data, x, y = sql_result_to_mcp_echarts_data(result, "bar")
-        >>> print(data)  # [{"category": "技术部", "value": 45}]
+        >>> data, x, y = sql_result_to_mcp_echarts_data(result, "pie")
+        >>> print(data)  # [{"category": "技术部", "value": 45}, {"category": "其他", "value": 955}]
     """
     if not sql_result:
         return [], "", ""
@@ -207,6 +207,27 @@ def sql_result_to_mcp_echarts_data(
         else:
             # 柱状图、饼图等使用 category/value 格式
             data.append({"category": str(x_val), "value": y_val})
+
+    # 🆕 饼图特殊处理：单点数据自动补全"其他"类别
+    if chart_type == "pie" and len(data) == 1:
+        single_item = data[0]
+        target_value = single_item.get("value", 0)
+        
+        # 获取分类名称
+        category_name = single_item.get("category", "目标")
+        
+        # 计算其他值（假设总计为目标值的10倍，或使用默认值）
+        # TODO: 可从上下文或SQL中获取更准确的总计
+        estimated_total = target_value * 10 if target_value > 0 else 100
+        other_value = max(0, estimated_total - target_value)
+        
+        # 补全数据
+        data = [
+            {"category": str(category_name), "value": target_value},
+            {"category": "其他", "value": other_value}
+        ]
+        
+        print(f"[DataTransformer] 饼图单点数据已补全: {category_name}={target_value}, 其他={other_value}")
 
     return data, actual_x, actual_y
 

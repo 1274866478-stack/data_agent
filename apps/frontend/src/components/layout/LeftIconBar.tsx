@@ -28,7 +28,7 @@ const navItems = [
   { href: '/dashboard', icon: Home, label: '仪表板' },
   { href: '/data-sources', icon: Database, label: '数据源' },
   { href: '/documents', icon: FileText, label: '文档' },
-  { href: '/ai-assistant', icon: Bot, label: '智能数据助手' },
+  { href: '/ai-assistant', icon: Bot, label: 'Insight Agent' },
   { href: '/analytics', icon: BarChart3, label: '分析' },
 ]
 

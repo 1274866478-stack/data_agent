@@ -265,6 +265,22 @@ export function Markdown({ content, className }: MarkdownProps) {
             em: ({ children, ...props }) => (
               <em className="italic" {...props}>{children}</em>
             ),
+            img: ({ src, alt, ...props }: any) => {
+              // 支持 base64 图片和外部 URL
+              if (src && (src.startsWith('data:') || src.startsWith('http'))) {
+                return (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={src}
+                    alt={alt || '图表'}
+                    className="max-w-full h-auto rounded-lg my-2"
+                    {...props}
+                  />
+                )
+              }
+              // 无效的图片源，显示 alt 文本
+              return <span className="text-muted-foreground">{alt || src}</span>
+            },
           }}
         >
           {fixedContent}
@@ -373,6 +389,22 @@ export function Markdown({ content, className }: MarkdownProps) {
               em: ({ children, ...props }) => (
                 <em className="italic" {...props}>{children}</em>
               ),
+              img: ({ src, alt, ...props }: any) => {
+                // 支持 base64 图片和外部 URL
+                if (src && (src.startsWith('data:') || src.startsWith('http'))) {
+                  return (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={src}
+                      alt={alt || '图表'}
+                      className="max-w-full h-auto rounded-lg my-2"
+                      {...props}
+                    />
+                  )
+                }
+                // 无效的图片源，显示 alt 文本
+                return <span className="text-muted-foreground">{alt || src}</span>
+              },
             }}
           >
             {fixedPart}

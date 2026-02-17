@@ -126,7 +126,7 @@ SELECT
     {spec.date_functions.get("年月格式化", "DATE_TRUNC('month', date_column)")} as month,
     {spec.aggregation_functions.get("求和", "SUM(amount)")} as total_sales
 FROM orders
-WHERE {spec.date_functions.get("年份提取", "EXTRACT(YEAR FROM order_date)")} = 2024
+WHERE {spec.date_functions.get("年份提取", "EXTRACT(YEAR FROM created_at)")} = 2024
 GROUP BY month
 ORDER BY month
 ```

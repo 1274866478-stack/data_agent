@@ -3,9 +3,9 @@
  *
  * ## [MODULE]
  * **文件名**: layout.tsx
- * **职责**: 为认证相关页面（登录/注册）提供统一的居中布局和品牌展示
+ * **职责**: 为认证相关页面（登录/注册）提供统一的布局，支持能量脉冲实验室风格
  * **作者**: Data Agent Team
- * **版本**: 1.0.0
+ * **版本**: 2.0.0
  *
  * ## [INPUT]
  * Props:
@@ -13,47 +13,105 @@
  *
  * ## [OUTPUT]
  * UI组件:
- * - **居中容器**: flex布局，垂直水平居中
- * - **品牌展示**: Data Agent V4标题和简介
- * - **最大宽度**: max-w-md限制内容宽度
- * - **背景**: muted背景色
- *
- * ## [LINK]
- * **上游依赖**:
- * - 无（纯布局组件）
- *
- * **下游依赖**:
- * - [./sign-in/page.tsx](./sign-in/page.tsx) - 登录页面
- * - [./sign-up/page.tsx](./sign-up/page.tsx) - 注册页面
- *
- * **调用方**:
- * - Next.js路由系统 (认证页面组布局)
- *
- * ## [STATE]
- * - 无（纯展示组件）
- *
- * ## [SIDE-EFFECTS]
- * - 无（纯展示组件）
+ * - **居中容器**: 白色背景，flex布局
+ * - **开发模式**: 没有 Clerk 时也能正常显示 UI
  */
 
-export default function AuthLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-muted">
-      <div className="max-w-md w-full space-y-8 p-8">
-        <div className="text-center">
-          <h2 className="mt-6 text-3xl font-bold text-foreground">
-            智能数据Agent V4
-          </h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            多租户 SaaS 数据智能平台
-          </p>
+'use client'
+
+import { ReactNode, useEffect, useState } from 'react'
+
+// 扩展 Window 类型以包含 Clerk
+declare global {
+  interface Window {
+    Clerk?: any
+  }
+}
+
+interface AuthLayoutProps {
+  children: ReactNode
+}
+
+export default function AuthLayout({ children }: AuthLayoutProps) {
+  const [clerkLoaded, setClerkLoaded] = useState(false)
+  const [isClerkEnabled, setIsClerkEnabled] = useState(false)
+  const [initAttempted, setInitAttempted] = useState(false)
+
+  useEffect(() => {
+    const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+
+    // 检查是否启用了 Clerk
+    if (!publishableKey || publishableKey.startsWith('pk_test_xxx') || publishableKey.includes('xxx')) {
+      // Clerk 未配置或使用占位符密钥
+      setIsClerkEnabled(false)
+      setInitAttempted(true)
+      return
+    }
+
+    setIsClerkEnabled(true)
+
+    // 动态加载 Clerk SDK
+    const loadClerk = async () => {
+      try {
+        if (typeof window !== 'undefined') {
+          // 检查是否已加载
+          if (window.Clerk) {
+            const clerk = window.Clerk
+            await clerk.load({ publishableKey })
+            setClerkLoaded(true)
+            setInitAttempted(true)
+            return
+          }
+
+          // 动态加载 Clerk SDK
+          const script = document.createElement('script')
+          script.src = 'https://js.clerk.dev/v4.72.4/clerk.browser.js'
+          script.async = true
+
+          script.onload = async () => {
+            try {
+              if (window.Clerk) {
+                await window.Clerk.load({ publishableKey })
+                setClerkLoaded(true)
+              }
+            } catch (err) {
+              console.error('Clerk initialization failed:', err)
+            } finally {
+              setInitAttempted(true)
+            }
+          }
+
+          script.onerror = () => {
+            console.warn('Clerk SDK loading failed, running in dev mode')
+            setInitAttempted(true)
+          }
+
+          document.body.appendChild(script)
+        }
+      } catch (error) {
+        console.error('Failed to load Clerk:', error)
+        setInitAttempted(true)
+      }
+    }
+
+    loadClerk()
+  }, [])
+
+  // 如果启用了 Clerk 但还没加载完成，显示加载状态
+  if (isClerkEnabled && !clerkLoaded && !initAttempted) {
+    return (
+      <div className="min-h-screen lab-gradient flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <p className="text-sm text-slate-500">加载认证服务中...</p>
         </div>
-        {children}
       </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen">
+      {children}
     </div>
   )
 }

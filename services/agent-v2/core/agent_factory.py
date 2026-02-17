@@ -15,7 +15,11 @@ AgentFactory - DeepAgents 工厂类
 """
 
 import os
+import logging
 from typing import Optional, List, Dict, Any
+
+# 配置日志
+logger = logging.getLogger(__name__)
 
 # DeepAgents imports
 from deepagents import create_deep_agent
@@ -30,7 +34,7 @@ from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 
 # Local imports - AgentV2 config
-from ..config import agent_config as config
+from ..agent_config_module import agent_config as config
 
 # ============================================================================
 # AgentFactory
@@ -130,8 +134,7 @@ class AgentFactory:
             tools.extend(db_tools)
         except Exception as e:
             # 如果数据库工具加载失败，继续但不添加工具
-            import logging
-            logging.warning(f"Failed to load database tools: {e}")
+            logger.warning(f"Failed to load database tools: {e}")
 
         return tools
 
@@ -237,7 +240,11 @@ IMPORTANT:
         self,
         tenant_id: str = "default_tenant",
         tools: Optional[List[BaseTool]] = None,
-        force_refresh: bool = False
+        force_refresh: bool = False,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        connection_id: Optional[str] = None,
+        db_session: Optional[Any] = None
     ):
         """
         获取或创建 Agent (单例模式)
@@ -246,11 +253,16 @@ IMPORTANT:
             tenant_id: 租户 ID
             tools: 可用的工具列表
             force_refresh: 是否强制刷新缓存
+            user_id: 用户 ID (可选，用于租户隔离中间件)
+            session_id: 会话 ID (可选)
+            connection_id: 数据源连接 ID (可选)
+            db_session: 数据库会话 (可选)
 
         Returns:
             DeepAgents 实例
         """
-        cache_key = f"{tenant_id}_{id(tools) if tools else 'none'}"
+        # 生成缓存键（包含 connection_id 因为不同数据源需要不同 Agent）
+        cache_key = f"{tenant_id}_{connection_id or 'default'}_{id(tools) if tools else 'none'}"
 
         if force_refresh or cache_key not in self._cached_agents:
             self._cached_agents[cache_key] = self.create_agent(

@@ -1,0 +1,56 @@
+# 业务规则配置
+# 用于 Critic Agent 验证 DSL 是否符合业务规则
+
+rules:
+  - name: "dau_must_use_distinct"
+    description: "DAU 计算必须使用 DISTINCT"
+    pattern: "count(user_id)"
+    check_type: "measure_name"
+    error_message: "DAU 必须使用 count(DISTINCT user_id)"
+    suggestion: "使用 unique_users 度量"
+
+  - name: "revenue_filter_valid_range"
+    description: "金额不能为负"
+    field: "amount"
+    validation: "value >= 0"
+    error_message: "金额过滤条件无效"
+    suggestion: "检查金额范围设置"
+
+  - name: "time_range_not_too_wide"
+    description: "时间范围不宜过大"
+    check_type: "time_dimension"
+    max_days: 365
+    error_message: "查询时间跨度过大"
+    suggestion: "缩小时间范围或使用预聚合"
+
+  - name: "join_path_predefined"
+    description: "使用预定义的 Join 路径"
+    check_type: "multi_table"
+    error_message: "不要直接 JOIN，使用语义层预定义的关联"
+    suggestion: "检查语义层定义"
+
+  - name: "limit_result_size"
+    description: "限制返回结果数量"
+    check_type: "query_size"
+    max_rows: 10000
+    error_message: "查询可能返回过多数据"
+    suggestion: "添加 LIMIT 或更精确的过滤条件"
+
+  - name: "avoid_select_star"
+    description: "避免使用 SELECT *"
+    pattern: "select *"
+    error_message: "不要使用 SELECT *，明确指定需要的列"
+    suggestion: "明确指定需要的列名"
+
+  - name: "percentage_requires_denominator"
+    description: "百分比计算需要分母"
+    pattern: "percentage"
+    check_type: "calculation"
+    error_message: "百分比计算必须有明确的分母"
+    suggestion: "指定百分比计算的分母"
+
+  - name: "comparison_requires_baseline"
+    description: "对比需要基准值"
+    keywords: ["同比增长", "环比增长", "同比", "环比"]
+    error_message: "对比查询需要明确的时间基准"
+    suggestion: "指定对比的时间范围（如：去年同期、上月）"

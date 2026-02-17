@@ -1,325 +1,407 @@
+# -*- coding: utf-8 -*-
 """
-生成Excel测试数据库
+测试 Excel 数据库生成脚本
 
-创建一个包含多张关联表的Excel文件，用于测试数据源连接和SQL查询功能。
+生成符合表关系的测试数据，输出为 Excel 文件。
+每个 sheet 对应一个表，按依赖顺序排列。
 
-表结构：
-1. regions (区域表) - 销售区域
-2. customers (客户表) - 客户信息
-3. categories (产品分类表) - 产品分类
-4. products (产品表) - 产品信息
-5. orders (订单表) - 订单主表
-6. order_items (订单明细表) - 订单明细
-7. employees (员工表) - 员工信息
-8. suppliers (供应商表) - 供应商信息
-9. inventory (库存表) - 库存信息
-10. sales_targets (销售目标表) - 销售目标
+运行方式:
+    python scripts/generate_test_database.py
 """
 
-import os
-import pandas as pd
-import numpy as np
+import random
+import sys
 from datetime import datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
 
-# 设置随机种子确保可复现
-np.random.seed(42)
+# Windows 下设置 UTF-8 输出
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-# ===== 1. 区域表 (regions) =====
-regions_data = {
-    'region_id': [1, 2, 3, 4, 5],
-    'region_name': ['华东区', '华北区', '华南区', '西南区', '西北区'],
-    'country': ['中国', '中国', '中国', '中国', '中国'],
-    'manager_name': ['张明', '李华', '王芳', '赵强', '刘洋']
-}
-regions_df = pd.DataFrame(regions_data)
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+except ImportError:
+    print("请先安装 openpyxl: pip install openpyxl")
+    sys.exit(1)
 
-# ===== 2. 客户表 (customers) =====
-first_names = ['伟', '芳', '娜', '敏', '静', '丽', '强', '磊', '洋', '勇', '军', '杰', '娟', '涛', '明']
-last_names = ['王', '李', '张', '刘', '陈', '杨', '黄', '赵', '周', '吴', '徐', '孙', '马', '胡', '郭']
 
-customers = []
-for i in range(1, 201):
-    customer = {
-        'customer_id': i,
-        'customer_name': f"{np.random.choice(last_names)}{np.random.choice(first_names)}",
-        'region_id': np.random.choice([1, 2, 3, 4, 5]),
-        'email': f"customer{i}@example.com",
-        'phone': f"1{np.random.randint(3, 10)}{np.random.randint(100000000, 999999999)}",
-        'address': f"{np.random.choice(['北京市', '上海市', '广州市', '深圳市', '杭州市', '成都市', '西安市', '南京市'])}{np.random.choice(['朝阳区', '浦东新区', '天河区', '福田区', '西湖区', '高新区'])}{np.random.randint(1, 999)}号",
-        'credit_level': np.random.choice(['A', 'B', 'C', 'D']),
-        'registered_date': datetime(2023, 1, 1) + timedelta(days=np.random.randint(0, 600)),
-        'total_orders': np.random.randint(0, 100),
-        'total_spent': round(np.random.uniform(0, 500000), 2),
-        'status': np.random.choice(['active', 'inactive', 'suspended'], p=[0.85, 0.12, 0.03])
-    }
-    customers.append(customer)
-customers_df = pd.DataFrame(customers)
+# ============================================================================
+# 测试数据源
+# ============================================================================
 
-# ===== 3. 产品分类表 (categories) =====
-categories_data = {
-    'category_id': [1, 2, 3, 4, 5, 6, 7, 8],
-    'category_name': ['电子产品', '家居用品', '服装鞋帽', '食品饮料', '图书文具', '运动户外', '美妆护肤', '母婴用品'],
-    'description': [
-        '手机、电脑、数码配件等电子产品',
-        '家具、家纺、厨具等家居用品',
-        '男装、女装、童装、鞋类等',
-        '零食、饮料、生鲜食品等',
-        '图书、办公用品、文具等',
-        '运动器材、户外装备等',
-        '护肤品、化妆品等',
-        '奶粉、尿裤、玩具等'
-    ]
-}
-categories_df = pd.DataFrame(categories_data)
-
-# ===== 4. 产品表 (products) =====
-product_templates = [
-    {'category_id': 1, 'names': ['iPhone 15 Pro', '小米14 Pro', 'MacBook Air M3', '华为MateBook X Pro', 'AirPods Pro 2', '索尼WH-1000XM5', '戴尔XPS 15', 'iPad Air 5', '华为Mate 60', '三星Galaxy S24'], 'price_range': (500, 15000)},
-    {'category_id': 2, 'names': ['真皮沙发', '实木餐桌', '记忆棉床垫', '智能扫地机器人', '空气净化器', '电饭煲', '破壁机', '空气净化器', '全自动洗衣机', '双门冰箱'], 'price_range': (200, 8000)},
-    {'category_id': 3, 'names': ['男士商务衬衫', '女士连衣裙', '运动休闲裤', '休闲运动鞋', '牛仔外套', '羽绒服', '真丝围巾', '皮带', '棒球帽', '棉质T恤'], 'price_range': (50, 1500)},
-    {'category_id': 4, 'names': ['进口牛奶', '有机坚果', '进口红酒', '高档茶叶', '进口巧克力', '橄榄油', '婴幼儿奶粉', '进口饼干', '新鲜水果', '有机大米'], 'price_range': (30, 800)},
-    {'category_id': 5, 'names': ['Python编程入门', '深度学习', '经济学原理', '设计心理学', '三体全集', '哈利波特全集', '办公文具套装', '笔记本', '钢笔礼盒', '签字笔套装'], 'price_range': (15, 200)},
-    {'category_id': 6, 'names': ['瑜伽垫', '跑步机', '健身哑铃套装', '登山背包', '户外帐篷', '乒乓球拍', '篮球', '足球', '游泳镜', '运动手环'], 'price_range': (50, 3000)},
-    {'category_id': 7, 'names': ['保湿面霜', '精华液', '口红套装', '防晒霜', '洗面奶', '面膜套装', '香水', '化妆刷套装', '眼霜', '身体乳'], 'price_range': (80, 2000)},
-    {'category_id': 8, 'names': ['婴儿纸尿裤', '婴儿配方奶粉', '儿童安全座椅', '婴儿推车', '婴儿湿巾', '儿童玩具套装', '婴儿衣服', '奶瓶消毒器', '婴儿监护器', '儿童餐椅'], 'price_range': (50, 2500)},
+# 中国省市区数据
+PROVINCES = [
+    "北京", "上海", "广东", "浙江", "江苏", "安徽", "山东", "河南", "四川", "湖北"
 ]
 
-products = []
-product_id = 1
-for template in product_templates:
-    for name in template['names']:
-        base_price = np.random.uniform(*template['price_range'])
-        for _ in range(np.random.randint(1, 4)):  # 每个产品可能有1-3个变体
-            products.append({
-                'product_id': product_id,
-                'product_name': name,
-                'category_id': template['category_id'],
-                'unit_price': round(base_price * np.random.uniform(0.9, 1.1), 2),
-                'cost_price': round(base_price * np.random.uniform(0.5, 0.7), 2),
-                'stock_quantity': np.random.randint(0, 500),
-                'reorder_level': np.random.randint(10, 50),
-                'discontinued': np.random.choice([0, 1], p=[0.95, 0.05]),
-                'supplier_id': np.random.randint(1, 20)
-            })
-            product_id += 1
-products_df = pd.DataFrame(products)
+CITIES = {
+    "北京": ["东城", "西城", "朝阳", "海淀", "丰台"],
+    "上海": ["黄浦", "徐汇", "静安", "浦东", "闵行"],
+    "广东": ["广州", "深圳", "佛山", "东莞", "珠海"],
+    "浙江": ["杭州", "宁波", "温州", "嘉兴", "绍兴"],
+    "江苏": ["南京", "苏州", "无锡", "常州", "徐州"],
+    "安徽": ["合肥", "芜湖", "蚌埠", "淮南", "马鞍山"],
+    "山东": ["济南", "青岛", "淄博", "烟台", "潍坊"],
+    "河南": ["郑州", "开封", "洛阳", "平顶山", "安阳"],
+    "四川": ["成都", "绵阳", "自贡", "攀枝花", "泸州"],
+    "湖北": ["武汉", "黄石", "十堰", "宜昌", "襄阳"]
+}
 
-# ===== 5. 员工表 (employees) =====
-employees = []
-positions = ['销售经理', '销售代表', '客服专员', '仓库管理员', '物流专员', '财务专员', '产品经理']
-departments = ['销售部', '客服部', '仓储部', '物流部', '财务部', '产品部']
-for i in range(1, 51):
-    hire_date = datetime(2020, 1, 1) + timedelta(days=np.random.randint(0, 1500))
-    employees.append({
-        'employee_id': i,
-        'employee_name': f"{np.random.choice(last_names)}{np.random.choice(first_names)}",
-        'position': np.random.choice(positions),
-        'department': np.random.choice(departments),
-        'region_id': np.random.choice([1, 2, 3, 4, 5]),
-        'hire_date': hire_date,
-        'salary': round(np.random.uniform(5000, 25000), 2),
-        'email': f"employee{i}@company.com",
-        'phone': f"1{np.random.randint(3, 10)}{np.random.randint(100000000, 999999999)}",
-        'status': np.random.choice(['active', 'on_leave', 'resigned'], p=[0.90, 0.05, 0.05])
-    })
-employees_df = pd.DataFrame(employees)
+DISTRICTS = [
+    "朝阳区", "海淀区", "西城区", "东城区", "丰台区",
+    "黄浦区", "徐汇区", "静安区", "浦东新区", "闵行区",
+    "天河区", "越秀区", "海珠区", "白云区", "番禺区",
+    "福田区", "南山区", "罗湖区", "宝安区", "龙岗区",
+    "西湖区", "拱墅区", "滨江区", "余杭区", "萧山区"
+]
 
-# ===== 6. 供应商表 (suppliers) =====
-suppliers = []
-supplier_suffixes = ['科技', '贸易', '实业', '电子', '商贸', '制造', '集团', '有限']
-supplier_types = ['制造商', '批发商', '分销商', '进口商']
-cities = ['深圳', '广州', '上海', '北京', '杭州', '苏州', '成都', '武汉', '西安', '南京']
-for i in range(1, 31):
-    suppliers.append({
-        'supplier_id': i,
-        'supplier_name': f"{np.random.choice(cities)}{np.random.choice(last_names)}氏{np.random.choice(supplier_suffixes)}公司",
-        'contact_person': f"{np.random.choice(last_names)}{np.random.choice(first_names)}",
-        'phone': f"0{np.random.randint(10, 30)}-{np.random.randint(10000000, 99999999)}",
-        'email': f"contact@supplier{i}.com",
-        'address': f"{np.random.choice(cities)}市{np.random.choice(['高新区', '开发区', '工业区'])}{np.random.randint(1, 888)}号",
-        'supplier_type': np.random.choice(supplier_types),
-        'credit_rating': np.random.choice(['AAA', 'AA', 'A', 'BBB'], p=[0.15, 0.35, 0.35, 0.15]),
-        'status': np.random.choice(['active', 'inactive'], p=[0.9, 0.1])
-    })
-suppliers_df = pd.DataFrame(suppliers)
+# 产品分类
+CATEGORIES_DATA = [
+    (1, "电子产品"),
+    (2, "家居用品"),
+    (3, "服装鞋帽"),
+    (4, "食品饮料"),
+    (5, "图书文具")
+]
 
-# ===== 7. 订单表 (orders) =====
-orders = []
-order_id = 1
-for customer_id in range(1, 201):
-    # 每个客户有0-50个订单
-    num_orders = np.random.randint(0, 51)
-    for _ in range(num_orders):
-        order_date = datetime(2023, 1, 1) + timedelta(days=np.random.randint(0, 600))
-        required_date = order_date + timedelta(days=np.random.randint(1, 30))
-        shipped_date = order_date + timedelta(days=np.random.randint(0, 10)) if np.random.random() > 0.15 else None
+# 产品数据
+PRODUCTS_DATA = [
+    # 电子产品 (category_id = 1)
+    (1, "iPhone 15 Pro", Decimal("7999.00"), 1),
+    (2, "MacBook Air M2", Decimal("8999.00"), 1),
+    (3, "AirPods Pro 2", Decimal("1899.00"), 1),
+    # 家居用品 (category_id = 2)
+    (4, "北欧风布艺沙发", Decimal("2999.00"), 2),
+    (5, "实木餐桌", Decimal("1599.00"), 2),
+    (6, "智能扫地机器人", Decimal("1299.00"), 2),
+    # 服装鞋帽 (category_id = 3)
+    (7, "男士商务衬衫", Decimal("299.00"), 3),
+    (8, "女士连衣裙", Decimal("399.00"), 3),
+    (9, "运动跑步鞋", Decimal("599.00"), 3),
+    # 食品饮料 (category_id = 4)
+    (10, "有机茶叶礼盒", Decimal("199.00"), 4),
+    (11, "进口红酒", Decimal("399.00"), 4),
+    (12, "坚果礼盒", Decimal("129.00"), 4),
+    # 图书文具 (category_id = 5)
+    (13, "Python编程从入门到精通", Decimal("89.00"), 5),
+    (14, "高级钢笔礼盒", Decimal("299.00"), 5),
+    (15, "办公笔记本套装", Decimal("59.00"), 5),
+]
 
-        orders.append({
-            'order_id': order_id,
-            'customer_id': customer_id,
-            'employee_id': np.random.randint(1, 51),
-            'order_date': order_date,
-            'required_date': required_date,
-            'shipped_date': shipped_date,
-            'shipper_id': np.random.randint(1, 6),
-            'freight': round(np.random.uniform(0, 500), 2),
-            'ship_name': f"{np.random.choice(last_names)}{np.random.choice(first_names)}",
-            'ship_address': f"{np.random.choice(['北京', '上海', '广州', '深圳', '杭州'])}{np.random.randint(1, 999)}号",
-            'ship_city': np.random.choice(['北京', '上海', '广州', '深圳', '杭州']),
-            'ship_postal_code': f"{np.random.randint(100000, 999999)}",
-            'ship_country': '中国',
-            'status': np.random.choice(['pending', 'processing', 'shipped', 'delivered', 'cancelled'], p=[0.1, 0.2, 0.3, 0.35, 0.05])
-        })
-        order_id += 1
-orders_df = pd.DataFrame(orders)
+# 用户数据
+USERS_DATA = [
+    (1, "张伟", "zhangwei@email.com", "13800138001", "2023-01-15"),
+    (2, "李娜", "lina@email.com", "13800138002", "2023-02-20"),
+    (3, "王芳", "wangfang@email.com", "13800138003", "2023-03-10"),
+    (4, "刘洋", "liuyang@email.com", "13800138004", "2023-03-25"),
+    (5, "陈静", "chenjing@email.com", "13800138005", "2023-04-12"),
+    (6, "杨明", "yangming@email.com", "13800138006", "2023-05-08"),
+    (7, "赵强", "zhaoqiang@email.com", "13800138007", "2023-06-18"),
+    (8, "黄婷", "huangting@email.com", "13800138008", "2023-07-22"),
+    (9, "周杰", "zhoujie@email.com", "13800138009", "2023-08-30"),
+    (10, "吴磊", "wulei@email.com", "13800138010", "2023-09-15"),
+]
 
-# ===== 8. 订单明细表 (order_items) =====
-order_items = []
-item_id = 1
-for order_id in orders_df['order_id']:
-    # 每个订单有1-10个明细项
-    num_items = np.random.randint(1, 11)
-    for _ in range(num_items):
-        product = products_df.iloc[np.random.randint(0, len(products_df))]
-        quantity = np.random.randint(1, 11)
-        unit_price = product['unit_price'] * np.random.uniform(0.9, 1.1)  # 可能有价格波动
-        discount = np.random.uniform(0, 0.3)  # 0-30%折扣
+# 详细地址
+DETAIL_ADDRESSES = [
+    "建设路1号院3栋201室",
+    "人民路88号花园小区5栋302",
+    "中山大道123号阳光公寓2单元801",
+    "解放路56号和平里小区6栋101",
+    "新华路99号金域华庭8栋1501",
+    "长安街168号城市花园3栋502",
+    "复兴路200号保利家园1栋1201",
+    "文化路66号书香门第4栋701",
+    "科技路188号创新大厦A座2001",
+    "花园路88号玫瑰园9栋301",
+    "体育路50号奥林匹克花园2栋601",
+    "教育路120号学府苑5栋1001",
+    "商业路180号万达广场公寓3栋401",
+    "工业路90号产业园职工宿舍1栋201",
+    "友谊路66号友谊小区7栋901",
+]
 
-        order_items.append({
-            'item_id': item_id,
-            'order_id': order_id,
-            'product_id': product['product_id'],
-            'unit_price': round(unit_price, 2),
-            'quantity': quantity,
-            'discount': round(discount, 4)
-        })
-        item_id += 1
-order_items_df = pd.DataFrame(order_items)
 
-# ===== 9. 库存表 (inventory) =====
-inventory = []
-warehouses = ['北京仓', '上海仓', '广州仓', '深圳仓', '成都仓']
-for idx, product in products_df.iterrows():
-    inventory.append({
-        'inventory_id': product['product_id'],
-        'product_id': product['product_id'],
-        'warehouse': np.random.choice(warehouses),
-        'quantity': np.random.randint(0, 1000),
-        'last_restock_date': datetime(2024, 1, 1) + timedelta(days=np.random.randint(0, 300)),
-        'reorder_point': np.random.randint(20, 100),
-        'reorder_quantity': np.random.randint(50, 500)
-    })
-inventory_df = pd.DataFrame(inventory)
+# ============================================================================
+# 数据生成器类
+# ============================================================================
 
-# ===== 10. 销售目标表 (sales_targets) =====
-sales_targets = []
-target_id = 1
-for year in [2023, 2024, 2025]:
-    for quarter in [1, 2, 3, 4]:
-        for region_id in [1, 2, 3, 4, 5]:
-            sales_targets.append({
-                'target_id': target_id,
-                'region_id': region_id,
-                'year': year,
-                'quarter': quarter,
-                'revenue_target': round(np.random.uniform(500000, 2000000), 2),
-                'order_count_target': np.random.randint(100, 1001),
-                'new_customer_target': np.random.randint(10, 101),
-                'achieved': np.random.choice([0, 1], p=[0.3, 0.7]) if year < 2025 else 0
-            })
-            target_id += 1
-sales_targets_df = pd.DataFrame(sales_targets)
+class TestDatabaseGenerator:
+    """测试数据库生成器"""
 
-# ===== 创建Excel文件 =====
-output_dir = os.path.dirname(os.path.abspath(__file__))
-output_file = os.path.join(output_dir, 'test_database.xlsx')
+    def __init__(self, output_path: str | None = None):
+        """
+        初始化生成器
 
-print(f"正在生成Excel测试数据库: {output_file}")
-print("=" * 60)
+        Args:
+            output_path: 输出文件路径，默认为 scripts/test_database.xlsx
+        """
+        if output_path is None:
+            script_dir = Path(__file__).parent
+            output_path = str(script_dir / "test_database.xlsx")
 
-with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-    # 写入所有表
-    regions_df.to_excel(writer, sheet_name='regions', index=False)
-    customers_df.to_excel(writer, sheet_name='customers', index=False)
-    categories_df.to_excel(writer, sheet_name='categories', index=False)
-    products_df.to_excel(writer, sheet_name='products', index=False)
-    employees_df.to_excel(writer, sheet_name='employees', index=False)
-    suppliers_df.to_excel(writer, sheet_name='suppliers', index=False)
-    orders_df.to_excel(writer, sheet_name='orders', index=False)
-    order_items_df.to_excel(writer, sheet_name='order_items', index=False)
-    inventory_df.to_excel(writer, sheet_name='inventory', index=False)
-    sales_targets_df.to_excel(writer, sheet_name='sales_targets', index=False)
+        self.output_path = Path(output_path)
+        self.wb = openpyxl.Workbook()
+        # 删除默认sheet
+        if self.wb.active is not None:
+            self.wb.remove(self.wb.active)
 
-    # 调整列宽
-    for sheet_name in writer.sheets:
-        worksheet = writer.sheets[sheet_name]
-        for column in worksheet.columns:
+        # 样式定义
+        self.header_font = Font(bold=True, color="FFFFFF")
+        self.header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        self.header_alignment = Alignment(horizontal="center", vertical="center")
+
+        # 存储生成的ID，确保外键引用正确
+        self.category_ids: list[int] = []
+        self.product_ids: list[int] = []
+        self.user_ids: list[int] = []
+        self.address_ids: list[int] = []
+        self.order_ids: list[int] = []
+        self.order_item_count: int = 0  # 订单明细数量
+
+    def add_sheet(self, sheet_name: str, columns: list, data: list):
+        """
+        添加工作表
+
+        Args:
+            sheet_name: 工作表名称
+            columns: 列名列表
+            data: 数据列表（每行是一个tuple）
+        """
+        ws = self.wb.create_sheet(title=sheet_name)
+
+        # 写入表头
+        for col_idx, col_name in enumerate(columns, 1):
+            cell = ws.cell(row=1, column=col_idx, value=col_name)
+            cell.font = self.header_font
+            cell.fill = self.header_fill
+            cell.alignment = self.header_alignment
+
+        # 写入数据
+        for row_idx, row_data in enumerate(data, 2):
+            for col_idx, value in enumerate(row_data, 1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
+
+        # 自动调整列宽
+        for col in ws.columns:
             max_length = 0
-            column_letter = column[0].column_letter
-            for cell in column:
+            column = col[0].column_letter
+            for cell in col:
                 try:
                     if len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
                 except:
                     pass
             adjusted_width = min(max_length + 2, 50)
-            worksheet.column_dimensions[column_letter].width = adjusted_width
+            ws.column_dimensions[column].width = adjusted_width
 
-# ===== 打印统计信息 =====
-print("\nExcel测试数据库生成完成！")
-print("=" * 60)
-print(f"文件位置: {output_file}")
-print("\n表统计信息:")
-print(f"  regions         区域表: {len(regions_df)} 行")
-print(f"  customers       客户表: {len(customers_df)} 行")
-print(f"  categories      分类表: {len(categories_df)} 行")
-print(f"  products        产品表: {len(products_df)} 行")
-print(f"  employees       员工表: {len(employees_df)} 行")
-print(f"  suppliers      供应商表: {len(suppliers_df)} 行")
-print(f"  orders          订单表: {len(orders_df)} 行")
-print(f"  order_items   订单明细表: {len(order_items_df)} 行")
-print(f"  inventory        库存表: {len(inventory_df)} 行")
-print(f"  sales_targets 销售目标表: {len(sales_targets_df)} 行")
-print("\n总计 10 张表")
-print("=" * 60)
+        print(f"✓ 创建工作表 '{sheet_name}': {len(data)} 条记录")
 
-print("\n支持的测试场景:")
-print("  ✓ 基础查询: SELECT, WHERE, ORDER BY, LIMIT")
-print("  ✓ 聚合查询: COUNT, SUM, AVG, MAX, MIN")
-print("  ✓ 分组统计: GROUP BY, HAVING")
-print("  ✓ 连接查询: INNER JOIN, LEFT JOIN")
-print("  ✓ 子查询: EXISTS, IN, 关联子查询")
-print("  ✓ 窗口函数: ROW_NUMBER, RANK, DENSE_RANK")
-print("  ✓ 日期操作: 时间范围查询、日期计算")
-print("  ✓ 字符串操作: LIKE, SUBSTRING, CONCAT")
-print("  ✓ 条件逻辑: CASE WHEN")
-print("=" * 60)
+    def generate_categories(self):
+        """生成分类表"""
+        columns = ["id", "name"]
+        data = list(CATEGORIES_DATA)
+        self.category_ids = [row[0] for row in data]
+        self.add_sheet("categories", columns, data)
 
-print("\n示例查询:")
-print("-- 1. 查询每个客户的订单总金额")
-print("SELECT c.customer_name, COUNT(o.order_id) as order_count,")
-print("       SUM(oi.unit_price * oi.quantity * (1 - oi.discount)) as total_spent")
-print("FROM customers c")
-print("LEFT JOIN orders o ON c.customer_id = o.customer_id")
-print("LEFT JOIN order_items oi ON o.order_id = oi.order_id")
-print("GROUP BY c.customer_id, c.customer_name")
-print("ORDER BY total_spent DESC")
-print("LIMIT 10;")
-print()
-print("-- 2. 查询每个区域的销售排名")
-print("SELECT r.region_name, e.employee_name,")
-print("       COUNT(o.order_id) as order_count,")
-print("       RANK() OVER (PARTITION BY r.region_id ORDER BY COUNT(o.order_id) DESC) as sales_rank")
-print("FROM regions r")
-print("JOIN employees e ON r.region_id = e.region_id")
-print("LEFT JOIN orders o ON e.employee_id = o.employee_id")
-print("GROUP BY r.region_id, r.region_name, e.employee_id, e.employee_name")
-print("ORDER BY r.region_id, sales_rank;")
-print()
-print("-- 3. 查询库存不足的产品")
-print("SELECT p.product_name, p.stock_quantity, p.reorder_level, c.category_name")
-print("FROM products p")
-print("JOIN categories c ON p.category_id = c.category_id")
-print("WHERE p.stock_quantity < p.reorder_level")
-print("ORDER BY p.stock_quantity ASC;")
-print("=" * 60)
+    def generate_products(self):
+        """生成产品表"""
+        columns = ["id", "name", "price", "category_id"]
+        data = list(PRODUCTS_DATA)
+        self.product_ids = [row[0] for row in data]
+        self.add_sheet("products", columns, data)
+
+    def generate_users(self):
+        """生成用户表"""
+        columns = ["id", "username", "email", "phone", "registration_date"]
+        data = list(USERS_DATA)
+        self.user_ids = [row[0] for row in data]
+        self.add_sheet("users", columns, data)
+
+    def generate_addresses(self):
+        """生成地址表"""
+        columns = ["id", "user_id", "province", "city", "district", "detail_address", "is_default"]
+
+        data = []
+        address_id = 1
+
+        # 为每个用户生成1-2个地址
+        for user_id in self.user_ids:
+            # 每个用户至少1个地址，50%概率有2个地址
+            num_addresses = 2 if random.random() > 0.5 else 1
+
+            for addr_idx in range(num_addresses):
+                province = random.choice(PROVINCES)
+                city = random.choice(CITIES[province])
+                district = random.choice(DISTRICTS)
+                detail_address = DETAIL_ADDRESSES[(address_id - 1) % len(DETAIL_ADDRESSES)]
+                is_default = addr_idx == 0  # 第一个地址为默认地址
+
+                data.append((address_id, user_id, province, city, district, detail_address, is_default))
+                self.address_ids.append(address_id)
+                address_id += 1
+
+        self.add_sheet("addresses", columns, data)
+
+    def generate_orders(self):
+        """生成订单表"""
+        columns = ["id", "user_id", "order_date", "total_amount", "created_at"]
+
+        data = []
+        order_id = 1
+        base_date = datetime(2024, 1, 1)
+
+        # 为每个用户生成1-3个订单
+        for user_id in self.user_ids:
+            num_orders = random.randint(1, 3)
+
+            for _ in range(num_orders):
+                # 随机生成订单日期（2024年1月到2024年12月）
+                days_offset = random.randint(0, 364)
+                order_date = base_date + timedelta(days=days_offset)
+
+                # 添加时间到 created_at
+                hour = random.randint(9, 18)
+                minute = random.randint(0, 59)
+                created_at = order_date.replace(hour=hour, minute=minute)
+
+                # 随机订单金额
+                total_amount = Decimal(str(round(random.uniform(100, 5000), 2)))
+
+                data.append((order_id, user_id, order_date.strftime("%Y-%m-%d"),
+                            total_amount, created_at.strftime("%Y-%m-%d %H:%M:%S")))
+                self.order_ids.append(order_id)
+                order_id += 1
+
+        # 按订单日期排序
+        data.sort(key=lambda x: x[2])
+
+        # 更新ID顺序
+        for idx, (original_id, *rest) in enumerate(data, 1):
+            data[idx - 1] = (idx, *rest)
+
+        self.order_ids = [row[0] for row in data]
+        self.add_sheet("orders", columns, data)
+
+    def generate_order_items(self):
+        """生成订单明细表"""
+        columns = ["id", "order_id", "product_id", "quantity", "unit_price"]
+
+        data = []
+        item_id = 1
+
+        # 为每个订单生成1-3个明细
+        for order_id in self.order_ids:
+            num_items = random.randint(1, 3)
+            selected_products = random.sample(self.product_ids, min(num_items, len(self.product_ids)))
+
+            for product_id in selected_products:
+                # 获取产品单价
+                product = next(p for p in PRODUCTS_DATA if p[0] == product_id)
+                unit_price = product[2]
+                quantity = random.randint(1, 5)
+
+                data.append((item_id, order_id, product_id, quantity, unit_price))
+                item_id += 1
+
+        # 保存订单明细数量供统计使用
+        self.order_item_count = item_id - 1
+        self.add_sheet("order_items", columns, data)
+
+    def generate(self):
+        """生成所有数据表"""
+        print("=" * 60)
+        print("开始生成测试数据库 Excel 文件")
+        print("=" * 60)
+
+        # 按依赖顺序生成
+        print("\n[1/6] 生成分类表...")
+        self.generate_categories()
+
+        print("\n[2/6] 生成产品表...")
+        self.generate_products()
+
+        print("\n[3/6] 生成用户表...")
+        self.generate_users()
+
+        print("\n[4/6] 生成地址表...")
+        self.generate_addresses()
+
+        print("\n[5/6] 生成订单表...")
+        self.generate_orders()
+
+        print("\n[6/6] 生成订单明细表...")
+        self.generate_order_items()
+
+        # 保存文件
+        print("\n" + "=" * 60)
+        self.wb.save(self.output_path)
+        print(f"✓ 测试数据库已生成: {self.output_path}")
+        print("=" * 60)
+
+        # 打印统计信息
+        print("\n📊 数据统计:")
+        print(f"  - 分类 (categories): {len(self.category_ids)} 条")
+        print(f"  - 产品 (products): {len(self.product_ids)} 条")
+        print(f"  - 用户 (users): {len(self.user_ids)} 条")
+        print(f"  - 地址 (addresses): {len(self.address_ids)} 条")
+        print(f"  - 订单 (orders): {len(self.order_ids)} 条")
+        print(f"  - 订单明细 (order_items): {self.order_item_count} 条")
+
+        # 验证外键完整性
+        print("\n🔍 验证外键完整性:")
+        self._validate_foreign_keys()
+
+    def _validate_foreign_keys(self):
+        """验证外键引用完整性"""
+        all_valid = True
+
+        # 验证 products.category_id
+        for product in PRODUCTS_DATA:
+            if product[3] not in self.category_ids:
+                print(f"  ✗ products.id={product[0]} 的 category_id={product[3]} 不存在")
+                all_valid = False
+
+        # 读取 addresses 验证 user_id
+        ws_addresses = self.wb["addresses"]
+        for row in list(ws_addresses.iter_rows(min_row=2, values_only=True)):
+            if row[1] not in self.user_ids:
+                print(f"  ✗ addresses.id={row[0]} 的 user_id={row[1]} 不存在")
+                all_valid = False
+
+        # 读取 orders 验证 user_id
+        ws_orders = self.wb["orders"]
+        for row in list(ws_orders.iter_rows(min_row=2, values_only=True)):
+            if row[1] not in self.user_ids:
+                print(f"  ✗ orders.id={row[0]} 的 user_id={row[1]} 不存在")
+                all_valid = False
+
+        # 读取 order_items 验证 order_id 和 product_id
+        ws_order_items = self.wb["order_items"]
+        for row in list(ws_order_items.iter_rows(min_row=2, values_only=True)):
+            if row[1] not in self.order_ids:
+                print(f"  ✗ order_items.id={row[0]} 的 order_id={row[1]} 不存在")
+                all_valid = False
+            if row[2] not in self.product_ids:
+                print(f"  ✗ order_items.id={row[0]} 的 product_id={row[2]} 不存在")
+                all_valid = False
+
+        if all_valid:
+            print("  ✓ 所有外键引用完整，验证通过！")
+
+
+# ============================================================================
+# 主程序
+# ============================================================================
+
+if __name__ == "__main__":
+    # 设置随机种子以保证可重复性
+    random.seed(42)
+
+    # 创建生成器并生成数据
+    generator = TestDatabaseGenerator()
+    generator.generate()

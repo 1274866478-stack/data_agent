@@ -75,6 +75,7 @@
 **依赖深度**: 直接依赖 core.config 和 multimodal_processor
 """
 
+import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -90,6 +91,14 @@ from src.app.core.config import settings
 from src.app.services.multimodal_processor import multimodal_processor
 
 logger = logging.getLogger(__name__)
+
+# 🔧 并发控制：智谱 API 全局信号量（防止 429 并发限制错误）
+# 限制同时最多 3 个并发请求到智谱 API
+_ZHIPU_SEMAPHORE = asyncio.Semaphore(3)
+
+# 🔧 重试配置：429 错误自动重试
+_MAX_RETRIES = 3
+_RETRY_DELAY = 1.0  # 秒
 
 
 class LLMProvider(Enum):
@@ -173,11 +182,13 @@ class ZhipuProvider(BaseLLMProvider):
         """
         智能判断是否启用思考模式
 
+        🔥 修改说明：所有数据查询类问题默认启用思考模式，确保深入分析
+
         Args:
             messages: 对话消息列表
 
         Returns:
-            bool: 是否建议启用思考模式
+            bool: 是否建议启用思考模式（默认True）
         """
         try:
             # 获取用户消息内容
@@ -195,25 +206,41 @@ class ZhipuProvider(BaseLLMProvider):
             if not user_content:
                 return False
 
-            # 检查思考模式指示词
+            # 🆕 数据查询关键词检测（用于判断是否是数据查询类问题）
+            data_query_keywords = [
+                '数据', '查询', '统计', '多少', '数量', '列表', '显示',
+                '销售', '订单', '客户', '收入', '利润', '金额',
+                '最近', '今天', '昨天', '本月', '上月'
+            ]
+
             content_lower = user_content.lower()
+
+            # ✅ 如果是数据查询类问题，直接启用思考模式
+            if any(kw in content_lower for kw in data_query_keywords):
+                logger.info(f"检测到数据查询类问题，启用思考模式: {user_content[:50]}")
+                return True
+
+            # ✅ 包含思考指示词，启用思考模式
             for indicator in self.thinking_indicators:
                 if indicator in content_lower:
                     logger.debug(f"检测到思考模式指示词: {indicator}")
                     return True
 
-            # 检查问题复杂度（基于长度和结构）
-            if len(user_content) > 200:  # 较长的问题
+            # ✅ 问题较长或复杂，启用思考模式
+            if len(user_content) > 200:
                 return True
-            if "？" in user_content or user_content.count("?") > 1:  # 多个问号
+            if "？" in user_content or user_content.count("?") > 1:
                 return True
-            if "步骤" in user_content or "详细" in user_content:  # 需要详细回答
+            if "步骤" in user_content or "详细" in user_content:
                 return True
 
-            return False
+            # 🆕 默认启用思考模式（确保所有问题都有深入分析）
+            logger.info(f"默认启用思考模式: {user_content[:50]}")
+            return True  # ✅ 关键修改：默认返回True
+
         except Exception as e:
-            logger.warning(f"思考模式判断失败: {e}")
-            return False
+            logger.warning(f"思考模式判断失败: {e}，默认启用")
+            return True  # ✅ 出错时默认启用
 
     async def chat_completion(
         self,
@@ -225,85 +252,187 @@ class ZhipuProvider(BaseLLMProvider):
         enable_thinking: Optional[bool] = None,
         **kwargs
     ) -> Union[LLMResponse, AsyncGenerator[LLMStreamChunk, None]]:
-        """智谱AI聊天完成"""
-        try:
-            model = model or self.default_model
-            max_tokens = max_tokens or getattr(settings, "llm_max_output_tokens", 8192)
-            temperature = temperature if temperature is not None else 0.7
+        """智谱AI聊天完成（带并发控制和重试机制）"""
+        model = model or self.default_model
+        max_tokens = max_tokens or getattr(settings, "llm_max_output_tokens", 8192)
+        temperature = temperature if temperature is not None else 0.7
 
-            # 智能思考模式判断
-            if enable_thinking is None:
-                enable_thinking = self.should_enable_thinking(messages)
-                if enable_thinking:
-                    logger.info("智能启用思考模式")
+        # 智能思考模式判断
+        if enable_thinking is None:
+            enable_thinking = self.should_enable_thinking(messages)
+            if enable_thinking:
+                logger.info("智能启用思考模式")
 
-            # 转换消息格式
-            api_messages = []
-            for msg in messages:
-                api_msg = {"role": msg.role, "content": msg.content}
-                api_messages.append(api_msg)
+        # 转换消息格式
+        api_messages = []
+        for msg in messages:
+            api_msg = {"role": msg.role, "content": msg.content}
+            api_messages.append(api_msg)
 
-            # 构建请求参数
-            params = {
-                "model": model,
-                "messages": api_messages,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "stream": stream
-            }
+        # 构建请求参数
+        params = {
+            "model": model,
+            "messages": api_messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": stream
+        }
 
-            # 🔧 修复：思考模式(thinking参数)仅在流式模式下启用
-            # 非流式模式下该参数会导致 [Errno 22] Invalid argument 错误
-            if enable_thinking and stream:
-                params["thinking"] = {"type": "enabled"}
-                logger.debug(f"智谱AI启用思考模式(流式): {model}")
-            elif enable_thinking and not stream:
-                logger.info(f"思考模式仅在流式模式下支持，已禁用(model={model})")
+        # 🔧 修复：思考模式(thinking参数)仅在流式模式下启用
+        # 非流式模式下该参数会导致 [Errno 22] Invalid argument 错误
+        if enable_thinking and stream:
+            params["thinking"] = {"type": "enabled"}
+            logger.debug(f"智谱AI启用思考模式(流式): {model}")
+        elif enable_thinking and not stream:
+            logger.info(f"思考模式仅在流式模式下支持，已禁用(model={model})")
 
-            if stream:
-                return self._stream_response(params, model)
-            else:
-                response = self.client.chat.completions.create(**params)
+        # 🔧 流式模式：返回包装的生成器（带信号量控制）
+        if stream:
+            return self._stream_with_retry(params, model)
 
-                return LLMResponse(
-                    content=response.choices[0].message.content or "",
-                    thinking=getattr(response.choices[0].message, 'reasoning_content', None),
-                    usage={
-                        "prompt_tokens": response.usage.prompt_tokens,
-                        "completion_tokens": response.usage.completion_tokens,
-                        "total_tokens": response.usage.total_tokens
-                    } if response.usage else None,
-                    model=response.model,
-                    provider=LLMProvider.ZHIPU.value,
-                    finish_reason=response.choices[0].finish_reason,
-                    created_at=datetime.fromtimestamp(response.created).isoformat()
-                )
+        # 🔧 非流式模式：带重试的执行
+        retry_count = 0
+        last_error = None
 
-        except Exception as e:
-            logger.error(f"Zhipu chat completion failed: {e}")
-            if stream:
-                async def error_stream():
-                    yield LLMStreamChunk(
-                        type="error",
-                        content=f"Zhipu API error: {str(e)}",
-                        provider=LLMProvider.ZHIPU.value
+        while retry_count <= _MAX_RETRIES:
+            # 🔧 使用信号量限制并发
+            async with _ZHIPU_SEMAPHORE:
+                try:
+                    logger.debug(f"[Zhipu] 获取信号量，尝试第 {retry_count + 1} 次调用")
+                    response = self.client.chat.completions.create(**params)
+
+                    return LLMResponse(
+                        content=response.choices[0].message.content or "",
+                        thinking=getattr(response.choices[0].message, 'reasoning_content', None),
+                        usage={
+                            "prompt_tokens": response.usage.prompt_tokens,
+                            "completion_tokens": response.usage.completion_tokens,
+                            "total_tokens": response.usage.total_tokens
+                        } if response.usage else None,
+                        model=response.model,
+                        provider=LLMProvider.ZHIPU.value,
+                        finish_reason=response.choices[0].finish_reason,
+                        created_at=datetime.fromtimestamp(response.created).isoformat()
                     )
-                return error_stream()
-            else:
-                raise
 
-    async def _stream_response(
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e)
+
+                    # 🔧 检查是否是 429 并发限制错误
+                    is_rate_limit_error = (
+                        "429" in error_str or
+                        "并发数过高" in error_str or
+                        "concurrent" in error_str.lower() or
+                        "rate limit" in error_str.lower() or
+                        ("error" in error_str.lower() and "1302" in error_str)
+                    )
+
+                    if is_rate_limit_error and retry_count < _MAX_RETRIES:
+                        retry_count += 1
+                        wait_time = _RETRY_DELAY * (2 ** (retry_count - 1))  # 指数退避
+                        logger.warning(
+                            f"[Zhipu] 检测到 429 并发限制错误，"
+                            f"{wait_time} 秒后重试 ({retry_count}/{_MAX_RETRIES})"
+                        )
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        # 非并发限制错误或重试次数用尽
+                        logger.error(f"Zhipu chat completion failed: {e}")
+                        raise
+
+        # 所有重试都失败
+        logger.error(f"[Zhipu] 所有重试都失败，最后错误: {last_error}")
+        if last_error:
+            raise last_error
+        else:
+            raise Exception("Zhipu API 调用失败：未知错误")
+
+    async def _stream_with_retry(
         self,
         params: Dict[str, Any],
         model: str
     ) -> AsyncGenerator[LLMStreamChunk, None]:
-        """处理流式响应"""
+        """
+        流式响应（带信号量控制和重试机制）
+
+        此方法会在获取信号量后执行流式响应，并在失败时自动重试
+        """
+        retry_count = 0
+        last_error = None
+
+        while retry_count <= _MAX_RETRIES:
+            # 🔧 使用信号量限制并发
+            async with _ZHIPU_SEMAPHORE:
+                try:
+                    logger.debug(f"[Zhipu Stream] 获取信号量，尝试第 {retry_count + 1} 次调用")
+
+                    # 在信号量保护下执行流式响应
+                    async for chunk in self._do_stream_response(params, model):
+                        yield chunk
+
+                    # 如果成功完成，退出重试循环
+                    return
+
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e)
+
+                    # 🔧 检查是否是 429 并发限制错误
+                    is_rate_limit_error = (
+                        "429" in error_str or
+                        "并发数过高" in error_str or
+                        "concurrent" in error_str.lower() or
+                        "rate limit" in error_str.lower() or
+                        ("error" in error_str.lower() and "1302" in error_str)
+                    )
+
+                    if is_rate_limit_error and retry_count < _MAX_RETRIES:
+                        retry_count += 1
+                        wait_time = _RETRY_DELAY * (2 ** (retry_count - 1))  # 指数退避
+                        logger.warning(
+                            f"[Zhipu Stream] 检测到 429 并发限制错误，"
+                            f"{wait_time} 秒后重试 ({retry_count}/{_MAX_RETRIES})"
+                        )
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        # 非并发限制错误或重试次数用尽
+                        logger.error(f"[Zhipu Stream] 失败: {e}")
+                        yield LLMStreamChunk(
+                            type="error",
+                            content=f"智谱AI流式响应错误: {str(e)}",
+                            provider=LLMProvider.ZHIPU.value,
+                            finished=True
+                        )
+                        return
+
+        # 所有重试都失败
+        logger.error(f"[Zhipu Stream] 所有重试都失败，最后错误: {last_error}")
+        yield LLMStreamChunk(
+            type="error",
+            content=f"智谱AI调用失败：{str(last_error) if last_error else '未知错误'}",
+            provider=LLMProvider.ZHIPU.value,
+            finished=True
+        )
+
+    async def _do_stream_response(
+        self,
+        params: Dict[str, Any],
+        model: str
+    ) -> AsyncGenerator[LLMStreamChunk, None]:
+        """
+        实际执行流式响应（不包含信号量控制）
+
+        注意：此方法应该在被信号量保护的情况下调用
+        """
         stream_started = False
         thinking_phase = False
         content_phase = False
 
         try:
-            logger.debug(f"开始智谱AI流式响应: {model}")
+            logger.debug(f"[Zhipu] 开始流式响应: {model}")
             response = self.client.chat.completions.create(**params)
 
             for chunk in response:
@@ -315,7 +444,7 @@ class ZhipuProvider(BaseLLMProvider):
                     if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
                         if not thinking_phase:
                             thinking_phase = True
-                            logger.debug("智谱AI思考过程开始")
+                            logger.debug("[Zhipu] 思考过程开始")
 
                         yield LLMStreamChunk(
                             type="thinking",
@@ -328,7 +457,7 @@ class ZhipuProvider(BaseLLMProvider):
                     elif hasattr(delta, 'content') and delta.content:
                         if not content_phase and thinking_phase:
                             content_phase = True
-                            logger.debug("智谱AI从思考过程切换到正式回复")
+                            logger.debug("[Zhipu] 从思考过程切换到正式回复")
 
                         yield LLMStreamChunk(
                             type="content",
@@ -345,16 +474,11 @@ class ZhipuProvider(BaseLLMProvider):
                     provider=LLMProvider.ZHIPU.value,
                     finished=True
                 )
-                logger.debug("智谱AI流式响应完成")
+                logger.debug("[Zhipu] 流式响应完成")
 
         except Exception as e:
-            logger.error(f"Zhipu stream response failed: {e}")
-            yield LLMStreamChunk(
-                type="error",
-                content=f"智谱AI流式响应错误: {str(e)}",
-                provider=LLMProvider.ZHIPU.value,
-                finished=True
-            )
+            logger.error(f"[Zhipu] 流式响应失败: {e}")
+            raise
 
     async def validate_connection(self) -> bool:
         """验证智谱AI连接"""

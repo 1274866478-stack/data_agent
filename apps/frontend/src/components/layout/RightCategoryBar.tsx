@@ -16,6 +16,7 @@ import {
     Bot,
     ChevronLeft,
     ChevronRight,
+    Crown,
     Database,
     FileBarChart,
     FileText,
@@ -49,7 +50,7 @@ const navGroups = [
   {
     label: '分析工具',
     items: [
-      { href: '/ai-assistant', icon: Bot, label: '智能数据助手' },
+      { href: '/ai-assistant', icon: Bot, label: 'Insight Agent' },
       { href: '/analytics', icon: BarChart3, label: '数据分析' },
       { href: '/reports', icon: FileBarChart, label: '报告' },
     ],
@@ -75,7 +76,7 @@ export function RightCategoryBar({ collapsed, onToggle }: RightCategoryBarProps)
     >
       {/* 标题栏 */}
       <div className="h-14 flex items-center justify-between px-4 border-b border-border">
-        <span className="font-semibold text-foreground">智能数据Agent</span>
+        <span className="font-semibold text-foreground">Insight Agent</span>
         <button
           onClick={onToggle}
           className="w-6 h-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -120,10 +121,28 @@ export function RightCategoryBar({ collapsed, onToggle }: RightCategoryBarProps)
         ))}
       </nav>
 
+      {/* 升级 Pro 按钮 - 金色渐变卡片 */}
+      <Link href="/pricing" className="mx-3 mb-3 block">
+        <div className="px-3 py-2.5 rounded-xl transition-all duration-300 bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 shadow-lg shadow-amber-500/30 hover:shadow-xl hover:shadow-amber-500/50 hover:scale-[1.02] active:scale-[0.98]">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 bg-white/20 rounded-lg flex items-center justify-center">
+                <Crown className="h-4 w-4 text-white" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-sm font-bold text-white">升级 Pro</span>
+                <span className="text-[10px] text-white/80">解锁更多功能</span>
+              </div>
+            </div>
+            <span className="text-sm">⭐</span>
+          </div>
+        </div>
+      </Link>
+
       {/* 底部版本信息 */}
       <div className="p-4 border-t border-border">
         <p className="text-xs text-muted-foreground text-center">
-          智能数据Agent V4
+          Insight Agent V4
         </p>
       </div>
     </div>

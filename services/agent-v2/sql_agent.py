@@ -1,12 +1,13 @@
-"""
+﻿"""
 # [SQL AGENT] LangGraph SQL智能代理主程序
 
 ## [HEADER]
 **文件名**: sql_agent.py
 **职责**: 实现基于LangGraph和MCP的SQL智能查询代理 - 自然语言理解、Schema发现、SQL生成、图表可视化、多轮对话
 **作者**: Data Agent Team
-**版本**: 1.2.0
+**版本**: 1.3.0
 **变更记录**:
+- v1.3.0 (2026-01-27): 企业级可信智能数据体优化 - 集成 planning、reflection、clarification 节点
 - v1.2.0 (2026-01-06): 稳定性增强 - 动态时间上下文注入、JSON解析容错处理
 - v1.1.0 (2026-01-06): 安全增强 - 集成 SQLValidator 模块，增强 should_continue 错误重试逻辑
 - v1.0.1 (2026-01-02): 修复MCP echarts服务器URL配置（本地开发使用localhost）
@@ -75,8 +76,341 @@
 """
 import asyncio
 import json
+import logging
 import re
-from typing import Annotated, Literal, Optional, Dict, Any
+import sys
+import os
+import copy
+from datetime import datetime, date
+from typing import Annotated, Literal, Optional, Dict, Any, List, Tuple
+
+# 配置日志记录器
+
+def _looks_like_year_trend(question: str) -> bool:
+    if not question:
+        return False
+    has_year = bool(re.search(r"\b20\d{2}\b", question)) or any(
+        kw in question for kw in ["年", "年度", "今年", "去年", "往年"]
+    )
+    has_trend = any(kw in question for kw in ["趋势", "走势", "变化", "按月", "月度", "同比", "环比", "销售趋势"])
+    return has_year and has_trend
+
+
+def _has_month_aggregation(sql: str) -> bool:
+    patterns = [
+        r"DATE_TRUNC\s*\(\s*'month'",
+        r"DATE_TRUNC\s*\(\s*\"month\"",
+        r"strftime\s*\(.*%Y-%m",
+        r"TO_CHAR\s*\(.*YYYY-MM",
+        r"DATE_FORMAT\s*\(.*%Y-%m",
+    ]
+    return any(re.search(pat, sql, re.IGNORECASE) for pat in patterns)
+
+
+def _rewrite_sql_monthly(sql: str) -> str:
+    """粗暴但有效：把日级 order_date 聚合改成按月。"""
+    month_expr = "strftime('%Y-%m', order_date)"
+    sql_new = re.sub(r"DATE_TRUNC\s*\(\s*'day'\s*,\s*order_date\s*\)", month_expr, sql, flags=re.IGNORECASE)
+    sql_new = re.sub(r"\border_date\b", f"{month_expr} AS month", sql_new, count=1, flags=re.IGNORECASE)
+    sql_new = re.sub(r"GROUP BY\s+order_date", f"GROUP BY {month_expr}", sql_new, flags=re.IGNORECASE)
+    sql_new = re.sub(r"ORDER BY\s+order_date", f"ORDER BY {month_expr}", sql_new, flags=re.IGNORECASE)
+    return sql_new
+
+
+def _extract_year(question: str) -> Optional[int]:
+    """从用户问题中提取年份（命中第一个 20xx）。"""
+    if not question:
+        return None
+    m = re.search(r"\b(20\d{2})\b", question)
+    return int(m.group(1)) if m else None
+
+
+def _enforce_year_filter_and_month(sql: str, year: int) -> str:
+    """
+    将年过滤改为范围查询，并强制按月聚合（针对 orders 表销售趋势场景）。
+    - 使用 >= year-01-01 AND < next_year-01-01 避免索引失效
+    - 统一月粒度，生成订单数/销售额/客单价
+    """
+    if not year:
+        return sql
+
+    sql_lower = sql.lower()
+    if " from orders" not in sql_lower:
+        return sql
+
+    date_col = "order_date" if "order_date" in sql_lower else "order_date"
+    year_start = f"'{year:04d}-01-01'"
+    year_end = f"'{year + 1:04d}-01-01'"
+
+    # 1) 将 SUBSTRING/LIKE 年份过滤改为范围过滤
+    sql = re.sub(
+        rf"substring\s*\(\s*{date_col}\s*,\s*1\s*,\s*4\s*\)\s*=\s*'?\d{{4}}'?",
+        f"{date_col} >= {year_start} AND {date_col} < {year_end}",
+        sql,
+        flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        rf"{date_col}\s+like\s+'{year}\%'",
+        f"{date_col} >= {year_start} AND {date_col} < {year_end}",
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+    # 2) 如缺失年份条件，插入范围过滤
+    sql_lower = sql.lower()
+    if f"{year_start.lower()}" not in sql_lower and f"{year_end.lower()}" not in sql_lower:
+        if " where " in sql_lower:
+            sql = re.sub(
+                r"\bwhere\b",
+                f"WHERE {date_col} >= {year_start} AND {date_col} < {year_end} AND",
+                sql,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            sql = sql.replace("AND  AND", "AND ")
+        elif " group by " in sql_lower:
+            sql = re.sub(
+                r"\bgroup\s+by\b",
+                f"WHERE {date_col} >= {year_start} AND {date_col} < {year_end} GROUP BY",
+                sql,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        elif " order by " in sql_lower:
+            sql = re.sub(
+                r"\border\s+by\b",
+                f"WHERE {date_col} >= {year_start} AND {date_col} < {year_end} ORDER BY",
+                sql,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        else:
+            sql = f"{sql} WHERE {date_col} >= {year_start} AND {date_col} < {year_end}"
+
+    # 3) 强制按月聚合 + 生成三项指标
+    month_expr = f"strftime('%Y-%m', {date_col})"
+    select_pattern = re.compile(r"select\s+.*?\bfrom\b", re.IGNORECASE | re.DOTALL)
+    replacement_select = (
+        f"SELECT {month_expr} AS month, "
+        "COUNT(*) AS order_count, "
+        "SUM(total_amount) AS total_sales, "
+        "AVG(total_amount) AS avg_order_amount FROM"
+    )
+    sql = select_pattern.sub(replacement_select, sql)
+    # 统一 GROUP BY / ORDER BY
+    sql = re.sub(r"GROUP BY\s+[^;]+", f"GROUP BY {month_expr}", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"ORDER BY\s+[^;]+", "ORDER BY month", sql, flags=re.IGNORECASE)
+    if "group by" not in sql.lower():
+        sql += f" GROUP BY {month_expr}"
+    if "order by" not in sql.lower():
+        sql += " ORDER BY month"
+    return sql
+
+
+def _normalize_tool_call_v2(tc: Dict[str, Any]) -> Tuple[str, Dict[str, Any], str]:
+    """
+    兼容 OpenAI function-call / 平铺格式的 tool_call，提取工具名和参数。
+    返回 (tool_name, args_dict, format_tag)
+    """
+    tool_name = ""
+    args_dict: Dict[str, Any] = {}
+    format_tag = "flat"
+
+    if isinstance(tc, dict):
+        func_block = tc.get("function")
+        if func_block:
+            format_tag = "function"
+            tool_name = func_block.get("name") or tc.get("name") or ""
+            raw_args = func_block.get("arguments")
+        else:
+            tool_name = tc.get("name", "") or tc.get("tool", "") or ""
+            raw_args = tc.get("args") or tc.get("input_data") or {}
+    else:
+        func_block = getattr(tc, "function", None)
+        if func_block:
+            format_tag = "function"
+            tool_name = getattr(func_block, "name", "") or getattr(tc, "name", "") or ""
+            raw_args = getattr(func_block, "arguments", None)
+        else:
+            tool_name = getattr(tc, "name", "") or getattr(tc, "tool", "") or ""
+            raw_args = getattr(tc, "args", None)
+
+    if isinstance(raw_args, str):
+        try:
+            args_dict = json.loads(raw_args) or {}
+        except Exception:
+            args_dict = {}
+    elif isinstance(raw_args, dict):
+        args_dict = raw_args
+    else:
+        args_dict = {}
+
+    # 兼容 input_data 结构
+    if not args_dict and isinstance(tc, dict):
+        input_data = tc.get("input_data")
+        if isinstance(input_data, dict):
+            args_dict = input_data
+            format_tag = "input"
+
+    return tool_name, args_dict, format_tag
+
+
+def _write_back_tool_call_v2(tc: Dict[str, Any], args: Dict[str, Any], format_tag: str) -> None:
+    """按原始格式写回参数，兼容 function/flat。"""
+    if format_tag == "function":
+        if isinstance(tc, dict):
+            func_block = tc.get("function") or {}
+            func_block["arguments"] = json.dumps(args, ensure_ascii=False)
+            tc["function"] = func_block
+            tc["args"] = args
+        else:
+            func_block = getattr(tc, "function", None)
+            if func_block is not None:
+                try:
+                    func_block.arguments = json.dumps(args, ensure_ascii=False)
+                except Exception:
+                    pass
+            try:
+                tc.args = args
+            except Exception:
+                pass
+    elif format_tag == "input":
+        if isinstance(tc, dict):
+            tc["input_data"] = args
+        else:
+            try:
+                tc.input_data = args
+            except Exception:
+                pass
+    else:
+        if isinstance(tc, dict):
+            tc["args"] = args
+        else:
+            try:
+                tc.args = args
+            except Exception:
+                pass
+
+
+def apply_time_aggregation_fix_to_tool_calls_v2(
+    tool_calls: List[Dict[str, Any]],
+    question: str
+) -> List[Dict[str, Any]]:
+    """在 AgentV2 中对工具调用强制月度聚合。"""
+    if not tool_calls or not _looks_like_year_trend(question):
+        return tool_calls
+
+    target_year = _extract_year(question)
+
+    fixed = []
+    for tc in tool_calls:
+        tc_copy = copy.deepcopy(tc)
+        name, args, fmt = _normalize_tool_call_v2(tc_copy)
+        sql = args.get("sql") or args.get("query")
+        if name in ("query", "execute_query", "execute_sql_safe") and sql:
+            corrected = sql
+            # 针对销售趋势类（orders 表）强制范围过滤+月聚合+三指标
+            if target_year:
+                corrected = _enforce_year_filter_and_month(corrected, target_year)
+
+            if not _has_month_aggregation(corrected):
+                corrected = _rewrite_sql_monthly(corrected)
+
+            args["sql"] = corrected
+            args["query"] = corrected
+            _write_back_tool_call_v2(tc_copy, args, fmt)
+        fixed.append(tc_copy)
+    return fixed
+
+
+def _build_dual_axis_chart_config(raw_data: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    基于查询结果自动生成双轴配置（销售额 + 订单量）。
+    返回 chart_config_data 兼容结构。
+    """
+    if not raw_data:
+        return None
+
+    columns = list(raw_data[0].keys())
+    if len(columns) < 3:
+        return None
+
+    # 识别时间列与数值列
+    time_col = None
+    numeric_cols: List[str] = []
+    for col in columns:
+        col_lower = col.lower()
+        sample_val = raw_data[0].get(col)
+        if any(key in col_lower for key in ["month", "date", "day"]):
+            time_col = col
+        if isinstance(sample_val, (int, float)):
+            numeric_cols.append(col)
+
+    if not time_col or len(numeric_cols) < 2:
+        return None
+
+    def _pick_metric(candidates: List[str], keywords: List[str]) -> Optional[str]:
+        for kw in keywords:
+            for col in candidates:
+                if kw in col.lower():
+                    return col
+        return None
+
+    main_metric = _pick_metric(numeric_cols, ["sale", "amount", "total", "revenue"]) or numeric_cols[0]
+    secondary_metric = _pick_metric([c for c in numeric_cols if c != main_metric], ["count", "qty", "quantity", "order"]) \
+        or (numeric_cols[1] if len(numeric_cols) > 1 else None)
+
+    if not secondary_metric:
+        return None
+
+    return {
+        "chart_type": "line",
+        "chart_title": "销售额 vs 订单量（双轴）",
+        "x_field": time_col,
+        "y_field": main_metric,
+        "series": [
+            {"column": main_metric, "chart_type": "line", "y_axis_index": 0, "unit": ""},
+            {"column": secondary_metric, "chart_type": "bar", "y_axis_index": 1, "unit": ""},
+        ],
+        "is_dual_axis": True,
+        "left_axis_name": main_metric,
+        "right_axis_name": secondary_metric,
+    }
+
+
+def _extract_date_bounds(rows: List[List[Any]], columns: List[str]) -> Optional[Tuple[date, date]]:
+    """提取结果中的最小/最大日期，用于覆盖范围提示。"""
+    candidates = []
+
+    def _parse(val):
+        if isinstance(val, (datetime, date)):
+            return val.date() if isinstance(val, datetime) else val
+        if isinstance(val, str):
+            txt = val.strip()
+            for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m", "%Y/%m"):
+                try:
+                    dt = datetime.strptime(txt, fmt)
+                    return dt.date()
+                except ValueError:
+                    continue
+        return None
+
+    for row in rows:
+        for idx, col in enumerate(columns):
+            if any(k in col.lower() for k in ["date", "month", "day"]):
+                if idx < len(row):
+                    d = _parse(row[idx])
+                    if d:
+                        candidates.append(d)
+
+    if not candidates:
+        return None
+    return min(candidates), max(candidates)
+
+# Fix Windows GBK encoding issue
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
@@ -84,20 +418,143 @@ from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from pathlib import Path
 
-from config import config
-from models import VisualizationResponse, QueryResult, ChartConfig, ChartType
-from terminal_viz import render_response
-from data_transformer import sql_result_to_echarts_data, sql_result_to_mcp_echarts_data
-from chart_service import ChartRequest, generate_chart_simple, ChartResponse
+try:
+    # 作为包导入时（from AgentV2.sql_agent import ...）
+    from .config import config
+    from .models import VisualizationResponse, QueryResult, ChartConfig, ChartType
+    from .terminal_viz import render_response
+    from .data_transformer import sql_result_to_echarts_data, sql_result_to_mcp_echarts_data
+    from .chart_service import ChartRequest, generate_chart_simple, ChartResponse
+except ImportError:
+    # 直接运行时（python sql_agent.py）
+    from config import config
+    from models import VisualizationResponse, QueryResult, ChartConfig, ChartType
+    from terminal_viz import render_response
+    from data_transformer import sql_result_to_echarts_data, sql_result_to_mcp_echarts_data
+    from chart_service import ChartRequest, generate_chart_simple, ChartResponse
+
+# 🔥 加载精简版 prompt（包含趋势查询强制规则）
+def load_simplified_prompt() -> str:
+    """加载 prompt_simplified.txt 的内容"""
+    prompt_file = Path(__file__).parent / "prompt_simplified.txt"
+    try:
+        with open(prompt_file, "r", encoding="utf-8") as f:
+            content = f.read()
+            # 提取 BASE_SYSTEM_PROMPT_SIMPLIFIED 的值
+            if 'BASE_SYSTEM_PROMPT_SIMPLIFIED = """' in content:
+                start = content.index('BASE_SYSTEM_PROMPT_SIMPLIFIED = """') + len('BASE_SYSTEM_PROMPT_SIMPLIFIED = """')
+                end = content.rindex('"""')
+                return content[start:end].strip()
+            return content
+    except Exception as e:
+        logger.warning(f"无法加载 prompt_simplified.txt: {e}，使用默认 prompt")
+        return ""
+
+# 加载精简版 prompt
+SIMPLIFIED_PROMPT = load_simplified_prompt()
+
+# 常量定义
+MIN_ANALYSIS_LENGTH = 50  # 最短分析长度阈值
+
+# 🔧 新增：企业级可信智能数据体节点
+try:
+    from .nodes import (
+        PlanningNode,
+        ReflectionNode,
+        ClarificationNode,
+        AnalysisNode,
+        create_planning_node,
+        create_reflection_node,
+        create_clarification_node,
+        create_analysis_node,
+        ErrorCategory
+    )
+except ImportError:
+    from nodes import (
+        PlanningNode,
+        ReflectionNode,
+        ClarificationNode,
+        AnalysisNode,
+        create_planning_node,
+        create_reflection_node,
+        create_clarification_node,
+        create_analysis_node,
+        ErrorCategory
+    )
+
+# 🔥 导入语义层工具
+try:
+    from .tools import (
+        resolve_business_term,
+        get_semantic_measure,
+        list_available_cubes,
+        get_cube_measures,
+        normalize_status_value,
+    )
+except ImportError:
+    from tools import (
+        resolve_business_term,
+        get_semantic_measure,
+        list_available_cubes,
+        get_cube_measures,
+        normalize_status_value,
+    )
+
+# 数据一致性验证：防止 LLM 幻觉导致的数据不匹配
+try:
+    from backend.src.app.services.agent.data_validator import (
+        validate_sql_data_consistency,
+        smart_field_mapping,
+        recommend_chart,
+    )
+    DATA_VALIDATION_ENABLED = True
+except ImportError:
+    DATA_VALIDATION_ENABLED = False
+    print("⚠️  警告: 数据验证模块未启用（data_validator.py不可用）")
+
+# 🔧 新增：导入 database_tools 模块用于设置用户查询上下文
+try:
+    from .tools.database_tools import _set_user_query, _clear_user_query
+    DATABASE_TOOLS_AVAILABLE = True
+except ImportError:
+    try:
+        from tools.database_tools import _set_user_query, _clear_user_query
+        DATABASE_TOOLS_AVAILABLE = True
+    except ImportError:
+        DATABASE_TOOLS_AVAILABLE = False
+        print("⚠️  警告: database_tools 模块未可用")
+
+# 表推荐工具
+try:
+    from .tools.table_recommendation_tools import (
+        get_recommended_tables_for_query,
+        get_table_description_by_name,
+    )
+    TABLE_RECOMMENDATION_TOOLS_AVAILABLE = True
+except ImportError:
+    try:
+        from tools.table_recommendation_tools import (
+            get_recommended_tables_for_query,
+            get_table_description_by_name,
+        )
+        TABLE_RECOMMENDATION_TOOLS_AVAILABLE = True
+    except ImportError:
+        TABLE_RECOMMENDATION_TOOLS_AVAILABLE = False
+        print("⚠️  警告: table_recommendation_tools 模块未可用")
 
 # 🔍 错误追踪模块（质量保证）
 try:
-    from error_tracker import error_tracker, log_agent_error, ErrorCategory
+    from .error_tracker import error_tracker, log_agent_error, ErrorCategory
     ERROR_TRACKING_ENABLED = True
 except ImportError:
-    ERROR_TRACKING_ENABLED = False
-    print("⚠️  警告: 错误追踪模块未启用（error_tracker.py不可用）")
+    try:
+        from error_tracker import error_tracker, log_agent_error, ErrorCategory
+        ERROR_TRACKING_ENABLED = True
+    except ImportError:
+        ERROR_TRACKING_ENABLED = False
+        print("⚠️  警告: 错误追踪模块未启用（error_tracker.py不可用）")
 
     # 提供回退的 ErrorCategory 定义
     from enum import Enum
@@ -169,7 +626,10 @@ import os
 from datetime import datetime
 
 # 🔒 导入独立的 SQL 安全校验模块
-from sql_validator import SQLValidator, SQLValidationError
+try:
+    from .sql_validator import SQLValidator, SQLValidationError
+except ImportError:
+    from sql_validator import SQLValidator, SQLValidationError
 
 
 # ===============================================
@@ -291,7 +751,34 @@ class SQLQualityOptimizer:
 
 
 # Base system prompt for the SQL Agent (will be dynamically enhanced based on db_type)
-BASE_SYSTEM_PROMPT = """你是一个专业的数据库助手，具备数据查询和图表可视化能力。
+# 🔥 优先使用 prompt_simplified.txt 的内容，如果加载失败则使用默认 prompt
+if SIMPLIFIED_PROMPT:
+    BASE_SYSTEM_PROMPT = SIMPLIFIED_PROMPT
+else:
+    BASE_SYSTEM_PROMPT = """你是一个专业的数据库助手，具备数据查询和图表可视化能力。
+
+## 🔴🔴🔴【生死攸关】生成SQL前必须先调用list_tables()！🔴🔴🔴
+
+**每次生成SQL前，必须按以下顺序执行**：
+1. 首先调用 `list_tables()` 获取数据库中的实际表名
+2. 根据返回的实际表名选择合适的表
+3. 调用 `get_schema()` 了解表结构
+4. 最后生成SQL并执行
+
+**❌ 绝对禁止**：
+- 禁止使用prompt示例中的表名（示例仅供参考）
+- 禁止猜测或假设表名
+- 禁止跳过list_tables()直接生成SQL
+
+---
+
+## 🔴🔴🔴【生死攸关】时间范围查询必须过滤！🔴🔴🔴
+
+**用户问"2023年的销售"，你必须添加 WHERE EXTRACT(YEAR FROM order_date) = 2023！**
+**用户问"5月份的订单"，你必须添加 WHERE EXTRACT(MONTH FROM order_date) = 5！**
+**违反此规则 = 严重错误！**
+
+---
 
 ## 🚨🚨🚨【最高优先级规则】每次生成SQL前必须检查！🚨🚨🚨
 
@@ -302,30 +789,50 @@ BASE_SYSTEM_PROMPT = """你是一个专业的数据库助手，具备数据查�
 □ 检查2: 是否使用 GROUP BY 一次查询？（禁止多次COUNT！）
 □ 检查3: 城市查询是否优先使用 address LIKE？（不是region_id！）
 □ 检查4: 表名是否正确？（不是data_source_connections等系统表！）
+□ 检查5: 【最高优先级】用户提到年份/日期时是否添加了WHERE时间过滤？
 ```
 
 ### ❌ 绝对禁止的SQL错误模式
 
 **1. 重复WHERE条件**（最常见！）：
 ```sql
--- ❌ 错误：重复的tenant_id
-WHERE tenant_id = 'default_tenant' AND region_id = '5' AND tenant_id = 'default_tenant'
+-- ❌ 错误：重复的相同条件
+WHERE region_id = '5' AND region_id = '5'
 
 -- ✅ 正确：每个条件只一次
-WHERE tenant_id = 'default_tenant' AND region_id = '5'
+WHERE region_id = '5'
 ```
 
-**2. 禁止多次COUNT查询**（占比类问题！）：
+**2. WHERE子句位置错误**（极常见！）：
+```sql
+-- ❌ 错误：WHERE 在 GROUP BY/ORDER BY 之后
+SELECT ... GROUP BY year ORDER BY year WHERE status = 'active'
+SELECT ... ORDER BY year AND status = 'active'
+
+-- ✅ 正确：WHERE 必须在 GROUP BY/ORDER BY 之前
+SELECT ... WHERE status = 'active' GROUP BY year ORDER BY year
+```
+
+**3. 禁止在 SQL 中手动添加 tenant_id**：
+```sql
+-- ❌ 错误：不要手动添加 tenant_id，系统会自动处理
+WHERE tenant_id = 'xxx' AND ...
+
+-- ✅ 正确：系统会自动注入租户过滤条件
+WHERE status = 'active'
+```
+
+**4. 禁止多次COUNT查询**（占比类问题！）：
 ```sql
 -- ❌ 错误：多次查询
-SELECT COUNT(*) FROM customers WHERE region_id = 5;
-SELECT COUNT(*) FROM customers;
+SELECT COUNT(*) FROM users WHERE city = '杭州';
+SELECT COUNT(*) FROM users;
 
 -- ✅ 正确：一次GROUP BY查询
 SELECT
-    CASE WHEN address LIKE '%杭州%' THEN '杭州' ELSE '其他' END as category,
+    CASE WHEN city LIKE '%杭州%' THEN '杭州' ELSE '其他' END as category,
     COUNT(*) as value
-FROM customers
+FROM users
 GROUP BY category;
 ```
 
@@ -337,11 +844,69 @@ GROUP BY category;
 **4. 禁止查询系统元数据表**：
 ```sql
 -- ❌ 错误
-SELECT * FROM data_source_connections WHERE name = '杭州客户'
+SELECT * FROM data_source_connections WHERE name = '杭州用户'
 
 -- ✅ 正确：查询业务数据表
-SELECT * FROM customers WHERE address LIKE '%杭州%'
+SELECT * FROM users WHERE city LIKE '%杭州%'
 ```
+
+---
+
+## 📅 【最高优先级】时间范围查询规则
+
+**⚠️ 当用户问题中包含时间关键词时，必须在WHERE子句中添加时间过滤条件！**
+
+**时间关键词识别**：
+- 年份: "2023年"、"2024年"、"去年"、"今年"、"前年"
+- 月份: "1月"、"5月"、"本月"、"上个月"、"下个月"
+- 日期: "2023-05-01"、"昨天"、"今天"、"明天"
+- 季度: "第一季度"、"Q1"、"上半年"、"下半年"
+
+**🚨 严重错误示例（必须避免！）**：
+```sql
+-- ❌ 错误：用户问"2023年的销售"，但没有年份过滤
+SELECT DATE_TRUNC('month', order_date) as month, SUM(amount) as total
+FROM orders
+GROUP BY month;
+-- 结果：返回了2023年、2024年所有数据！
+
+-- ❌ 错误：用户问"5月份的订单"，但没有月份过滤
+SELECT COUNT(*) as total FROM orders;
+-- 结果：返回了所有月份的订单总数！
+```
+
+**✅ 正确做法**：
+```sql
+-- 用户问"2023年的销售"
+SELECT DATE_TRUNC('month', order_date) as month, SUM(amount) as total
+FROM orders
+WHERE EXTRACT(YEAR FROM order_date) = 2023
+GROUP BY month;
+
+-- 用户问"2024年5月的订单"
+SELECT COUNT(*) as total
+FROM orders
+WHERE order_date >= '2024-05-01' AND order_date < '2024-06-01';
+
+-- 用户问"今年的销售额"
+SELECT SUM(amount) as total
+FROM orders
+WHERE EXTRACT(YEAR FROM order_date) = 2026;
+
+-- 用户问"上个月的数据"
+SELECT COUNT(*) as total
+FROM orders
+WHERE order_date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+  AND order_date < DATE_TRUNC('month', CURRENT_DATE);
+```
+
+**对照检查表**：
+| 用户问题 | 必须包含的WHERE条件 |
+|---------|-------------------|
+| "2023年的销售趋势" | `WHERE EXTRACT(YEAR FROM order_date) = 2023` |
+| "2024年5月的订单" | `WHERE order_date >= '2024-05-01' AND order_date < '2024-06-01'` |
+| "今年的销售额" | `WHERE EXTRACT(YEAR FROM order_date) = {当前年份}` |
+| "Q1的数据" | `WHERE order_date >= '2024-01-01' AND order_date < '2024-04-01'` |
 
 ---
 
@@ -363,18 +928,70 @@ SELECT * FROM customers WHERE address LIKE '%杭州%'
 
 ## 🛠️ 可用工具
 
-### 数据库工具
-1. list_tables - 查看数据库表（必须先调用！）
-2. get_schema - 获取表结构（列名、类型）
-3. query - 执行SQL查询（仅SELECT）
+### 🔧 数据库表查询工具
+- ✅ **list_tables** - 必须先调用此工具查看可用表名
+- ✅ **get_schema** - 获取表结构信息
+- ✅ **query** - 执行SQL查询
+
+### 📋 表查询工作流程（必须遵守）
+1. **首先**调用 `list_tables()` 查看所有可用表
+2. 使用 `list_tables()` 返回的**确切表名**（可能是中文或英文）
+3. 如需了解字段信息，调用 `get_schema(表名)`
+4. 最后调用 `query()` 执行查询
 
 ### 图表工具
 - generate_bar_chart - 柱状图：[{"category": "名称", "value": 数值}]
 - generate_line_chart - 折线图：[{"time": "时间", "value": 数值}]
 - generate_pie_chart - 饼图：[{"category": "名称", "value": 数值}]
+- generate_scatter_chart - 散点图：[{"x": 数值, "y": 数值, "label": "名称"}]
+- generate_funnel_chart - 漏斗图：[{"category": "名称", "value": 数值}]
+
+### 双轴图/混合图表
+当用户要求"双轴图"、"双Y轴"、"折线+柱状"等混合图表时：
+- 请使用 **两个独立的图表工具** 分别生成柱状图和折线图
+- 例如：先调用 generate_bar_chart(柱状数据)，再调用 generate_line_chart(折线数据)
+- ❌ 不要使用 generate_echarts 工具（它需要复杂的JSON配置）
+
+### 🔥 语义层工具（业务术语解析）
+
+**重要**：在生成 SQL 之前，请先使用语义层工具解析业务术语！
+
+1. **resolve_business_term** - 解析业务术语
+   - 用途：将"销售额"、"总收入"、"订单数"等业务术语映射到正确的表和字段
+   - 输入：术语名称（如"销售额"）
+   - 输出：JSON格式的度量定义（包含表名、字段名、SQL表达式）
+
+2. **list_available_cubes** - 列出可用的语义层Cube
+   - 输出：所有可用的Cube列表（如Orders、Customers、Products）
+
+3. **get_semantic_measure** - 获取指定Cube的度量详情
+   - 输入：cube名称和度量名称
+   - 输出：完整的度量定义
+
+4. **get_cube_measures** - 获取指定Cube的所有度量
+   - 输入：cube名称
+   - 输出：该Cube的所有度量列表
+
+5. **normalize_status_value** - 规范化状态值
+   - 用途：将"已完成"映射为"completed"等标准值
+   - 输入：原始状态值
+   - 输出：规范化后的状态信息
+
+**语义层使用工作流程**：
+```
+用户查询 → resolve_business_term(术语) → 获取SQL表达式 → 生成完整SQL
+```
+
+**关键提示**：
+- 项目中没有独立的 `sales` 表，所有销售数据在 `orders` 表中
+- "销售额"对应的字段是 `orders.total_amount`
+- 使用语义层工具获取正确的表名和字段名
 
 ### 工作流程
-1. list_tables → 2. get_schema → 3. query → 4. 调用图表工具（如需）
+1. 理解问题并分析需要的数据
+2. 使用语义层工具解析业务术语（如需要）
+3. 使用 query 工具执行SQL
+4. 调用图表工具生成可视化（如需）
 
 ---
 
@@ -388,6 +1005,7 @@ SELECT * FROM customers WHERE address LIKE '%杭州%'
 **示例**（"杭州客户的占比"）：
 ```sql
 -- ✅ 正确：一次GROUP BY获取所有城市分布
+-- 注意：不要手动添加 tenant_id，系统会自动注入租户过滤条件
 SELECT
     CASE
         WHEN address LIKE '%杭州%' THEN '杭州'
@@ -397,7 +1015,6 @@ SELECT
     END as category,
     COUNT(*) as value
 FROM customers
-WHERE tenant_id = 'default_tenant'
 GROUP BY category;
 ```
 
@@ -438,12 +1055,12 @@ GROUP BY category;
 **必须按日期分组**（生成时间序列数据）：
 ```sql
 SELECT
-    DATE_TRUNC('day', order_date) as date,
+    DATE_TRUNC('day', created_at) as date,
     COUNT(*) as orders,
     SUM(amount) as sales
 FROM orders
-WHERE order_date >= CURRENT_DATE - INTERVAL '30 days'
-GROUP BY DATE_TRUNC('day', order_date)
+WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
+GROUP BY DATE_TRUNC('day', created_at)
 ORDER BY date;
 ```
 
@@ -464,7 +1081,8 @@ ORDER BY date;
 
 每生成一条SQL必须逐项检查：
 ```
-□ 无重复WHERE条件（特别是tenant_id）
+□ 不要手动添加 tenant_id 条件（系统会自动处理）
+□ WHERE 子句必须在 GROUP BY/ORDER BY 之前
 □ 表名正确（非系统元数据表）
 □ 字段名存在（基于get_schema结果）
 □ 占比问题用GROUP BY（不是多次COUNT）
@@ -475,13 +1093,132 @@ ORDER BY date;
 
 ---
 
-## 💡 数据分析输出要求
+## 🔄 智能表名回退规则（当表不存在时）
 
-每次查询后必须用文字总结：
-1. 数据概要（返回多少条记录）
-2. 关键发现（重要趋势或异常值）
-3. 数值解读（具体数字含义）
-4. 业务洞察（对业务的启示）
+**当用户询问的表名不存在时，不要直接放弃！**
+
+**处理流程**：
+1. 调用 `list_tables()` 查看所有可用表
+2. 根据业务语义找到相关表
+3. 使用找到的相关表查询数据
+
+**常见业务术语映射（仅供参考，实际表名以list_tables()为准）**：
+```
+用户术语          →  可能的表名（仅供参考，实际表名以list_tables()为准）
+───────────────────────────────────────────────────────────
+销售/销售额/收入    → 订单表、销售表、orders、sales
+客户/用户         → 用户表、客户表、users、customers
+产品/商品         → 产品表、商品表、products
+订单             → 订单表、订单明细、orders
+```
+
+**正确示例**：
+```
+❌ 错误：表不存在就直接放弃
+用户：查询2023年销售趋势
+AI：很抱歉，sales表不存在...
+
+✅ 正确：查找相关表并使用
+用户：查询2023年销售趋势
+AI：
+1. 调用 list_tables() → 查看数据库中实际存在的表名
+2. 从返回的表名中识别与"销售"相关的表（如：订单表、销售表等）
+3. 使用实际存在的表名进行查询，并添加时间过滤 WHERE EXTRACT(YEAR FROM 订单日期) = 2023
+```
+
+---
+
+## 📊 图表生成决策规则（🔴 强制执行）
+
+**⚠️ 执行查询后，必须根据数据特征和用户问题类型判断是否生成图表！**
+
+### 必须生成图表的场景
+
+| 用户问题类型 | 数据特征 | 必须调用的图表工具 |
+|-------------|----------|-------------------|
+| 趋势/变化/增长 | 含时间/日期字段 | `generate_line_chart` |
+| 对比/排名/Top N | 含分类字段 + 数值字段 | `generate_bar_chart` |
+| 占比/分布 | 含分组 + 计数/百分比 | `generate_pie_chart` |
+| 销售趋势/订单趋势 | 时间 + 数值 | `generate_line_chart` |
+| XX的排名/XX排行 | 分组 + 数值排序 | `generate_bar_chart` |
+| 每月/每年/每日 | 时间序列 | `generate_line_chart` |
+
+### 判断流程
+```
+查询返回数据 → 分析数据特征 → 匹配上表场景 → 调用对应图表工具 → 生成文字分析
+```
+
+### 示例
+```
+❌ 错误：只输出文字，不生成图表
+用户：查询2023年销售趋势
+AI：2023年销售额为XXX...（没有任何图表）
+
+✅ 正确：先调用图表工具，再分析
+用户：查询2023年销售趋势
+AI：
+1. 调用 query() 获取数据
+2. 调用 generate_line_chart() 生成趋势图
+3. 输出文字分析：📊 2023年销售趋势分析...
+```
+
+### 图表数据格式
+```json
+// 折线图/柱状图
+[{"time": "2023-01", "value": 1000}, {"time": "2023-02", "value": 1200}]
+// 或 [{"category": "产品A", "value": 100}, {"category": "产品B", "value": 200}]
+
+// 饼图
+[{"category": "北京", "value": 30}, {"category": "上海", "value": 50}]
+```
+
+---
+
+## 💡 数据分析输出要求（🔴 强制执行，不可跳过）
+
+⚠️ **每次查询后，你必须生成详细的数据分析文本！这不是可选项，是必选项！**
+
+分析内容必须包含以下四个部分：
+
+### 1. 数据概要（必填）
+- 查询返回了多少条记录
+- 涉及的时间范围（如有）
+- 主要的数据维度
+
+### 2. 关键发现（必填）
+- 数据中的重要趋势（上升/下降/波动）
+- 异常值识别（最高/最低/异常点）
+- 数据分布特征
+
+### 3. 数值解读（必填）
+- 具体数字的含义（如"销售额增长了20%"）
+- 关键指标的计算结果
+- 数据之间的关联关系
+
+### 4. 业务洞察（必填）
+- 数据对业务的启示
+- 建议的下一步行动
+- 潜在的风险或机会
+
+**❌ 禁止行为**：
+- 只输出SQL或图表，不生成文字分析
+- 只说"查询完成"、"已生成图表"等无意义回复
+- 跳过上述任何一个分析部分
+
+**✅ 正确示例**：
+```
+📊 [数据分析结果]
+
+根据查询结果，共找到 15 条订单记录：
+
+🔍 **关键发现**：
+• 小米品牌的总销售额为 ¥125,000，占总销售额的 32%
+• 平均订单金额为 ¥8,333，最高单笔订单为 ¥15,000（2024-05-15）
+• 销售额呈现上升趋势，5月份比4月份增长了 25%
+
+💡 **业务洞察**：
+小米品牌表现良好，销售额占比超过三成，是核心品牌之一。建议继续关注该品牌的库存和促销活动，同时分析增长驱动因素以复制成功经验。
+```
 """
 
 def get_system_prompt(db_type: str = "postgresql") -> str:
@@ -508,6 +1245,30 @@ def get_system_prompt(db_type: str = "postgresql") -> str:
 - **星期**: 星期{['一', '二', '三', '四', '五', '六', '日'][current_time.weekday()]}
 
 在处理时间相关查询时（如"昨天"、"上周"、"上个月"、"今年"等），请以此时间为准进行计算。
+
+## 🚨🚨🚨 【强制】时间范围查询规则
+
+当用户问题中明确提到年份、月份、日期等时间关键词时：
+1. **必须**在WHERE子句中添加时间过滤条件
+2. 使用正确的日期函数（EXTRACT, DATE_TRUNC等）
+3. 确保**只返回**用户指定时间范围内的数据
+
+**错误示例**：
+- 用户问"2023年的销售" → ❌ 查询返回2023和2024年数据
+- 用户问"5月份的订单" → ❌ 查询返回所有月份数据
+- 用户问"去年的趋势" → ❌ 没有添加任何时间过滤
+
+**正确示例**：
+- 用户问"2023年的销售" → ✅ WHERE EXTRACT(YEAR FROM order_date) = 2023
+- 用户问"5月份的订单" → ✅ WHERE EXTRACT(MONTH FROM order_date) = 5
+- 用户问"今年的销售额" → ✅ WHERE EXTRACT(YEAR FROM order_date) = {current_time.year}
+- 用户问"上个月的数据" → ✅ WHERE order_date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month') AND order_date < DATE_TRUNC('month', CURRENT_DATE)
+
+**时间关键词识别**：
+- 年份: "2023年"、"2024年"、"去年"、"今年"、"前年"
+- 月份: "1月"、"5月"、"本月"、"上个月"
+- 日期: "2023-05-01"、"昨天"、"今天"
+- 季度: "第一季度"、"Q1"、"上半年"
 """
 
     # 🔥🔥🔥 【关键】数据分析输出强制要求（确保 answer 字段始终有内容）
@@ -550,8 +1311,104 @@ def get_system_prompt(db_type: str = "postgresql") -> str:
 """
 
     try:
-        from prompt_generator import generate_database_aware_system_prompt
+        try:
+            from .prompt_generator import generate_database_aware_system_prompt
+        except ImportError:
+            from prompt_generator import generate_database_aware_system_prompt
         result = generate_database_aware_system_prompt(db_type, BASE_SYSTEM_PROMPT)
+
+        # 🔧 检测是否为测试数据库，注入正确的表结构信息
+        if 'ecommerce_test_db' in config.database_url:
+            test_db_schema = """
+
+## 🧪 测试数据库表结构（重要！使用以下表名和字段）
+
+**核心业务表**：
+1. **users** - 用户表（不是customers！）
+   - id: 用户ID
+   - username: 用户名
+   - vip_level: VIP等级（0=普通, 1=银卡, 2=金卡, 3=钻石）
+   - total_spent: 累计消费金额
+   - gender: 性别
+   - registration_date: 注册时间
+
+2. **orders** - 订单表
+   - id: 订单ID
+   - user_id: 用户ID（关联users.id，不是customer_id！）
+   - total_amount: 订单总金额
+   - final_amount: 实付金额
+   - status: 订单状态（pending/completed/cancelled）
+   - order_date: 订单日期（date类型）
+   - created_at: 创建时间
+
+3. **products** - 商品表
+   - id: 商品ID
+   - name: 商品名称
+   - category_id: 类别ID（关联categories.id）
+   - brand: 品牌
+   - price: 价格
+   - sales_count: 销量
+   - rating: 平均评分
+   - review_count: 评价数
+
+4. **reviews** - 评价表
+   - id: 评价ID
+   - product_id: 商品ID
+   - user_id: 用户ID（关联users.id）
+   - rating: 评分（1-5）
+   - content: 评价内容
+   - created_at: 创建时间
+
+5. **categories** - 商品类别表
+   - id: 类别ID
+   - name: 类别名称
+   - parent_id: 父类别ID
+
+6. **order_items** - 订单明细表
+   - order_id: 订单ID
+   - product_id: 商品ID
+   - quantity: 数量
+   - price: 单价
+   - subtotal: 小计
+
+7. **addresses** - 地址表
+   - user_id: 用户ID（关联users.id）
+   - city: 城市
+   - province: 省份
+
+## ⚠️⚠️⚠️ 重要：查询用户和订单关联时使用 user_id
+- ❌ 错误：customer_id, cid
+- ✅ 正确：user_id, u.user_id
+- 关联方式：FROM orders o JOIN users u ON o.user_id = u.id
+
+## 📋 用户复购分析专用SQL模板
+```sql
+-- 统计每个用户的下单次数
+SELECT user_id, COUNT(*) as order_count
+FROM orders
+GROUP BY user_id
+ORDER BY order_count DESC;
+
+-- 分析复购用户占比
+SELECT
+    CASE WHEN order_count >= 2 THEN '复购用户' ELSE '单次购买用户' END as user_type,
+    COUNT(*) as user_count,
+    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as percentage
+FROM (SELECT user_id, COUNT(*) as order_count FROM orders GROUP BY user_id) sub
+GROUP BY user_type;
+
+-- 用户订单数量分布（直方图）
+SELECT order_count, COUNT(*) as user_count
+FROM (SELECT user_id, COUNT(*) as order_count FROM orders GROUP BY user_id) sub
+GROUP BY order_count
+ORDER BY order_count;
+```
+   - user_id: 用户ID
+   - city: 城市
+   - province: 省份
+"""
+            result = result + test_db_schema
+
         # 在提示词末尾追加数据分析输出要求和时间上下文
         result = result + data_analysis_output_requirement + time_context
         print(f"🔍 [get_system_prompt] 成功生成提示词，长度={len(result)}")
@@ -703,7 +1560,7 @@ def extract_tool_data(messages: list) -> tuple[Optional[str], list]:
         # 提取SQL（从AIMessage的tool_calls中）
         if isinstance(msg, AIMessage) and msg.tool_calls:
             for tc in msg.tool_calls:
-                if tc.get('name') == 'query':
+                if tc.get('name') in ('query', 'execute_query'):
                     sql = tc.get('args', {}).get('sql')
 
         # 提取数据（从ToolMessage中）
@@ -745,43 +1602,50 @@ def extract_chart_tool_call(messages: list) -> Optional[Dict[str, Any]]:
     return None
 
 
-async def call_mcp_chart_tool(tool_name: str, args: Dict[str, Any], output_dir: str = "./charts") -> Optional[str]:
+async def call_mcp_chart_tool(tool_name: str, args: Dict[str, Any], output_dir: str = "./charts", timeout: float = 30.0) -> Optional[str]:
     """使用原始 MCP 客户端调用图表工具（绕过 LangChain 适配器的限制）
 
     Args:
         tool_name: 工具名称
         args: 工具参数
         output_dir: 输出目录
+        timeout: 超时时间（秒），默认30秒
 
     Returns:
         保存的图片路径，失败返回 None
     """
     from mcp import ClientSession
     from mcp.client.sse import sse_client
+    import asyncio
 
     url = "http://localhost:3033/sse"
 
     try:
-        async with sse_client(url) as streams:
-            async with ClientSession(*streams) as session:
-                await session.initialize()
+        # 添加超时保护
+        async def _call_with_session():
+            async with sse_client(url) as streams:
+                async with ClientSession(*streams) as session:
+                    await session.initialize()
 
-                result = await session.call_tool(tool_name, args)
+                    result = await session.call_tool(tool_name, args)
 
-                if hasattr(result, 'content') and result.content:
-                    for item in result.content:
-                        if hasattr(item, 'type') and item.type == 'image':
-                            if hasattr(item, 'data') and item.data:
-                                # 保存 Base64 图片
-                                return _save_base64_image(item.data, output_dir, "png")
-                        elif hasattr(item, 'text') and item.text:
-                            # 可能是 URL 或其他文本
-                            text = item.text
-                            if text.startswith("http"):
-                                return text
+                    if hasattr(result, 'content') and result.content:
+                        for item in result.content:
+                            if hasattr(item, 'type') and item.type == 'image':
+                                if hasattr(item, 'data') and item.data:
+                                    return _save_base64_image(item.data, output_dir, "png")
+                            elif hasattr(item, 'text') and item.text:
+                                # 可能是 URL 或其他文本
+                                text = item.text
+                                if text.startswith("http"):
+                                    return text
+                    return None
 
-                return None
+        return await asyncio.wait_for(_call_with_session(), timeout=timeout)
 
+    except asyncio.TimeoutError:
+        print(f"[MCP] Chart tool call timeout after {timeout}s")
+        return None
     except Exception as e:
         print(f"[MCP] Chart tool call failed: {e}")
         return None
@@ -813,14 +1677,68 @@ def _save_base64_image(base64_data: str, output_dir: str, ext: str = "png") -> s
     return filepath
 
 
-async def _generate_default_answer(query_result: QueryResult, sql: str, chart_config: ChartConfig) -> str:
+def _should_generate_chart_for_query(query: str) -> bool:
+    """
+    判断是否应该为查询生成图表
+
+    Args:
+        query: 用户查询
+
+    Returns:
+        bool: 是否应该生成图表
+    """
+    if not query:
+        return False
+
+    query_lower = query.lower()
+
+    # 图表关键词 - 这些查询通常需要可视化
+    chart_keywords = [
+        # 占比/分布类
+        '占比', '比例', '分布', '百分比', '%', 'proportion', 'distribution',
+        # 趋势类
+        '趋势', '变化', '增长', '下降', '走势', 'trend', 'change',
+        # 排名类
+        '排名', '排行', 'top', 'highest', 'lowest', 'ranking',
+        # 统计类
+        '统计', '数量', '总计', '平均', 'maximum', 'minimum', 'count', 'total', 'average',
+        # 可视化类
+        '图表', '可视化', '展示', 'chart', 'graph', 'visualize',
+        # 对比类
+        '对比', '比较', '差异', 'compare', 'difference', 'vs',
+    ]
+
+    # 检查是否包含图表关键词
+    for keyword in chart_keywords:
+        if keyword in query_lower:
+            return True
+
+    # 时间相关查询
+    time_keywords = ['每月', '每年', '月度', '年度', 'daily', 'monthly', 'yearly', '按月', '按年']
+    for keyword in time_keywords:
+        if keyword in query_lower:
+            return True
+
+    # 省份/地区相关查询
+    location_keywords = ['省份', '城市', '地区', '各', 'province', 'city', 'region']
+    for keyword in location_keywords:
+        if keyword in query_lower:
+            return True
+
+    return False
+
+
+async def _generate_default_answer(query_result: QueryResult, sql: str, chart_config: ChartConfig, user_query: str = "") -> str:
     """
     生成默认的数据分析文本（当 LLM 没有生成分析时使用）
+
+    🔧 新增：集成 AnalysisNode 生成智能分析报告
 
     Args:
         query_result: 查询结果
         sql: SQL 语句
         chart_config: 图表配置
+        user_query: 用户原始查询（可选）
 
     Returns:
         str: 默认分析文本
@@ -832,11 +1750,89 @@ async def _generate_default_answer(query_result: QueryResult, sql: str, chart_co
     columns = query_result.columns
     row_count = query_result.row_count
 
+    # 数据覆盖范围提示（最小/最大日期）
+    coverage_bounds = _extract_date_bounds(rows, columns)
+    coverage_text = ""
+    if coverage_bounds:
+        min_d, max_d = coverage_bounds
+        coverage_text = f"数据覆盖范围：{min_d.isoformat()} 至 {max_d.isoformat()}"
+
+    # 🔧 新增：尝试使用 AnalysisNode 生成智能分析
+    try:
+        # 导入 AnalysisNode
+        from .nodes.analysis_node import create_analysis_node
+
+        # 将 QueryResult 转换为字典列表格式
+        data_list = []
+        for row in rows:
+            row_dict = {}
+            for j, col in enumerate(columns):
+                if j < len(row):
+                    row_dict[col] = row[j]
+            data_list.append(row_dict)
+
+        # 创建分析节点并生成报告
+        analysis_node = create_analysis_node()
+        report = analysis_node.generate_analysis_report(
+            query=user_query or "数据查询",
+            data=data_list,
+            sql=sql
+        )
+
+        # 构建增强的分析文本
+        answer_parts = [
+            "📊 [数据分析结果]\n"
+        ]
+
+        # 数据概要
+        answer_parts.append(f"📈 **数据概要**: 共 {row_count} 条记录\n")
+        if coverage_text:
+            answer_parts.append(f"📅 {coverage_text}\n")
+
+        # 洞察发现
+        if report.insights:
+            answer_parts.append("💡 **洞察发现**:\n")
+            for insight in report.insights:
+                severity_emoji = {
+                    "info": "ℹ️",
+                    "warning": "⚠️",
+                    "critical": "🚨"
+                }.get(insight.severity, "•")
+                answer_parts.append(f"{severity_emoji} {insight.title}: {insight.description}\n")
+
+        # 数值统计
+        if report.column_stats:
+            answer_parts.append("\n📊 **数值统计**:\n")
+            for col, stat in report.column_stats.items():
+                if stat["type"] == "numeric":
+                    answer_parts.append(f"• **{col}**: 最小={stat['min']}, 最大={stat['max']}, 平均={stat['mean']:.2f}\n")
+
+        # 建议和图表说明
+        if report.suggestions:
+            answer_parts.append("\n💡 **分析建议**:\n")
+            for suggestion in report.suggestions[:3]:  # 最多3条建议
+                answer_parts.append(f"• {suggestion}\n")
+
+        # 图表推荐
+        if report.chart_recommendation:
+            rec = report.chart_recommendation
+            answer_parts.append(f"\n📊 **可视化**: 已推荐 {rec.get('chart_type', '图表')} 类型\n")
+
+        return "".join(answer_parts)
+
+    except Exception as e:
+        logger.warning(f"AnalysisNode 集成失败，使用基础分析: {e}")
+        # 回退到原始逻辑
+        pass
+
+    # ===== 原始逻辑（作为回退） =====
     # 构建分析文本
     answer_parts = [
         "📊 [数据分析结果]",
         f"\n根据查询结果，共找到 {row_count} 条记录：\n"
     ]
+    if coverage_text:
+        answer_parts.append(f"📅 {coverage_text}\n")
 
     # 添加前几条数据预览
     preview_count = min(5, row_count)
@@ -921,10 +1917,125 @@ def _analyze_numeric_data(rows: list, columns: list) -> str:
     return "\n".join(analysis_parts) if analysis_parts else ""
 
 
+def _validate_numerical_claims(
+    answer: str,
+    query_result: QueryResult,
+    sql: str
+) -> tuple[str, bool]:
+    """
+    验证AI回答中的数值声明是否与查询结果一致
+
+    主要检测占比计算错误，例如：
+    - 安徽客户1000人，总客户1000人，AI却得出"占比10%"（应为100%）
+
+    Args:
+        answer: AI生成的回答文本
+        query_result: 查询结果对象
+        sql: 执行的SQL语句
+
+    Returns:
+        (修复后的回答, 是否需要修复)
+    """
+    if not query_result.raw_data or len(query_result.raw_data) == 0:
+        return answer, False
+
+    # 提取回答中的百分比声明
+    # 匹配模式: "10%", "占比为10", "比例 10.5", etc.
+    percentage_patterns = [
+        r'(\d+\.?\d*)%',                    # 10%
+        r'占比\s*(?:为)?\s*(\d+\.?\d*)',    # 占比为10
+        r'比例\s*(?:为)?\s*(\d+\.?\d*)',    # 比例为10
+        r'(\d+\.?\d*)\s*个百分比',          # 10个百分比
+    ]
+
+    import re
+    all_matches = []
+    for pattern in percentage_patterns:
+        matches = re.findall(pattern, answer)
+        all_matches.extend([(m, pattern) for m in matches])
+
+    if not all_matches:
+        return answer, False
+
+    # 获取查询结果中的数值
+    values = []
+    if query_result.raw_data:
+        for row in query_result.raw_data:
+            for v in row.values():
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    values.append(float(v))
+
+    if len(values) < 2:
+        # 单点数据无法验证占比
+        return answer, False
+
+    # 核心验证逻辑：检测相同数值时的占比错误
+    # 如果两个主要数值相等（如安徽客户1000，总客户1000），占比应该是100%
+    # 提取前两个主要数值进行比较
+    main_values = sorted(values, key=abs, reverse=True)[:2]
+
+    if len(main_values) >= 2:
+        val1, val2 = main_values[0], main_values[1]
+
+        # 如果两个数值非常接近（相对误差小于0.1%）
+        if val1 > 0 and abs(val1 - val2) / val1 < 0.001:
+            # 应该是100%，检查AI是否声明了错误的百分比
+            needs_fix = False
+            fixed_answer = answer
+
+            for match_str, pattern in all_matches:
+                try:
+                    percentage_val = float(match_str)
+                    # 如果声明的百分比不是100%或接近100%，需要修复
+                    if abs(percentage_val - 100) > 1:
+                        needs_fix = True
+                        # 替换错误的百分比为100%
+                        if '%' in pattern:
+                            fixed_answer = re.sub(
+                                r'\d+\.?\d*%',
+                                '100%',
+                                fixed_answer
+                            )
+                        else:
+                            fixed_answer = re.sub(
+                                r'占比\s*(?:为)?\s*\d+\.?\d*',
+                                '占比为100',
+                                fixed_answer
+                            )
+                            fixed_answer = re.sub(
+                                r'比例\s*(?:为)?\s*\d+\.?\d*',
+                                '比例为100',
+                                fixed_answer
+                            )
+                except (ValueError, TypeError):
+                    continue
+
+            if needs_fix:
+                print(f"[Agent] ⚠️ 检测到数值计算错误（两个主要数值相近: {val1} vs {val2}），已自动修复为100%")
+                return fixed_answer, True
+
+    # 额外检查：如果只有一个数值且是计数，避免声明错误的占比
+    if len(values) == 1:
+        val = values[0]
+        # 检查是否声明了与自身相关的百分比
+        for match_str, pattern in all_matches:
+            try:
+                percentage_val = float(match_str)
+                # 如果数值较大（>100）且声明了小百分比，可能是错误
+                if val > 100 and percentage_val < 50:
+                    # 这种情况下可能是AI幻觉，但不直接修复，只记录警告
+                    print(f"[Agent] ⚠️ 可能的数值幻觉: 单一数值{val}但声明了{percentage_val}%占比")
+            except (ValueError, TypeError):
+                continue
+
+    return answer, False
+
+
 async def build_visualization_response(
     messages: list,
     final_content: str,
-    auto_generate_chart: bool = True
+    auto_generate_chart: bool = True,
+    user_query: str = ""
 ) -> VisualizationResponse:
     """构建完整的可视化响应，并可选生成图表
 
@@ -932,10 +2043,49 @@ async def build_visualization_response(
         messages: 完整的消息历史
         final_content: 最终的AI回复内容
         auto_generate_chart: 是否自动生成图表文件
+        user_query: 用户原始查询（用于智能数据分析）
 
     Returns:
         VisualizationResponse对象
     """
+    # 🔧 从 messages 中提取用户查询（如果未提供）
+    if not user_query and messages:
+        for msg in messages:
+            if hasattr(msg, 'type') and msg.type == 'human':
+                user_query = msg.content
+                break
+            elif isinstance(msg, dict) and msg.get('type') == 'human':
+                user_query = msg.get('content', '')
+                break
+            elif hasattr(msg, 'content') and not hasattr(msg, 'type'):
+                # 可能是 HumanMessage
+                content = msg.content
+                if isinstance(content, str) and len(content) < 500:
+                    user_query = content
+                    break
+    # ========================================================================
+    # 🔍 检测反射节点的错误消息
+    # ========================================================================
+    # 如果最终回答包含这些错误指示器，说明反射节点检测到了错误但被当作正常回答返回
+    ERROR_INDICATORS = [
+        "**执行失败，正在进行自我修正**",
+        "**错误类型**:",
+        "error_category",
+    ]
+
+    is_error_response = any(indicator in final_content for indicator in ERROR_INDICATORS)
+
+    if is_error_response:
+        # 这是一个错误响应，返回失败状态
+        print("⚠️ [错误检测] 检测到反射节点错误消息，返回失败状态")
+        return VisualizationResponse(
+            success=False,
+            answer=final_content,
+            sql="",
+            chart=None,
+            error="Reflection node detected an error in the query"
+        )
+
     # 提取SQL和原始数据
     sql, raw_data = extract_tool_data(messages)
 
@@ -960,6 +2110,112 @@ async def build_visualization_response(
     # 构建QueryResult
     query_result = QueryResult.from_raw_data(raw_data) if raw_data else QueryResult()
 
+    # ========================================================================
+    # 🔥 数据一致性验证：防止 LLM 幻觉导致的数据不匹配问题
+    # ========================================================================
+    # 验证 LLM 生成的字段是否真实存在于查询结果中
+    llm_x_field = chart_config_data.get('x_field') if chart_config_data else None
+    llm_y_field = chart_config_data.get('y_field') if chart_config_data else None
+
+    actual_columns = []
+    if raw_data and len(raw_data) > 0:
+        actual_columns = list(raw_data[0].keys())
+
+    # 检测幻觉字段
+    hallucinated_fields = []
+    if llm_x_field and llm_x_field not in actual_columns:
+        hallucinated_fields.append(f"x_field: {llm_x_field}")
+    if llm_y_field and llm_y_field not in actual_columns:
+        hallucinated_fields.append(f"y_field: {llm_y_field}")
+
+    if hallucinated_fields:
+        print(f"⚠️ [数据验证] 检测到 LLM 幻觉字段: {hallucinated_fields}")
+        print(f"   实际字段: {actual_columns}，将使用智能字段映射")
+        # 清除幻觉配置，强制使用智能映射
+        chart_config_data = None
+
+    # 使用智能字段映射（如果有数据）
+    if raw_data and DATA_VALIDATION_ENABLED:
+        field_mapping = smart_field_mapping(raw_data, sql)
+        chart_rec = recommend_chart(raw_data, sql, final_content[:200] if final_content else "")
+
+        # 覆盖 LLM 提供的字段，使用真实数据映射
+        if not chart_config_data:
+            chart_config_data = {
+                'chart_type': chart_rec.chart_type,
+                'chart_title': chart_rec.title,
+                'x_field': field_mapping.x_field,
+                'y_field': field_mapping.y_field,
+            }
+            print(f"📊 [智能映射] X={field_mapping.x_field}, Y={field_mapping.y_field}, 类型={chart_rec.chart_type}")
+        else:
+            # 验证 LLM 配置的字段，如果无效则使用智能映射
+            if llm_x_field and llm_x_field not in actual_columns:
+                chart_config_data['x_field'] = field_mapping.x_field
+            if llm_y_field and llm_y_field not in actual_columns:
+                chart_config_data['y_field'] = field_mapping.y_field
+
+    # 基于数据自动生成双轴配置（销售额+订单量），避免单轴挤压
+    if raw_data:
+        dual_cfg = _build_dual_axis_chart_config(raw_data)
+        if dual_cfg:
+            if not chart_config_data:
+                chart_config_data = dual_cfg
+            else:
+                chart_config_data.setdefault('series', dual_cfg.get('series', []))
+                chart_config_data.setdefault('chart_type', dual_cfg.get('chart_type', 'line'))
+                chart_config_data.setdefault('x_field', dual_cfg.get('x_field'))
+                chart_config_data.setdefault('y_field', dual_cfg.get('y_field'))
+                chart_config_data['is_dual_axis'] = True
+                chart_config_data['left_axis_name'] = dual_cfg.get('left_axis_name', '')
+                chart_config_data['right_axis_name'] = dual_cfg.get('right_axis_name', '')
+
+    # 🔧 新增：如果没有图表配置但有数据，使用 AnalysisNode 生成图表推荐
+    if not chart_config_data and raw_data and len(raw_data) > 0:
+        try:
+            from .nodes.analysis_node import create_analysis_node
+
+            # 将 raw_data 转换为字典列表
+            data_list = raw_data if isinstance(raw_data[0], dict) else [
+                {col: row[i] for i, col in enumerate(actual_columns)}
+                for row in [[list(r.values()) if isinstance(r, dict) else r][0] for r in raw_data[:100]]
+            ] if actual_columns else []
+
+            if data_list:
+                analysis_node = create_analysis_node()
+                report = analysis_node.generate_analysis_report(
+                    query=user_query or "数据查询",
+                    data=data_list,
+                    sql=sql
+                )
+
+                # 使用 AnalysisNode 的图表推荐
+                if report.chart_recommendation:
+                    rec = report.chart_recommendation
+                    chart_type_map = {
+                        'pie': 'pie',
+                        'bar': 'bar',
+                        'line': 'line',
+                        'scatter': 'scatter',
+                        'radar': 'radar',
+                        'table': 'table'
+                    }
+                    recommended_type = chart_type_map.get(rec.get('chart_type', 'table'), 'table')
+
+                    # 判断是否应该生成图表（基于查询类型）
+                    should_gen = _should_generate_chart_for_query(user_query)
+                    if should_gen:
+                        chart_config_data = {
+                            'chart_type': recommended_type,
+                            'chart_title': f"{user_query[:20]}..." if len(user_query) > 20 else user_query,
+                            'x_field': rec.get('x_field'),
+                            'y_field': rec.get('y_field'),
+                            'generate_chart': True  # 标记需要生成图表
+                        }
+                        print(f"📊 [AnalysisNode推荐] 类型={recommended_type}, X={rec.get('x_field')}, Y={rec.get('y_field')}")
+        except Exception as e:
+            logger.warning(f"AnalysisNode 图表推荐失败: {e}")
+
     # 构建ChartConfig
     chart_path = mcp_chart_path  # 优先使用 mcp-echarts 的图表
 
@@ -974,14 +2230,40 @@ async def build_visualization_response(
             chart_type=chart_type,
             title=chart_config_data.get('chart_title', ''),
             x_field=chart_config_data.get('x_field'),
-            y_field=chart_config_data.get('y_field')
+            y_field=chart_config_data.get('y_field'),
+            series=chart_config_data.get('series', []),
+            is_dual_axis=chart_config_data.get('is_dual_axis', False),
+            left_axis_name=chart_config_data.get('left_axis_name', chart_config_data.get('y_field', '')),
+            right_axis_name=chart_config_data.get('right_axis_name', '')
         )
-        answer = chart_config_data.get('answer', final_content)
+
+        # 🔧 修复：避免重复内容
+        # 如果 chart_config_data['answer'] 和 final_content 重复，只保留一个
+        chart_answer = chart_config_data.get('answer', '').strip()
+        final_answer = final_content.strip()
+
+        if chart_answer and chart_answer in final_answer:
+            # chart_answer 是 final_answer 的子集，使用完整的
+            answer = final_answer
+        elif chart_answer and final_answer and chart_answer != final_answer:
+            # 两者不同且都有内容，检查是否有大量重复
+            # 如果相似度高，只保留较长的那个
+            similarity = len(set(chart_answer) & set(final_answer)) / max(len(set(chart_answer)), len(set(final_answer)), 1)
+            if similarity > 0.7:
+                answer = final_answer if len(final_answer) > len(chart_answer) else chart_answer
+            else:
+                answer = final_answer  # 默认使用 final_content
+        else:
+            answer = final_answer if final_answer else chart_answer
 
         # 如果没有 mcp-echarts 图表，尝试使用本地生成（回退方案）
         if not chart_path and auto_generate_chart:
             should_generate = chart_config_data.get('generate_chart', False)
-            if should_generate and raw_data:
+            # 🔧 如果没有明确设置 generate_chart，根据查询类型判断
+            if not should_generate:
+                should_generate = _should_generate_chart_for_query(user_query)
+
+            if should_generate and raw_data and chart_type != ChartType.TABLE:
                 chart_path = _generate_chart_file(
                     raw_data=raw_data,
                     chart_type=chart_type_str,
@@ -993,10 +2275,49 @@ async def build_visualization_response(
         chart_config = ChartConfig()
         answer = final_content
 
+        # 🔧 新增：即使没有 chart_config_data，如果查询需要图表且有数据，尝试生成
+        if not chart_path and auto_generate_chart and raw_data and _should_generate_chart_for_query(user_query):
+            try:
+                from .nodes.analysis_node import create_analysis_node
+
+                # 转换数据
+                actual_columns = list(raw_data[0].keys()) if raw_data and len(raw_data) > 0 else []
+                data_list = raw_data if isinstance(raw_data[0], dict) else []
+
+                if data_list:
+                    analysis_node = create_analysis_node()
+                    report = analysis_node.generate_analysis_report(
+                        query=user_query or "数据查询",
+                        data=data_list,
+                        sql=sql
+                    )
+
+                    if report.chart_recommendation:
+                        rec = report.chart_recommendation
+                        chart_type_str = rec.get('chart_type', 'table')
+                        if chart_type_str != 'table':
+                            chart_path = _generate_chart_file(
+                                raw_data=raw_data,
+                                chart_type=chart_type_str,
+                                title=f"{user_query[:20]}..." if len(user_query) > 20 else user_query,
+                                x_field=rec.get('x_field'),
+                                y_field=rec.get('y_field')
+                            )
+                            if chart_path:
+                                print(f"📊 [自动生成图表] {chart_type_str} 图表: {chart_path}")
+            except Exception as e:
+                logger.warning(f"自动图表生成失败: {e}")
+
+    # 🔥🔥🔥 【关键修复】数值验证：防止 AI 幻觉导致计算错误
+    # 验证AI生成的数值（如百分比）是否与查询结果一致
+    validated_answer, needs_fix = _validate_numerical_claims(answer, query_result, sql or '')
+    if needs_fix:
+        answer = validated_answer
+
     # 🔥🔥🔥 【关键修复】确保 answer 字段始终有内容
     # 如果 LLM 没有生成分析文本，基于查询结果生成默认分析
     if not answer or not answer.strip():
-        answer = _generate_default_answer(query_result, sql or '', chart_config)
+        answer = await _generate_default_answer(query_result, sql or '', chart_config, user_query)
         print("[Agent] LLM未生成分析文本，已生成默认数据分析")
 
     response = VisualizationResponse(
@@ -1008,11 +2329,12 @@ async def build_visualization_response(
     )
 
     # 将图表路径添加到响应中（如果生成了）
-    if chart_path:
-        if chart_path.startswith("http"):
-            response.answer = f"{answer}\n\n📊 图表链接: {chart_path}"
-        else:
-            response.answer = f"{answer}\n\n📊 图表已保存: {chart_path}"
+    if chart_path and isinstance(chart_path, str):
+        # 🔧 修复：检查 answer 中是否已经包含图表信息，避免重复添加
+        chart_link_text = f"图表链接: {chart_path}" if chart_path.startswith("http") else f"图表已保存: {chart_path}"
+        answer_str = str(answer) if answer is not None else ""
+        if "📊" not in answer_str and chart_link_text not in answer_str:
+            response.answer = f"{answer}\n\n📊 {chart_link_text}"
 
     return response
 
@@ -1111,7 +2433,16 @@ def _get_mcp_config():
         )
     
     print(f"✅ npx 可用: {npx_path}")
-    
+
+    # 确保DATABASE_URL包含SSL参数
+    db_url = config.database_url
+    if "sslmode" not in db_url.lower():
+        if "?" in db_url:
+            db_url += "&sslmode=require"
+        else:
+            db_url += "?sslmode=require"
+        print(f"🔒 添加SSL参数到数据库连接")
+
     mcp_config = {
         "postgres": {
             "transport": "stdio",
@@ -1119,7 +2450,7 @@ def _get_mcp_config():
             "args": [
                 "-y",
                 "@modelcontextprotocol/server-postgres",
-                config.database_url
+                db_url
             ],
         }
     }
@@ -1130,7 +2461,7 @@ def _get_mcp_config():
             "transport": "sse",
             "url": "http://localhost:3033/sse",
             "timeout": 30.0,
-            "sse_read_timeout": 120.0,
+            "sse_read_timeout": 30.0,
         }
 
     return mcp_config
@@ -1202,16 +2533,72 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
         else:
             print(f"⚠️ analyze_dataframe 工具未导入，无法添加")
         
+        # 🔥 添加语义层工具
+        from langchain_core.tools import StructuredTool
+
+        semantic_tools = [
+            StructuredTool.from_function(
+                func=resolve_business_term,
+                name="resolve_business_term",
+                description="解析业务术语（如'总收入'、'销售额'），返回语义层定义。输入: 术语名称，输出: JSON格式的度量定义",
+            ),
+            StructuredTool.from_function(
+                func=get_semantic_measure,
+                name="get_semantic_measure",
+                description="获取指定 Cube 的度量详情。输入: cube名称和度量名称，输出: 完整度量定义",
+            ),
+            StructuredTool.from_function(
+                func=list_available_cubes,
+                name="list_available_cubes",
+                description="列出所有可用的语义层 Cube（如 Orders、Customers、Products）",
+            ),
+            StructuredTool.from_function(
+                func=get_cube_measures,
+                name="get_cube_measures",
+                description="获取指定 Cube 的所有度量。输入: cube名称，输出: 度量列表",
+            ),
+            StructuredTool.from_function(
+                func=normalize_status_value,
+                name="normalize_status_value",
+                description="规范化状态值（如'已完成'→'completed'）",
+            ),
+        ]
+
+        # 将语义层工具添加到工具列表
+        _cached_tools.extend(semantic_tools)
+        print(f"✅ 已添加 {len(semantic_tools)} 个语义层工具")
+
+        # 添加表推荐工具
+        if TABLE_RECOMMENDATION_TOOLS_AVAILABLE:
+            table_recommendation_tools = [
+                StructuredTool.from_function(
+                    func=get_recommended_tables_for_query,
+                    name="get_recommended_tables",
+                    description="🎯 智能表推荐工具 - 基于查询内容推荐最相关的数据表。输入: 用户查询字符串，输出: 推荐表列表及理由",
+                ),
+                StructuredTool.from_function(
+                    func=get_table_description_by_name,
+                    name="get_table_description",
+                    description="获取指定表的详细描述信息。输入: 表名，输出: 表的详细描述、推荐用途、包含的列等",
+                ),
+            ]
+            _cached_tools.extend(table_recommendation_tools)
+            print(f"✅ 已添加 {len(table_recommendation_tools)} 个表推荐工具")
+        else:
+            print(f"⚠️  表推荐工具未可用，跳过注册")
+
         # 最终验证
         final_tool_count = len(_cached_tools)
         final_tool_names = [getattr(t, "name", str(t)) for t in _cached_tools]
+        semantic_tool_names = [getattr(t, "name", str(t)) for t in semantic_tools]
         print(f"\n{'='*60}")
         print(f"✅ FORCED REGISTRATION: 最终工具列表包含 {final_tool_count} 个工具")
         print(f"   工具名称: {', '.join(final_tool_names)}")
         print(f"   - inspect_file: {'✅' if 'inspect_file' in final_tool_names else '❌'}")
         print(f"   - analyze_dataframe: {'✅' if 'analyze_dataframe' in final_tool_names else '❌'}")
+        print(f"   - 语义层工具: {', '.join(semantic_tool_names)}")
         print(f"{'='*60}\n")
-        
+
     except FileNotFoundError as e:
         error_message = str(e)
         print(
@@ -1398,8 +2785,46 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 
         if len(other_messages) > MAX_CONTEXT_MESSAGES:
             print(f"📊 [上下文优化] 原始消息数: {len(other_messages)}, 截断到: {MAX_CONTEXT_MESSAGES}")
-            # 保留最近的消息，但确保包含最后一条 HumanMessage
-            other_messages = other_messages[-MAX_CONTEXT_MESSAGES:]
+            # 🔧 智能截断：保留 AIMessage-ToolMessage 配对关系
+            # 从后往前扫描，确保每条 AIMessage 后面有完整的 ToolMessage 响应
+            from langchain_core.messages import AIMessage
+            selected_messages = []
+            tool_call_ids_to_include = set()
+
+            # 首先找到最近的 MAX_CONTEXT_MESSAGES 条消息
+            temp_selected = other_messages[-MAX_CONTEXT_MESSAGES:]
+
+            # 从后往前扫描，找出所有需要保留的 tool_call_id
+            for msg in reversed(temp_selected):
+                selected_messages.insert(0, msg)
+                if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    # 记录这个 AIMessage 的所有 tool_call_id
+                    for tc in msg.tool_calls:
+                        tool_call_ids_to_include.add(tc.get('id', ''))
+
+            # 🔥 关键修复：检查 selected_messages 中是否有 ToolMessage 的 tool_call_id
+            # 不在 tool_call_ids_to_include 中，如果是的话，这表示截断破坏了配对
+            # 需要找到完整的消息组重新构建
+            clean_messages = []
+            pending_tool_calls = {}  # tool_call_id -> AIMessage
+
+            for msg in selected_messages:
+                if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    # 记录待匹配的工具调用
+                    for tc in msg.tool_calls:
+                        pending_tool_calls[tc.get('id', '')] = msg
+                    clean_messages.append(msg)
+                elif isinstance(msg, ToolMessage):
+                    # 检查这个 ToolMessage 是否有对应的 AIMessage
+                    if msg.tool_call_id in pending_tool_calls:
+                        clean_messages.append(msg)
+                        del pending_tool_calls[msg.tool_call_id]
+                    # 如果 ToolMessage 的 tool_call_id 不在 pending_tool_calls 中，
+                    # 说明它的 AIMessage 被截断了，这个 ToolMessage 也要跳过
+                else:
+                    clean_messages.append(msg)
+
+            other_messages = clean_messages
             messages = system_messages + other_messages
 
         if not any(isinstance(m, SystemMessage) for m in messages):
@@ -1416,7 +2841,102 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
             else:
                 print(f"📝 [增强提示词] 包含拆分指令 (无具体数量)")
 
+        # 🔧 标准化消息内容：将 ToolMessage 的 list 格式转换为 string
+        # MCP 服务器返回的 ToolMessage.content 可能是 list 格式
+        # 但 LLM API 只接受 string 格式
+        normalized_messages = []
+        for msg in messages:
+            if isinstance(msg, ToolMessage) and isinstance(msg.content, list):
+                # 提取 list 中的 text 内容
+                text_parts = []
+                image_count = 0
+                for item in msg.content:
+                    if isinstance(item, dict):
+                        item_type = item.get('type', '')
+                        if item_type == 'image':
+                            # 图表成功生成，记录但不包含完整 base64 数据
+                            image_count += 1
+                            text_parts.append(f"[图表已生成: image/{item.get('id', 'unknown')}]")
+                        else:
+                            text = item.get('text', '')
+                            if text:
+                                # 截断过长的文本
+                                if len(text) > 10000:
+                                    text = text[:10000] + "...[内容过长已截断]"
+                                text_parts.append(text)
+                    elif isinstance(item, str):
+                        if len(item) > 10000:
+                            item = item[:10000] + "...[内容过长已截断]"
+                        text_parts.append(item)
+                # 创建新的 ToolMessage，content 为字符串
+                from langchain_core.messages import ToolMessage as TM
+                normalized_content = '\n'.join(text_parts) if text_parts else f"[工具返回了 {image_count} 个图像]"
+                normalized_messages.append(TM(content=normalized_content, tool_call_id=msg.tool_call_id))
+            else:
+                normalized_messages.append(msg)
+        messages = normalized_messages
+
+        # 🔧 [修复1] 消息清理逻辑：过滤未完成的 tool_calls
+        # 确保 LLM 收到的消息序列符合规范：AIMessage 的 tool_calls 必须有对应的 ToolMessage
+        from langchain_core.messages import AIMessage as LC_AIMessage, ToolMessage as LC_ToolMessage
+
+        # 第一遍：收集所有待处理的 tool_call_id
+        pending_tool_calls = set()
+        for msg in messages:
+            if isinstance(msg, LC_AIMessage) and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    tc_id = tc.get('id') if isinstance(tc, dict) else getattr(tc, 'id', None)
+                    if tc_id:
+                        pending_tool_calls.add(tc_id)
+
+        # 第二遍：检查 ToolMessage 是否响应了这些 tool_calls
+        for msg in messages:
+            if isinstance(msg, LC_ToolMessage):
+                tool_call_id = msg.tool_call_id
+                if tool_call_id in pending_tool_calls:
+                    pending_tool_calls.remove(tool_call_id)
+
+        # 第三遍：创建清理后的消息
+        if pending_tool_calls:
+            print(f"🔧 [消息清理] 发现 {len(pending_tool_calls)} 个未完成的 tool_calls，将被过滤")
+            cleaned_messages = []
+            for msg in messages:
+                if isinstance(msg, LC_AIMessage) and msg.tool_calls:
+                    # 只保留有对应 ToolMessage 的 tool_calls
+                    valid_tool_calls = []
+                    for tc in msg.tool_calls:
+                        tc_id = tc.get('id') if isinstance(tc, dict) else getattr(tc, 'id', None)
+                        if tc_id and tc_id not in pending_tool_calls:
+                            valid_tool_calls.append(tc)
+
+                    if valid_tool_calls:
+                        # 复制消息并只保留有效的 tool_calls
+                        cleaned_messages.append(LC_AIMessage(
+                            content=msg.content,
+                            tool_calls=valid_tool_calls,
+                            additional_kwargs=getattr(msg, 'additional_kwargs', {})
+                        ))
+                    else:
+                        # 如果没有有效的 tool_calls，保留消息但移除 tool_calls
+                        cleaned_messages.append(LC_AIMessage(content=msg.content))
+                        print(f"🔧 [消息清理] AIMessage 的所有 tool_calls 被移除")
+                else:
+                    cleaned_messages.append(msg)
+            messages = cleaned_messages
+        else:
+            print(f"🔧 [消息清理] 所有 tool_calls 均有效，无需清理")
+
         response = await llm_with_tools.ainvoke(messages)
+
+        # 🔧 时间聚合修正：年度/月份趋势必须按月分组
+        if getattr(response, "tool_calls", None):
+            try:
+                response.tool_calls = apply_time_aggregation_fix_to_tool_calls_v2(
+                    list(response.tool_calls),
+                    question
+                )
+            except Exception as e:
+                print(f"⚠️ [时间聚合修正失败] {e}")
 
         # 🔴 记录工具调用数量
         if response.tool_calls:
@@ -1443,8 +2963,13 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
                 extracted_sql = sql_matches[0].strip()
                 print(f"✅ 提取到SQL: {extracted_sql[:100]}...")
 
-                # 验证SQL安全性
-                is_safe, error_msg = SQLValidator.validate(extracted_sql)
+                # 验证SQL安全性（获取用户查询以支持占比查询检测）
+                user_query_for_validation = ""
+                for msg in messages:
+                    if isinstance(msg, HumanMessage):
+                        user_query_for_validation = str(msg.content)
+                        break
+                is_safe, error_msg = SQLValidator.validate(extracted_sql, user_query_for_validation)
                 if not is_safe:
                     print(f"❌ 提取的SQL不安全: {error_msg}")
                     return {"messages": [response]}
@@ -1500,9 +3025,17 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
         增强的路由逻辑：
         - 检测工具错误并路由回 Agent 进行自我修正
         - 检测 SQL 安全问题并阻止执行
+        - 限制修复次数防止无限循环
+        - 🔥 修复：强制工具执行后回到 agent 节点生成最终分析答案
         """
         messages = state["messages"]
         last_message = messages[-1]
+
+        # 新增: 检查修复次数，防止无限循环
+        tool_message_count = sum(1 for m in messages if isinstance(m, ToolMessage))
+        if tool_message_count > 10:  # 增加到10次以支持双轴图等复杂场景
+            print(f"⚠️ 达到最大工具调用次数限制 ({tool_message_count})，结束执行")
+            return END
 
         # A. 检查工具执行结果是否出错（ToolMessage 返回错误时路由回 Agent 修复）
         if isinstance(last_message, ToolMessage):
@@ -1519,16 +3052,33 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
             ]
             for indicator in error_indicators:
                 if indicator in content_str:
+                    # 新增: 如果已经多次修复仍然出错，直接结束
+                    if tool_message_count >= 3:
+                        print(f"❌ 修复次数已达上限 ({tool_message_count})，停止尝试")
+                        return END
                     print(f"🚨 检测到工具执行错误，路由回 Agent 进行自我修正...")
                     return "agent"
+
+            # 🔥 核心修复：工具执行成功后，强制回到 agent 让 LLM 生成最终分析答案
+            # 这解决了"工具调用后只返回原始数据而不生成分析文本"的问题
+            if tool_message_count < 5:  # 确保不会无限循环
+                print(f"✅ 工具执行完成，路由回 Agent 生成最终分析答案...")
+                return "agent"
 
         # B. 检查 AI 是否要调用工具
         if isinstance(last_message, AIMessage) and last_message.tool_calls:
             # 🔒 SQL 安全拦截：在工具执行前校验 SQL（使用独立的 SQLValidator 模块）
+            # 获取用户查询以支持占比查询检测
+            user_query_for_validation = ""
+            for msg in messages:
+                if isinstance(msg, HumanMessage):
+                    user_query_for_validation = str(msg.content)
+                    break
             for tc in last_message.tool_calls:
-                if tc.get('name') == 'query':
+                if tc.get('name') in ('query', 'execute_query'):
                     sql = tc.get('args', {}).get('sql', '')
-                    is_safe, error_msg = SQLValidator.validate(sql)
+                    # 🔧 SQL 安全校验（传入 user_query 以支持占比查询检测）
+                    is_safe, error_msg = SQLValidator.validate(sql, user_query_for_validation)
                     if not is_safe:
                         # 记录被拦截的 SQL（截断以保护日志）
                         sanitized_sql = SQLValidator.sanitize_for_logging(sql, 100)
@@ -1538,12 +3088,32 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
                         # 这样 Agent 可以看到错误并尝试修正
             return "tools"
 
+        # 🔥 新增：如果最后一条消息是 AIMessage 但没有有意义的 content，继续生成
+        if isinstance(last_message, AIMessage):
+            content = last_message.content
+            # 检查是否没有 content 或 content 太短（少于20个字符）
+            if not content or len(content.strip()) < 20:
+                print(f"⚠️ AIMessage 没有有意义的 content (长度: {len(content) if content else 0})，需要继续生成...")
+                # 但要避免无限循环，检查前面是否已经有多次尝试
+                empty_content_count = sum(
+                    1 for m in messages
+                    if isinstance(m, AIMessage) and (not m.content or len(m.content.strip()) < 20)
+                )
+                if empty_content_count < 3:  # 最多允许3次空内容尝试
+                    return "agent"
+                else:
+                    print(f"❌ 空内容尝试次数已达上限 ({empty_content_count})，结束执行")
+
         return END
 
     # 🔒 创建带安全校验的工具节点（使用独立的 SQLValidator 模块）
     class SafeToolNode:
         """
-        带 SQL 安全校验的工具节点包装器
+        带 SQL 安全校验和优化的工具节点包装器
+
+        功能：
+        1. 拦截危险 SQL（DML/DDL 操作）
+        2. 自动优化占比类查询的单次 COUNT 模式为 GROUP BY 查询
 
         当 Agent 尝试执行危险 SQL 时，不会真正执行，
         而是返回一个错误消息，让 Agent 有机会修正并重试。
@@ -1551,16 +3121,123 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
         def __init__(self, tools):
             self._tool_node = ToolNode(tools)
 
+        def _optimize_proportion_query(self, query: str, user_query: str) -> str:
+            """
+            检测占比类查询的单次 COUNT 模式，自动转换为 GROUP BY 查询
+
+            检测条件：
+            1. 用户问题包含"占比"、"比例"、"分布"、"多少"等关键词
+            2. SQL 是 SELECT COUNT(*) FROM table WHERE single_condition
+            3. WHERE 条件是简单的等值比较或 LIKE
+
+            返回优化后的 GROUP BY 查询
+            """
+            import re
+
+            # 检测占比类关键词
+            proportion_keywords = ['占比', '比例', '分布', '多少', '百分比', '客户占比']
+            is_proportion_question = any(kw in user_query for kw in proportion_keywords)
+
+            if not is_proportion_question:
+                return query
+
+            # 检测 SQL 模式：SELECT COUNT(*) FROM table WHERE condition
+            # 支持多种 COUNT 格式: COUNT(*), COUNT( * ), COUNT(column)
+            count_pattern = r"SELECT\s+COUNT\s*\(\s*(\*|\w+)\s*\)\s+FROM\s+(\w+)\s+WHERE\s+(\w+)\s*(?:=|LIKE)\s*([^\s;]+)"
+            match = re.match(count_pattern, query, re.IGNORECASE)
+
+            if match:
+                table_name = match.group(2)
+                column_name = match.group(3)
+                value_match = match.group(4)
+
+                # 解析目标值（去除引号）
+                target_value = value_match.strip("'\"")
+
+                # 生成优化的 GROUP BY 查询
+                if 'LIKE' in query.upper():
+                    # 地址类型查询，使用 CASE WHEN 分类
+                    optimized = f'''SELECT
+    CASE
+        WHEN {column_name} LIKE '%{target_value}%' THEN '{target_value}'
+        WHEN {column_name} LIKE '%北京%' THEN '北京'
+        WHEN {column_name} LIKE '%上海%' THEN '上海'
+        WHEN {column_name} LIKE '%深圳%' THEN '深圳'
+        WHEN {column_name} LIKE '%广州%' THEN '广州'
+        ELSE '其他'
+    END as category,
+    COUNT(*) as value
+FROM {table_name}
+GROUP BY category;'''
+                else:
+                    # 简单等值查询
+                    optimized = f'''SELECT
+    CASE
+        WHEN {column_name} = '{target_value}' THEN '{target_value}'
+        ELSE '其他'
+    END as category,
+    COUNT(*) as value
+FROM {table_name}
+GROUP BY category;'''
+
+                logger.info(f"[SQL优化] 检测到占比类单次COUNT查询，自动转换为GROUP BY")
+                logger.info(f"  原始SQL: {query[:100]}...")
+                logger.info(f"  优化SQL: {optimized[:100]}...")
+                return optimized
+
+            return query
+
         async def __call__(self, state: MessagesState):
             messages = state["messages"]
             last_message = messages[-1]
 
-            # 在执行 query 工具前进行安全校验
+            # 🔧 提取原始用户查询用于趋势查询检测和占比查询优化
+            user_query = ""
+            for msg in messages:
+                if isinstance(msg, HumanMessage):
+                    user_query = str(msg.content)
+                    break
+
+            # 在执行 query 工具前进行安全校验和优化
             if isinstance(last_message, AIMessage) and last_message.tool_calls:
                 for tc in last_message.tool_calls:
-                    if tc.get('name') == 'query':
+                    if tc.get('name') in ('query', 'execute_query'):
                         sql = tc.get('args', {}).get('sql', '')
-                        is_safe, error_msg = SQLValidator.validate(sql)
+
+                        # 🔧 核心修复：占比类查询自动优化
+                        optimized_sql = self._optimize_proportion_query(sql, user_query)
+                        if optimized_sql != sql:
+                            # 需要修改 tool_call 中的 SQL
+                            # 由于 tool_call 是不可变的，我们需要创建新的工具调用
+                            new_tool_calls = []
+                            for original_tc in last_message.tool_calls:
+                                if original_tc.get('name') in ('query', 'execute_query'):
+                                    # 创建修改后的工具调用参数
+                                    new_args = dict(original_tc.get('args', {}))
+                                    new_args['sql'] = optimized_sql
+                                    new_tool_calls.append({
+                                        'name': original_tc.get('name'),
+                                        'args': new_args,
+                                        'id': original_tc.get('id', ''),
+                                        'type': original_tc.get('type', 'tool_call')
+                                    })
+                                else:
+                                    # 其他工具调用保持不变
+                                    new_tool_calls.append(dict(original_tc))
+
+                            # 创建带有修改后工具调用的新 AIMessage
+                            modified_message = AIMessage(
+                                content=last_message.content,
+                                tool_calls=new_tool_calls
+                            )
+                            # 用修改后的消息替换原消息
+                            state["messages"] = list(messages[:-1]) + [modified_message]
+                            # 重新获取 last_message
+                            last_message = modified_message
+                            sql = optimized_sql
+
+                        # 🔧 SQL 安全校验（传入 user_query 以支持占比查询检测）
+                        is_safe, error_msg = SQLValidator.validate(sql, user_query)
                         if not is_safe:
                             # 返回一个错误消息，而不是执行危险的 SQL
                             # 这让 Agent 知道被拦截了，可以尝试生成安全的查询
@@ -1569,6 +3246,21 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
                                     ToolMessage(
                                         content=f"🚫 SQL 执行被安全系统拦截: {error_msg}\n\n"
                                                 f"请只生成 SELECT 查询语句，不要尝试修改或删除数据。",
+                                        tool_call_id=tc.get('id', 'unknown')
+                                    )
+                                ]
+                            }
+
+                        # 🔧 新增：表选择验证（地理查询专用）
+                        is_table_valid, table_error_msg, suggested_sql = SQLValidator.validate_table_selection(sql, user_query)
+                        if not is_table_valid:
+                            # 返回一个错误消息，引导 Agent 使用正确的表
+                            suggestion = f"\n\n建议使用: {suggested_sql}" if suggested_sql else ""
+                            return {
+                                "messages": [
+                                    ToolMessage(
+                                        content=f"⚠️ 表选择错误: {table_error_msg}{suggestion}\n\n"
+                                                f"请修改 SQL 使用正确的表后重试。",
                                         tool_call_id=tc.get('id', 'unknown')
                                     )
                                 ]
@@ -1607,7 +3299,7 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
         for msg in reversed(messages):
             if isinstance(msg, AIMessage) and msg.tool_calls:
                 for tc in msg.tool_calls:
-                    if tc.get('name') == 'query':
+                    if tc.get('name') in ('query', 'execute_query'):
                         original_sql = tc.get('args', {}).get('sql', '')
 
                         # 执行 SQL 质量检查
@@ -1644,21 +3336,175 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
         # 没有发现问题，直接返回
         return {"messages": []}
 
+    # ================================================================
+    # 🔧 新增：企业级可信智能数据体节点
+    # ================================================================
+
+    # 创建节点实例
+    planning_node = create_planning_node(enable_logging=True, min_confidence=0.6)
+    reflection_node = create_reflection_node(max_retries=3, enable_logging=True)
+    clarification_node = create_clarification_node(confidence_threshold=0.6, enable_logging=True)
+
+    # Planning 节点包装
+    async def planning_node_wrapper(state: MessagesState) -> Dict:
+        """Planning 节点包装器"""
+        return planning_node(state)
+
+    # Reflection 节点包装
+    async def reflection_node_wrapper(state: MessagesState) -> Dict:
+        """Reflection 节点包装器"""
+        return reflection_node(state)
+
+    # Clarification 节点包装
+    async def clarification_node_wrapper(state: MessagesState) -> Dict:
+        """Clarification 节点包装器"""
+        return clarification_node(state)
+
+    # 路由函数：决定是否需要澄清
+    def should_clarify(state: MessagesState) -> Literal["clarification", "agent"]:
+        """检查是否需要澄清"""
+        messages = state["messages"]
+
+        # 检查是否有澄清结果
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage) and hasattr(msg, 'content'):
+                # 检查是否是澄清消息
+                if "需要澄清" in str(msg.content) or "🤔" in str(msg.content):
+                    return "clarification"
+
+        # 检查是否有执行计划中的低置信度
+        if "__execution_plan__" in state:
+            plan = state["__execution_plan__"]
+            if plan.get("confidence", 1.0) < 0.6:
+                return "clarification"
+
+        return "agent"
+
+    # 路由函数：决定是否重试
+    def should_retry_after_reflection(state: MessagesState) -> Literal["agent", END]:
+        """反思后决定是否重试或继续执行"""
+        messages = state["messages"]
+
+        # 首先检查是否已经执行了SQL查询
+        has_query_result = False
+        has_sql_data = False
+        has_chart = False  # 🔧 新增：检查是否已生成图表
+
+        for msg in reversed(messages):
+            if isinstance(msg, ToolMessage):
+                content = str(msg.content)
+                # 检查是否是SQL查询返回的数据（有列名和行）
+                if '"columns"' in content or '"rows"' in content:
+                    has_sql_data = True
+                    break
+                # 🔧 检查是否生成了图表（image类型内容）
+                if isinstance(msg.content, list):
+                    for item in msg.content:
+                        if isinstance(item, dict) and item.get('type') == 'image':
+                            has_chart = True
+                            break
+                elif 'image' in content.lower() or '图表已生成' in content:
+                    has_chart = True
+                    break
+                # 检查是否是query工具的调用
+                for earlier_msg in messages:
+                    if isinstance(earlier_msg, AIMessage) and earlier_msg.tool_calls:
+                        for tc in earlier_msg.tool_calls:
+                            if tc.get('name') in ('query', 'execute_query'):
+                                has_query_result = True
+                                break
+
+        # 检查反思结果
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage):
+                content = str(msg.content)
+                # 如果有错误且重试次数未超限
+                if "🔄 执行失败" in content and "正在重新生成查询" in content:
+                    retry_count = state.get("__retry_count__", 0)
+                    if retry_count < 3:
+                        return "agent"
+                    return END
+
+                if "❌ 检测到错误" in content:
+                    retry_count = state.get("__retry_count__", 0)
+                    if retry_count < 3:
+                        return "agent"
+                    return END
+
+                # 如果执行成功但还没有SQL数据，继续执行
+                if "✅ 执行成功" in content or "查询已成功执行" in content:
+                    # 🔧 改进的停止条件：
+                    # 1. 有图表 + 分析完整 -> 结束
+                    # 2. 有SQL数据但无图表 -> 也允许结束（避免无限循环）
+                    # 3. 没有SQL数据 -> 继续执行
+
+                    analysis_length = len(content)
+
+                    # 情况1：完美完成（图表 + 分析）
+                    if has_chart and analysis_length >= 100:
+                        logger.info(f"已生成图表且分析完整({analysis_length}字)，结束执行")
+                        return END
+                    elif has_chart:
+                        logger.info(f"已生成图表但分析过短({analysis_length}字)，继续生成分析...")
+                        return "agent"
+
+                    # 情况2：有SQL数据但无图表（趋势查询可能未生成图表）
+                    # 允许结束以避免无限循环，但记录日志
+                    if has_sql_data:
+                        if analysis_length < MIN_ANALYSIS_LENGTH:
+                            logger.warning(f"有SQL数据但分析过短({analysis_length}字)，允许结束以避免循环")
+                        else:
+                            logger.info(f"已获取SQL查询结果且有基本分析({analysis_length}字)，结束执行")
+                        return END
+
+                    # 情况3：还没有SQL数据，继续执行
+                    logger.info("工具执行成功，但还没有SQL查询结果，继续执行...")
+                    return "agent"
+
+        # 如果还没有SQL数据且没有错误，继续执行
+        if not has_sql_data:
+            # 检查是否有任何query工具调用
+            query_called = False
+            for msg in messages:
+                if isinstance(msg, AIMessage) and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        if tc.get('name') in ('query', 'execute_query'):
+                            query_called = True
+                            break
+
+            if not query_called:
+                logger.info("还没有执行SQL查询，继续执行...")
+                return "agent"
+
+        return END
+
     # 构建图
     builder = StateGraph(MessagesState)
+
+    # 添加节点
     builder.add_node("agent", call_model)
     builder.add_node("tools", tool_node)
     builder.add_node("sql_quality_check", sql_quality_check_node)
-    builder.add_edge(START, "agent")
+    builder.add_node("planning", planning_node_wrapper)    # 🔧 新增：计划节点
+    builder.add_node("reflection", reflection_node_wrapper)  # 🔧 新增：反思节点
+    builder.add_node("clarification", clarification_node_wrapper)  # 🔧 新增：澄清节点
+
+    # 构建边（新的工作流）
+    # START → planning → [needs_clarification?] → clarification → agent → tools → reflection → [should_retry?] → agent/END
+    builder.add_edge(START, "planning")
+    builder.add_conditional_edges("planning", should_clarify)
+    builder.add_edge("clarification", "agent")
     builder.add_conditional_edges("agent", should_continue)
-    builder.add_edge("tools", "sql_quality_check")
-    builder.add_edge("sql_quality_check", "agent")  # 质量检查后返回agent
+    builder.add_edge("tools", "reflection")  # 🔧 修改：工具执行后进入反思节点
+    builder.add_conditional_edges("reflection", should_retry_after_reflection)  # 🔧 新增：反思后路由
+    builder.add_edge("sql_quality_check", END)  # 🔧 修改：质量检查后结束（进入reflection处理）
 
     # 持久化 checkpointer
     _cached_checkpointer = MemorySaver()
     _cached_agent = builder.compile(checkpointer=_cached_checkpointer)
 
     print("✅ Agent 初始化完成！")
+    print("📋 工作流: START → planning → clarification → agent → tools → reflection → agent/END")
 
     return _cached_agent, _cached_mcp_client
 
@@ -1666,6 +3512,20 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 async def reset_agent():
     """重置 Agent 缓存（用于重新连接或配置变更）"""
     global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer, _cached_db_type
+
+    # 🔥 关闭 MCP 客户端连接
+    if _cached_mcp_client is not None:
+        try:
+            # 尝试关闭 MCP 客户端
+            if hasattr(_cached_mcp_client, 'close'):
+                await _cached_mcp_client.close()
+            elif hasattr(_cached_mcp_client, '__aenter__'):
+                # 如果是 async context manager，尝试清理
+                await _cached_mcp_client.__aexit__(None, None, None)
+            print("🔄 MCP 客户端已关闭")
+        except Exception as e:
+            print(f"⚠️ 关闭MCP客户端时出错: {e}")
+
     _cached_agent = None
     _cached_mcp_client = None
     _cached_tools = None
@@ -1686,6 +3546,10 @@ async def run_agent(question: str, thread_id: str = "1", verbose: bool = True, d
     Returns:
         VisualizationResponse: 结构化的可视化响应
     """
+    # 🔧 新增：设置用户查询上下文（用于地理查询智能推荐）
+    if DATABASE_TOOLS_AVAILABLE:
+        _set_user_query(question)
+
     # 🚀 使用持久化的 Agent（传递 db_type 参数）
     agent, mcp_client = await _get_or_create_agent(db_type=db_type)
 
@@ -1746,7 +3610,7 @@ async def run_agent(question: str, thread_id: str = "1", verbose: bool = True, d
                             print(f"     📦 工具返回: {preview}")
 
     # 构建可视化响应（异步，支持 mcp-echarts 图表生成）
-    viz_response = await build_visualization_response(all_messages, final_content)
+    viz_response = await build_visualization_response(all_messages, str(final_content) if final_content else "", auto_generate_chart=True, user_query=question)
     
     if verbose:
         print(f"\n{'='*60}")
@@ -1759,7 +3623,11 @@ async def run_agent(question: str, thread_id: str = "1", verbose: bool = True, d
         print(f"   - 数据行数: {viz_response.data.row_count}")
         print(f"   - 推荐图表: {viz_response.chart.chart_type.value}")
         print(f"   - 图表标题: {viz_response.chart.title or '无'}")
-    
+
+    # 🔧 新增：清除用户查询上下文
+    if DATABASE_TOOLS_AVAILABLE:
+        _clear_user_query()
+
     return viz_response
 
 
@@ -1966,4 +3834,5 @@ if __name__ == "__main__":
 
     # Run interactive mode
     asyncio.run(interactive_mode())
+
 

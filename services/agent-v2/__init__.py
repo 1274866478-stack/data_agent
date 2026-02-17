@@ -31,7 +31,7 @@ __version__ = "2.0.0"
 
 # 核心导出
 from .core import AgentFactory, create_agent, get_default_factory
-from .config import AgentConfig, get_config
+from .agent_config_module import AgentConfig, get_config
 from .middleware import SQLSecurityMiddleware, TenantIsolationMiddleware
 from .subagents import SubAgentManager, create_subagent_manager
 

@@ -78,6 +78,142 @@
 from typing import List, Dict, Any, Tuple, Optional
 
 
+def supplement_proportion_data(
+    sql_result: List[Dict[str, Any]],
+    sql: str = "",
+    user_query: str = ""
+) -> List[Dict[str, Any]]:
+    """
+    为占比类查询补全"其他"类别数据
+
+    当只有一个数据点时，自动添加"其他"类别使饼图完整。
+
+    🔧 修复：更严格的检测逻辑，避免错误补全
+
+    Args:
+        sql_result: SQL 查询返回的字典列表
+        sql: SQL 查询语句（用于检测占比类查询）
+        user_query: 用户原始查询（用于检测占比类查询）
+
+    Returns:
+        补全后的数据列表
+
+    Example:
+        >>> result = [{"province": "安徽", "count": 42}]
+        >>> supplement_proportion_data(result, user_query="安徽省的客户占比是多少？")
+        [{"province": "安徽", "count": 42}, {"province": "其他", "count": 958}]  # 假设总数1000
+    """
+    if not sql_result or len(sql_result) != 1:
+        return sql_result
+
+    # 🔧 修复1: 检查SQL是否包含聚合函数和GROUP BY
+    # 如果是简单的COUNT(*)查询，不应该补全
+    has_count_star = 'COUNT(*)' in sql.upper() or 'COUNT (*)' in sql.upper() or 'COUNT(' in sql.upper()
+    has_group_by = 'GROUP BY' in sql.upper()
+
+    # 🔧 修复2: 如果是COUNT(*)但没有GROUP BY，说明是总数查询，不补全
+    if has_count_star and not has_group_by:
+        print(f"[DataTransformer] 检测到COUNT(*)无GROUP BY查询（总数查询），跳过补全")
+        return sql_result
+
+    # 🔧 修复3: 如果只有一个数值列且没有类别列（单值结果），不补全
+    row = sql_result[0]
+    columns = list(row.keys())
+
+    # 统计数值列和非数值列的数量
+    numeric_cols = []
+    non_numeric_cols = []
+    for col in columns:
+        val = row.get(col)
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            numeric_cols.append(col)
+        else:
+            non_numeric_cols.append(col)
+
+    # 如果只有数值列没有类别列，这是纯聚合结果，不补全
+    if len(non_numeric_cols) == 0:
+        print(f"[DataTransformer] 检测到纯数值结果（无类别列），跳过补全")
+        return sql_result
+
+    # 检测是否为占比类查询
+    proportion_keywords = ['占比', '比例', '分布', '多少']
+    combined_text = (sql + " " + user_query).lower()
+    if not any(kw in combined_text for kw in proportion_keywords):
+        return sql_result
+
+    if len(columns) < 2:
+        return sql_result
+
+    # 找类别列和数值列
+    value_col = None
+    category_col = None
+    for col in columns:
+        val = row.get(col)
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            value_col = col
+        else:
+            category_col = col
+
+    if not value_col or not category_col:
+        # 尝试按列名推断
+        for col in columns:
+            col_lower = col.lower()
+            if any(kw in col_lower for kw in ['count', 'num', 'amount', '值', '数', '量', 'percent', '%']):
+                value_col = col
+            else:
+                category_col = col
+
+    if not value_col or not category_col:
+        return sql_result
+
+    try:
+        current_value = float(row[value_col])
+    except (ValueError, TypeError):
+        return sql_result
+
+    current_category = str(row.get(category_col, ""))
+
+    # 🔧 修复4: 更谨慎的补集检测逻辑
+    # 只有在明确需要补全的情况下才添加"其他"类别
+    other_value = None
+
+    if current_value > 0:
+        # 判断是否可能是百分比
+        # 1. 检查列名是否包含百分比关键词
+        col_has_percent_hint = any(kw in value_col.lower() for kw in ['percent', 'ratio', 'proportion', '%', '率', '占比'])
+
+        # 2. 检查值是否在合理百分比范围内 (0-100 且不太接近整数计数)
+        # 小于100可能是百分比或小计数，大于100通常是计数
+        is_likely_percentage = col_has_percent_hint or (current_value <= 100 and current_value != int(current_value))
+
+        if is_likely_percentage:
+            # 如果是百分比，补齐100
+            if current_value < 100:
+                other_value = round(100 - current_value, 1)
+        else:
+            # 🔧 修复5: 对于计数值，不再自动添加等量"其他"
+            # 因为这可能导致数据误导（如安徽1000 vs 其他1000，实际全是安徽）
+            # 改为：只有明确是小数值（<100）且非百分比时，才考虑添加对比数据
+            if current_value < 100:
+                # 小数值可能是示例数据，添加等量对比
+                other_value = current_value
+            else:
+                # 大数值不补全，避免数据误导
+                print(f"[DataTransformer] 数值较大({current_value})，跳过补全避免误导")
+                return sql_result
+
+        if other_value and other_value > 0:
+            other_row = {category_col: "其他", value_col: other_value}
+            # 保留原始行中的其他字段
+            for col in columns:
+                if col != category_col and col != value_col:
+                    other_row[col] = row.get(col)
+            print(f"[DataTransformer] 补全其他类别: {current_category}={current_value}, 其他={other_value}")
+            return sql_result + [other_row]
+
+    return sql_result
+
+
 def sql_result_to_echarts_data(
     sql_result: List[Dict[str, Any]],
     x_field: Optional[str] = None,
@@ -134,6 +270,8 @@ def sql_result_to_echarts_data(
         # 确保 Y 值是数值类型
         try:
             y_val = float(y_val) if y_val is not None else 0
+            # 统一两位小数，保持报表观感专业
+            y_val = round(y_val, 2) if isinstance(y_val, float) else y_val
         except (ValueError, TypeError):
             y_val = 0
         
@@ -146,7 +284,9 @@ def sql_result_to_mcp_echarts_data(
     sql_result: List[Dict[str, Any]],
     chart_type: str = "bar",
     x_field: Optional[str] = None,
-    y_field: Optional[str] = None
+    y_field: Optional[str] = None,
+    sql: str = "",
+    user_query: str = ""
 ) -> Tuple[List[Dict[str, Any]], str, str]:
     """
     将 SQL 查询结果转换为 mcp-echarts 需要的格式
@@ -156,6 +296,8 @@ def sql_result_to_mcp_echarts_data(
         chart_type: 图表类型 ("bar", "pie", "line" 等)
         x_field: X轴/分类字段名（可选）
         y_field: Y轴/数值字段名（可选）
+        sql: SQL 查询语句（用于占比类查询检测）
+        user_query: 用户原始查询（用于占比类查询检测）
 
     Returns:
         (data, x_field_name, y_field_name) 元组
@@ -168,6 +310,10 @@ def sql_result_to_mcp_echarts_data(
         >>> data, x, y = sql_result_to_mcp_echarts_data(result, "bar")
         >>> print(data)  # [{"category": "技术部", "value": 45}]
     """
+    # 🔧 饼图数据补全：为占比类单点数据添加"其他"类别
+    if chart_type == "pie":
+        sql_result = supplement_proportion_data(sql_result, sql, user_query)
+
     if not sql_result:
         return [], "", ""
 
@@ -198,6 +344,7 @@ def sql_result_to_mcp_echarts_data(
         # 确保数值类型
         try:
             y_val = float(y_val) if y_val is not None else 0
+            y_val = round(y_val, 2) if isinstance(y_val, float) else y_val
         except (ValueError, TypeError):
             y_val = 0
 

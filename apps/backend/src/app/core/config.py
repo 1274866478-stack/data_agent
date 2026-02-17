@@ -128,6 +128,38 @@ class Settings(BaseSettings):
     sentry_environment: Optional[str] = None  # Sentry环境名称,默认使用environment
     sentry_traces_sample_rate: float = 0.1  # 性能追踪采样率 (0.0-1.0)
 
+    # ========== SOTA 重构配置 ==========
+    # Phase 1: 语义层配置
+    cube_api_url: str = "http://localhost:4000"  # Cube.js API 地址
+    cube_api_secret: Optional[str] = None  # Cube.js API 密钥
+    enable_semantic_layer: bool = False  # 启用语义层
+
+    # Phase 1: Qdrant 向量数据库配置
+    qdrant_host: str = "localhost"  # Qdrant 主机
+    qdrant_port: int = 6333  # Qdrant 端口
+    qdrant_collection_prefix: str = "dataagent"  # Collection 名称前缀
+    use_qdrant: bool = False  # 使用 Qdrant (否则使用 ChromaDB)
+
+    # Phase 3: 少样本 RAG 配置
+    enable_few_shot_rag: bool = False  # 启用少样本 RAG
+    embedding_model: str = "text-embedding-3-small"  # OpenAI Embedding 模型
+    embedding_dimension: int = 1536  # 向量维度
+    openai_api_key: Optional[str] = None  # OpenAI API Key (用于 Embedding)
+
+    # Phase 4: 自愈机制配置
+    enable_self_healing: bool = False  # 启用自愈机制
+    max_repair_attempts: int = 3  # 最大修复尝试次数
+
+    # Phase 5: 主动消歧配置
+    enable_disambiguation: bool = False  # 启用主动消歧
+
+    # 多智能体配置
+    use_sota_agent: bool = False  # 启用 SOTA 多智能体架构
+    enable_multi_agent: bool = False  # 启用多智能体框架
+
+    # 向后兼容配置
+    fallback_to_legacy_on_error: bool = True  # 出错时回退到旧 Agent
+
     @validator("database_url")
     def validate_database_url(cls, v):
         """验证数据库连接字符串格式"""

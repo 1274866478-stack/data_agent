@@ -41,13 +41,14 @@
 **依赖深度**: 2 层
 """
 import asyncio
+import copy
 import json
 import logging
 import os
 import re
 import sys
 import traceback
-from typing import Literal, Optional, Dict, Any, List
+from typing import Literal, Optional, Dict, Any, List, Tuple
 
 import anyio
 
@@ -62,7 +63,8 @@ from src.app.core.config import settings
 from openai import AuthenticationError as OpenAIAuthenticationError
 
 # Import V5 security modules
-from .prompts import get_system_prompt
+from .prompts import get_system_prompt, PROMPT_VERSION
+
 from .tools import (
     sanitize_sql,
     validate_sql_safety,
@@ -93,9 +95,169 @@ from .data_transformer import (
     extract_simple_charts_from_text,
     convert_simple_chart_to_echarts,
 )
+# Import data consistency validator to prevent LLM hallucination
+from .data_validator import (
+    DataConsistencyValidator,
+    validate_sql_data_consistency,
+    smart_field_mapping,
+    recommend_chart,
+)
 from .response_formatter import format_api_response, format_error_response
 
 logger = logging.getLogger(__name__)
+
+
+def _infer_db_type_from_url(database_url: Optional[str]) -> Optional[str]:
+    if not database_url:
+        return None
+    url_lower = database_url.lower()
+    if url_lower.startswith("postgres"):
+        return "postgresql"
+    if url_lower.startswith("mysql"):
+        return "mysql"
+    if url_lower.startswith("sqlite"):
+        return "sqlite"
+    if (
+        url_lower.startswith("file://") or
+        url_lower.startswith("local://") or
+        url_lower.endswith((".xlsx", ".xls", ".csv")) or
+        ".xlsx" in url_lower or ".xls" in url_lower or ".csv" in url_lower
+    ):
+        return "duckdb"
+    return None
+
+
+def _normalize_tool_call(tc: Dict[str, Any]) -> Tuple[str, Dict[str, Any], str]:
+    """
+    归一化 LangChain / OpenAI 风格的 tool_call，提取工具名与参数。
+
+    Returns:
+        (tool_name, args_dict, format_tag)
+        format_tag ∈ {"function", "flat"} 用于写回
+    """
+    tool_name = ""
+    args_dict: Dict[str, Any] = {}
+    format_tag = "flat"
+
+    if isinstance(tc, dict):
+        func_block = tc.get("function")
+        if func_block:
+            format_tag = "function"
+            tool_name = func_block.get("name") or tc.get("name") or ""
+            raw_args = func_block.get("arguments")
+        else:
+            tool_name = tc.get("name", "") or ""
+            raw_args = tc.get("args") or tc.get("input_data") or {}
+    else:
+        func_block = getattr(tc, "function", None)
+        if func_block:
+            format_tag = "function"
+            tool_name = getattr(func_block, "name", "") or getattr(tc, "name", "") or ""
+            raw_args = getattr(func_block, "arguments", None)
+        else:
+            tool_name = getattr(tc, "name", "") or ""
+            raw_args = getattr(tc, "args", None)
+
+    if isinstance(raw_args, str):
+        try:
+            args_dict = json.loads(raw_args) or {}
+        except Exception:
+            args_dict = {}
+    elif isinstance(raw_args, dict):
+        args_dict = raw_args
+    else:
+        args_dict = {}
+
+    # 兼容 input_data 结构
+    if not args_dict and isinstance(tc, dict):
+        input_data = tc.get("input_data")
+        if isinstance(input_data, dict):
+            args_dict = input_data
+            format_tag = "input"
+
+    return tool_name, args_dict, format_tag
+
+
+def _write_back_tool_call(tc: Dict[str, Any], args: Dict[str, Any], format_tag: str) -> None:
+    """根据原始格式写回修正后的参数。"""
+    if format_tag == "function":
+        if isinstance(tc, dict):
+            func_block = tc.get("function") or {}
+            func_block["arguments"] = json.dumps(args, ensure_ascii=False)
+            tc["function"] = func_block
+            tc["args"] = args  # langgraph/ToolNode 常用 args 字段
+        else:
+            func_block = getattr(tc, "function", None)
+            if func_block is not None:
+                try:
+                    func_block.arguments = json.dumps(args, ensure_ascii=False)
+                except Exception:
+                    pass
+            try:
+                tc.args = args
+            except Exception:
+                pass
+    elif format_tag == "input":
+        if isinstance(tc, dict):
+            tc["input_data"] = args
+        else:
+            try:
+                tc.input_data = args
+            except Exception:
+                pass
+    else:
+        if isinstance(tc, dict):
+            tc["args"] = args
+        else:
+            try:
+                tc.args = args
+            except Exception:
+                pass
+
+
+def apply_time_aggregation_fix_to_tool_calls(
+    tool_calls: List[Dict[str, Any]],
+    question: str,
+    database_url: Optional[str]
+) -> List[Dict[str, Any]]:
+    """
+    对工具调用列表执行时间聚合修正，确保年度/月份趋势按月聚合。
+
+    返回修正后的新列表，兼容 tuple/自定义对象不可变场景。
+    """
+    if not tool_calls:
+        return tool_calls
+
+    fixed_calls = []
+    db_type_hint = _infer_db_type_from_url(database_url)
+    from src.app.services.agent.tools import validate_time_aggregation_sql
+
+    for tc in tool_calls:
+        # 使用浅拷贝避免影响原消息不可变结构
+        tc_copy = copy.deepcopy(tc)
+        tool_name, args_dict, fmt = _normalize_tool_call(tc_copy)
+        if tool_name not in ("query", "execute_sql_safe", "execute_query"):
+            fixed_calls.append(tc_copy)
+            continue
+
+        executed_sql = args_dict.get("query") or args_dict.get("sql")
+        if not executed_sql:
+            fixed_calls.append(tc_copy)
+            continue
+
+        is_valid, corrected_sql, error_msg = validate_time_aggregation_sql(
+            executed_sql,
+            question,
+            db_type=db_type_hint
+        )
+        if not is_valid:
+            logger.warning(f"⚠️ [时间聚合修正] {error_msg}")
+            args_dict["query"] = corrected_sql
+            args_dict["sql"] = corrected_sql
+            _write_back_tool_call(tc_copy, args_dict, fmt)
+        fixed_calls.append(tc_copy)
+
+    return fixed_calls
 
 # ============================================================
 # Configuration
@@ -123,6 +285,7 @@ _cached_mcp_client = None
 _cached_tools: List[BaseTool] = []
 _cached_checkpointer = None
 _cached_database_url: Optional[str] = None  # 记录当前缓存Agent使用的数据库URL
+_cached_prompt_version: Optional[str] = None  # 记录当前缓存Agent使用的系统提示词版本
 
 
 class MCPClientWrapper:
@@ -252,13 +415,43 @@ class MCPClientWrapper:
                 # 确保tool_input不为None（某些工具需要dict参数）
                 if tool_input is None:
                     tool_input = {}
+
+                # 🔧 改进的第一道防线：智能区分空数据和错误
+                def _is_valid_empty_result(result):
+                    """检查是否是合法的空结果（如查询成功但无数据）"""
+                    parsed = result
+                    if isinstance(result, str):
+                        try:
+                            import json
+                            parsed = json.loads(result)
+                        except:
+                            return False
+
+                    if isinstance(parsed, dict):
+                        # 检查是否是数据库工具的成功返回（即使数据为空）
+                        if parsed.get("success") is True:
+                            return True
+                        # 检查是否包含标准字段（说明是工具返回，而非错误）
+                        if any(key in parsed for key in ["row_count", "table_count", "column_count", "rows", "columns", "tables"]):
+                            return True
+                        # 检查是否是错误格式
+                        if "error" in parsed and "error_type" in parsed:
+                            return False  # 这是真正的错误
+                    return False
+
                 if hasattr(tool, "ainvoke"):
                     try:
                         result = await tool.ainvoke(tool_input, **kwargs)
-                        # 🔴 第一道防线：检查空数据
-                        if result is None or result == "" or (isinstance(result, (list, dict)) and len(result) == 0):
-                            logger.warning(f"⚠️ [第一道防线] 工具 {getattr(tool, 'name', 'unknown')} 返回空数据")
-                            return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+                        # 🔴 第一道防线：检查空数据（改进版）
+                        if result is None or result == "":
+                            # 尝试解析是否是合法的空结果
+                            if not _is_valid_empty_result(result):
+                                logger.warning(f"⚠️ [第一道防线] 工具 {getattr(tool, 'name', 'unknown')} 返回空数据")
+                                return '{"error": "工具返回空数据", "error_type": "empty_result", "allow_llm_explain": true}'
+                        elif isinstance(result, (list, dict)) and len(result) == 0:
+                            if not _is_valid_empty_result(result):
+                                logger.warning(f"⚠️ [第一道防线] 工具 {getattr(tool, 'name', 'unknown')} 返回空列表/字典")
+                                return '{"error": "工具返回空数据", "error_type": "empty_result", "allow_llm_explain": true}'
                         # 🔥 修复：确保工具输出始终是字符串，防止 API 400 错误
                         if not isinstance(result, str):
                             import json
@@ -268,7 +461,7 @@ class MCPClientWrapper:
                                 result = str(result)
                         return result
                     except BaseException as e:
-                        # 🔴 第一道防线：异常处理 - 返回特定错误字符串
+                        # 🔴 第一道防线：异常处理 - 返回结构化错误信息
                         error_msg = str(e)
                         # Extract underlying exception if it's an ExceptionGroup
                         if hasattr(e, "exceptions") and e.exceptions:
@@ -282,15 +475,24 @@ class MCPClientWrapper:
                             else:
                                 error_msg = "Tool execution failed: 工具执行过程中发生错误"
                         logger.error(f"⚠️ [第一道防线] 工具执行异常: {error_msg}", exc_info=True)
-                        # 返回特定错误字符串，强制LLM停止生成答案
-                        return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+                        # 🔧 改进：返回结构化错误，允许 LLM 向用户解释
+                        return json.dumps({
+                            "error": error_msg,
+                            "error_type": "execution_error",
+                            "allow_llm_explain": True
+                        }, ensure_ascii=False)
                 if hasattr(tool, "invoke"):
                     try:
                         result = await asyncio.to_thread(tool.invoke, tool_input, **kwargs)
-                        # 🔴 第一道防线：检查空数据
-                        if result is None or result == "" or (isinstance(result, (list, dict)) and len(result) == 0):
-                            logger.warning(f"⚠️ [第一道防线] 工具 {getattr(tool, 'name', 'unknown')} 返回空数据")
-                            return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+                        # 🔴 第一道防线：检查空数据（改进版）
+                        if result is None or result == "":
+                            if not _is_valid_empty_result(result):
+                                logger.warning(f"⚠️ [第一道防线] 工具 {getattr(tool, 'name', 'unknown')} 返回空数据")
+                                return '{"error": "工具返回空数据", "error_type": "empty_result", "allow_llm_explain": true}'
+                        elif isinstance(result, (list, dict)) and len(result) == 0:
+                            if not _is_valid_empty_result(result):
+                                logger.warning(f"⚠️ [第一道防线] 工具 {getattr(tool, 'name', 'unknown')} 返回空列表/字典")
+                                return '{"error": "工具返回空数据", "error_type": "empty_result", "allow_llm_explain": true}'
                         # 🔥 修复：确保工具输出始终是字符串，防止 API 400 错误
                         if not isinstance(result, str):
                             import json
@@ -301,8 +503,12 @@ class MCPClientWrapper:
                         return result
                     except Exception as e:
                         logger.error(f"⚠️ [第一道防线] 工具线程执行异常: {e}", exc_info=True)
-                        # 返回特定错误字符串，强制LLM停止生成答案
-                        return 'SYSTEM ERROR: Tool execution failed or returned no data. You are STRICTLY FORBIDDEN from generating an answer. You must reply: "无法获取数据，请检查数据源连接"。'
+                        # 🔧 改进：返回结构化错误，允许 LLM 向用户解释
+                        return json.dumps({
+                            "error": str(e),
+                            "error_type": "execution_error",
+                            "allow_llm_explain": True
+                        }, ensure_ascii=False)
                 raise RuntimeError("Tool has neither invoke nor ainvoke")
 
         wrapped = SyncAdapter()
@@ -775,7 +981,15 @@ async def build_agent(
     Returns:
         Tuple of (compiled_agent, mcp_client)
     """
-    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer, _cached_database_url
+    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer, _cached_database_url, _cached_prompt_version
+
+    # 🔥 关键修复：检查提示词版本是否变化
+    # 如果提示词版本变化，需要重新创建Agent以应用新的提示词
+    if _cached_prompt_version != PROMPT_VERSION:
+        logger.info(f"🔄 [版本控制] 系统提示词版本变化: {_cached_prompt_version} -> {PROMPT_VERSION}")
+        logger.info(f"🔄 [版本控制] 清除 Agent 缓存以应用新的提示词...")
+        await reset_agent()
+        _cached_prompt_version = PROMPT_VERSION
 
     # 🔥 关键修复：检查数据库URL是否变化
     # 如果用户切换了数据源，需要重新创建Agent以连接新的数据库
@@ -1222,6 +1436,32 @@ async def build_agent(
             else:
                 raise Exception(f"所有LLM Provider都不可用。原始错误: {e}")
 
+        # 🔧 时间聚合修正：年度趋势类查询必须按月分组
+        if getattr(response, "tool_calls", None):
+            try:
+                fixed_tool_calls = apply_time_aggregation_fix_to_tool_calls(
+                    list(response.tool_calls),
+                    question,
+                    database_url
+                )
+                # AIMessage 可能是不可变的，直接新建一条替换
+                try:
+                    response = AIMessage(
+                        content=response.content,
+                        tool_calls=fixed_tool_calls,
+                        name=getattr(response, "name", None),
+                        additional_kwargs=getattr(response, "additional_kwargs", {}),
+                        response_metadata=getattr(response, "response_metadata", {}),
+                    )
+                except Exception:
+                    # 如果构造失败，尝试原位赋值（部分实现可变）
+                    try:
+                        response.tool_calls = fixed_tool_calls
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning(f"时间聚合修正失败: {e}")
+
         # 🔧 强制工具调用逻辑：如果是拆分/合并请求但LLM没有调用工具，强制提取SQL并创建工具调用
         if (is_split_request or is_merge_request) and not response.tool_calls:
             logger.warning(f"📊 [强制工具调用] 检测到{'拆分' if is_split_request else '合并'}请求但LLM未调用工具，尝试强制执行...")
@@ -1274,11 +1514,24 @@ async def build_agent(
 
     # Define routing logic
     def should_continue(state: MessagesState) -> Literal["tools", "__end__"]:
+        """
+        增强的路由逻辑：
+        - 检测 AI 是否要调用工具
+        - 限制工具调用次数防止无限循环
+        """
         messages = state["messages"]
         last_message = messages[-1]
 
+        # 检查工具调用次数，防止无限循环
+        tool_message_count = sum(1 for m in messages if isinstance(m, ToolMessage))
+        if tool_message_count > 5:  # 最多允许 5 次工具调用（约 10-15 步）
+            print(f"⚠️ 达到最大工具调用次数限制 ({tool_message_count})，结束执行")
+            return END
+
+        # 检查 AI 是否要调用工具
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
             return "tools"
+
         return END
 
     # Build graph
@@ -1313,15 +1566,56 @@ async def reset_agent():
     - Configuration updates
     - Error recovery needed
     """
-    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer, _cached_database_url
+    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer, _cached_database_url, _cached_prompt_version
 
     _cached_agent = None
     _cached_mcp_client = None
     _cached_tools = []
     _cached_checkpointer = None
     _cached_database_url = None
+    _cached_prompt_version = None
 
     logger.info("Agent cache reset")
+
+
+async def force_rebuild_agent():
+    """
+    强制重建 Agent，清除所有缓存
+
+    此函数与 reset_agent 的区别：
+    - reset_agent: 静默清除缓存
+    - force_rebuild_agent: 带详细日志的强制重建
+
+    使用场景：
+    - 系统提示词更新后需要立即生效
+    - Agent 配置变更需要重新加载
+    - 调试时需要清除缓存状态
+
+    Returns:
+        dict: 操作结果状态
+    """
+    global _cached_agent, _cached_mcp_client, _cached_tools, _cached_checkpointer, _cached_database_url, _cached_prompt_version
+
+    logger.info("🔄 [强制重建] 开始强制重建 Agent...")
+    logger.info(f"🔄 [强制重建] 重建前状态 - Agent: {'已缓存' if _cached_agent else 'None'}, MCP: {'已连接' if _cached_mcp_client else 'None'}")
+
+    # 清除所有缓存
+    _cached_agent = None
+    _cached_mcp_client = None
+    _cached_tools = []
+    _cached_checkpointer = None
+    _cached_database_url = None
+    _cached_prompt_version = None
+
+    logger.info("🔄 [强制重建] Agent 缓存已清除")
+    logger.info("🔄 [强制重建] 将在下次查询时重建 Agent")
+    logger.info("🔄 [强制重建] 新的系统提示词将自动生效")
+
+    return {
+        "status": "success",
+        "message": "Agent 缓存已清除，将在下次查询时重建",
+        "timestamp": __import__('datetime').datetime.now().isoformat()
+    }
 
 
 def verify_tool_calls(all_messages: List, data_source_type: str, database_url: str = None):
@@ -1438,7 +1732,10 @@ async def run_agent(
         )
 
         # Configure session
-        config = {"configurable": {"thread_id": thread_id}}
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": 50  # 增加递归限制到 50 步
+        }
 
         if verbose:
             logger.info(f"Running agent with question: {question[:100]}...")
@@ -1560,115 +1857,174 @@ async def run_agent(
                             all_messages.extend(messages)
 
                             for msg in messages:
-                            # DEBUG: 打印所有消息类型
-                            import sys
-                            try:
-                                print(f"[DEBUG] MESSAGE TYPE: {type(msg).__name__}", flush=True)
-                            except UnicodeEncodeError:
-                                logger.debug(f"MESSAGE TYPE: {type(msg).__name__}")
-                            if isinstance(msg, AIMessage):
+                                # DEBUG: 打印所有消息类型
+                                import sys
                                 try:
-                                    print(f"[DEBUG] AIMessage - has content: {bool(msg.content)}, content type: {type(msg.content)}, has tool_calls: {bool(getattr(msg, 'tool_calls', None))}", flush=True)
+                                    print(f"[DEBUG] MESSAGE TYPE: {type(msg).__name__}", flush=True)
                                 except UnicodeEncodeError:
-                                    logger.debug(f"AIMessage - has content: {bool(msg.content)}, content type: {type(msg.content)}, has tool_calls: {bool(getattr(msg, 'tool_calls', None))}")
-                                if msg.content:
-                                    final_content = msg.content
-                                    # DEBUG: 打印 LLM 原始输出
+                                    logger.debug(f"MESSAGE TYPE: {type(msg).__name__}")
+                                if isinstance(msg, AIMessage):
                                     try:
-                                        print("=" * 80, flush=True)
-                                        print("[DEBUG] FINAL LLM OUTPUT (Raw String):", flush=True)
-                                        print("=" * 80, flush=True)
-                                        print(final_content, flush=True)
-                                        print("=" * 80, flush=True)
-                                        sys.stdout.flush()
+                                        print(f"[DEBUG] AIMessage - has content: {bool(msg.content)}, content type: {type(msg.content)}, has tool_calls: {bool(getattr(msg, 'tool_calls', None))}", flush=True)
                                     except UnicodeEncodeError:
-                                        logger.debug("FINAL LLM OUTPUT (Raw String)")
-                                    logger.info(f"[DEBUG] FINAL LLM OUTPUT (length: {len(final_content)}): {final_content[:500]}...")
-                                elif getattr(msg, 'tool_calls', None):
-                                    try:
-                                        print(f"[DEBUG] AIMessage has tool_calls but no content. Tool calls: {len(msg.tool_calls)}", flush=True)
-                                    except UnicodeEncodeError:
-                                        logger.debug(f"AIMessage has tool_calls but no content. Tool calls: {len(msg.tool_calls)}")
-                                    sys.stdout.flush()
-
-                                # Extract SQL from tool calls
-                                if msg.tool_calls:
-                                    # 🔍 详细记录工具调用（用于诊断编造数据问题）
-                                    logger.info(f"🔍 [AI工具调用] 共 {len(msg.tool_calls)} 个工具调用")
-                                    for tc in msg.tool_calls:
-                                        tool_name = tc.get("name", "unknown")
-                                        tool_args = tc.get("args", {})
-                                        logger.info(f"🔍 [AI工具调用] 工具: {tool_name}, 参数: {tool_args}")
-                                        if verbose:
-                                            logger.debug(f"AI tool call: {tool_name}")
-                                        
-                                        # Check if this is a chart tool call
-                                        if "chart" in tool_name.lower() or "echarts" in tool_name.lower():
-                                            if verbose:
-                                                logger.info(f"Detected chart tool call: {tool_name}")
-                                        
-                                        if tc.get("name") in ("query", "execute_sql_safe"):
-                                            executed_sql = tc.get("args", {}).get("query") or tc.get("args", {}).get("sql")
-
-                            # Capture tool results
-                            elif isinstance(msg, ToolMessage):
-                                try:
-                                    content = msg.content
-                                    tool_name = getattr(msg, 'name', None) or 'unknown'
-                                    
-                                    # 🔍 详细记录工具调用结果（用于诊断编造数据问题）
-                                    logger.info(f"🔍 [工具调用结果] 工具名: {tool_name}")
-                                    logger.info(f"🔍 [工具调用结果] 内容类型: {type(content)}")
-                                    if isinstance(content, str):
-                                        content_preview = content[:500] if len(content) > 500 else content
-                                        logger.info(f"🔍 [工具调用结果] 内容预览: {content_preview}")
-                                        # 检查是否包含错误信息
-                                        if "错误" in content or "Error" in content or "失败" in content:
-                                            logger.warning(f"⚠️ [工具调用结果] 工具返回了错误信息: {content[:200]}")
-                                    else:
-                                        logger.info(f"🔍 [工具调用结果] 内容: {str(content)[:500]}")
-                                    
-                                    # Log tool message for debugging
-                                    if verbose:
-                                        logger.debug(f"Received ToolMessage from tool: {tool_name}, content type: {type(content)}")
-                                    
-                                    # Check if this is a chart tool result (MCP ECharts)
-                                    # MCP ECharts tools typically return content with image data
-                                    if isinstance(content, str):
-                                        if verbose:
-                                            logger.debug(f"ToolMessage content (first 200 chars): {content[:200]}")
-                                        # Try to parse as JSON first
+                                        logger.debug(f"AIMessage - has content: {bool(msg.content)}, content type: {type(msg.content)}, has tool_calls: {bool(getattr(msg, 'tool_calls', None))}")
+                                    # 🔥 修复：只更新 final_content 当有实际有意义的 content 时
+                                    # 这解决了简单确认消息覆盖真正答案的问题
+                                    if msg.content and len(msg.content.strip()) >= 20:
+                                        final_content = msg.content
+                                        # DEBUG: 打印 LLM 原始输出
                                         try:
-                                            parsed_content = json.loads(content)
-                                            
-                                            # Check if it's a list of content items (MCP format)
-                                            if isinstance(parsed_content, list):
-                                                for item in parsed_content:
-                                                    if isinstance(item, dict):
-                                                        # Check for image type content
-                                                        if item.get("type") == "image" and item.get("data"):
-                                                            # Extract Base64 image data
-                                                            image_data = item.get("data")
-                                                            # Ensure it's a data URI
-                                                            if isinstance(image_data, str):
-                                                                if image_data.startswith("data:"):
-                                                                    chart_image = image_data
-                                                                elif image_data.startswith("http"):
-                                                                    chart_image = image_data
-                                                                else:
-                                                                    # Assume it's base64 without prefix
-                                                                    chart_image = f"data:image/png;base64,{image_data}"
-                                                            logger.info(f"Extracted chart image from MCP tool result (length: {len(chart_image) if chart_image else 0})")
-                                                        # Also check for text content that might be a URL
-                                                        elif item.get("type") == "text" and isinstance(item.get("text"), str):
-                                                            text = item.get("text")
-                                                            if text.startswith("http") and not chart_image:
-                                                                chart_image = text
-                                                                logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
-                                            # If it's a dict, check for image fields
-                                            elif isinstance(parsed_content, dict):
-                                                if parsed_content.get("type") == "image" and parsed_content.get("data"):
-                                                    image_data = parsed_content.get("data")
+                                            print("=" * 80, flush=True)
+                                            print("[DEBUG] FINAL LLM OUTPUT (Raw String):", flush=True)
+                                            print("=" * 80, flush=True)
+                                            print(final_content, flush=True)
+                                            print("=" * 80, flush=True)
+                                            sys.stdout.flush()
+                                        except UnicodeEncodeError:
+                                            logger.debug("FINAL LLM OUTPUT (Raw String)")
+                                        logger.info(f"[DEBUG] FINAL LLM OUTPUT (length: {len(final_content)}): {final_content[:500]}...")
+                                    elif getattr(msg, 'tool_calls', None):
+                                        try:
+                                            print(f"[DEBUG] AIMessage has tool_calls but no content. Tool calls: {len(msg.tool_calls)}", flush=True)
+                                        except UnicodeEncodeError:
+                                            logger.debug(f"AIMessage has tool_calls but no content. Tool calls: {len(msg.tool_calls)}")
+                                        sys.stdout.flush()
+
+                                    # Extract SQL from tool calls
+                                    if msg.tool_calls:
+                                        # 🔍 详细记录工具调用（用于诊断编造数据问题）
+                                        logger.info(f"🔍 [AI工具调用] 共 {len(msg.tool_calls)} 个工具调用")
+                                        for tc in msg.tool_calls:
+                                            tool_name = tc.get("name", "unknown")
+                                            tool_args = tc.get("args", {})
+                                            logger.info(f"🔍 [AI工具调用] 工具: {tool_name}, 参数: {tool_args}")
+                                            if verbose:
+                                                logger.debug(f"AI tool call: {tool_name}")
+
+                                            # Check if this is a chart tool call
+                                            if "chart" in tool_name.lower() or "echarts" in tool_name.lower():
+                                                if verbose:
+                                                    logger.info(f"Detected chart tool call: {tool_name}")
+
+                                            if tc.get("name") in ("query", "execute_sql_safe", "execute_query"):
+                                                executed_sql = tc.get("args", {}).get("query") or tc.get("args", {}).get("sql")
+
+                                                # 🔥 时间聚合验证（年度趋势查询修正）
+                                                from src.app.services.agent.tools import validate_time_aggregation_sql
+                                                is_valid, corrected_sql, error_msg = validate_time_aggregation_sql(
+                                                    executed_sql,
+                                                    question,
+                                                    db_type=_infer_db_type_from_url(database_url)
+                                                )
+
+                                                if not is_valid:
+                                                    logger.warning(f"⚠️ {error_msg}")
+                                                    # 使用修正后的 SQL 替换原始 SQL
+                                                    executed_sql = corrected_sql
+                                                    # 修改工具调用参数
+                                                    if "args" not in tc:
+                                                        tc["args"] = {}
+                                                    tc["args"]["query"] = corrected_sql
+                                                    tc["args"]["sql"] = corrected_sql
+
+                                # Capture tool results
+                                elif isinstance(msg, ToolMessage):
+                                    try:
+                                        content = msg.content
+                                        tool_name = getattr(msg, 'name', None) or 'unknown'
+
+                                        # 🔍 详细记录工具调用结果（用于诊断编造数据问题）
+                                        logger.info(f"🔍 [工具调用结果] 工具名: {tool_name}")
+                                        logger.info(f"🔍 [工具调用结果] 内容类型: {type(content)}")
+                                        if isinstance(content, str):
+                                            content_preview = content[:500] if len(content) > 500 else content
+                                            logger.info(f"🔍 [工具调用结果] 内容预览: {content_preview}")
+                                            # 检查是否包含错误信息
+                                            if "错误" in content or "Error" in content or "失败" in content:
+                                                logger.warning(f"⚠️ [工具调用结果] 工具返回了错误信息: {content[:200]}")
+                                        else:
+                                            logger.info(f"🔍 [工具调用结果] 内容: {str(content)[:500]}")
+
+                                        # Log tool message for debugging
+                                        if verbose:
+                                            logger.debug(f"Received ToolMessage from tool: {tool_name}, content type: {type(content)}")
+
+                                        # Check if this is a chart tool result (MCP ECharts)
+                                        # MCP ECharts tools typically return content with image data
+                                        if isinstance(content, str):
+                                            if verbose:
+                                                logger.debug(f"ToolMessage content (first 200 chars): {content[:200]}")
+                                            # Try to parse as JSON first
+                                            try:
+                                                parsed_content = json.loads(content)
+
+                                                # Check if it's a list of content items (MCP format)
+                                                if isinstance(parsed_content, list):
+                                                    for item in parsed_content:
+                                                        if isinstance(item, dict):
+                                                            # Check for image type content
+                                                            if item.get("type") == "image" and item.get("data"):
+                                                                # Extract Base64 image data
+                                                                image_data = item.get("data")
+                                                                # Ensure it's a data URI
+                                                                if isinstance(image_data, str):
+                                                                    if image_data.startswith("data:"):
+                                                                        chart_image = image_data
+                                                                    elif image_data.startswith("http"):
+                                                                        chart_image = image_data
+                                                                    else:
+                                                                        # Assume it's base64 without prefix
+                                                                        chart_image = f"data:image/png;base64,{image_data}"
+                                                                logger.info(f"Extracted chart image from MCP tool result (length: {len(chart_image) if chart_image else 0})")
+                                                            # Also check for text content that might be a URL
+                                                            elif item.get("type") == "text" and isinstance(item.get("text"), str):
+                                                                text = item.get("text")
+                                                                if text.startswith("http") and not chart_image:
+                                                                    chart_image = text
+                                                                    logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
+                                                # If it's a dict, check for image fields
+                                                elif isinstance(parsed_content, dict):
+                                                    if parsed_content.get("type") == "image" and parsed_content.get("data"):
+                                                        image_data = parsed_content.get("data")
+                                                        if isinstance(image_data, str):
+                                                            if image_data.startswith("data:"):
+                                                                chart_image = image_data
+                                                            elif image_data.startswith("http"):
+                                                                chart_image = image_data
+                                                            else:
+                                                                chart_image = f"data:image/png;base64,{image_data}"
+                                                        logger.info(f"Extracted chart image from MCP tool result (dict format)")
+                                                    elif parsed_content.get("url") and not chart_image:
+                                                        chart_image = parsed_content.get("url")
+                                                        logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
+                                                else:
+                                                    # Fallback: treat as query results
+                                                    query_results = parsed_content
+                                            except json.JSONDecodeError:
+                                                # Not JSON, might be plain text or other format
+                                                # Check if it looks like a URL
+                                                if content.startswith("http") and not chart_image:
+                                                    chart_image = content
+                                                    logger.info(f"Extracted chart URL from tool result: {chart_image}")
+                                                else:
+                                                    query_results = content
+                                        else:
+                                            # Content is not a string, check if it's a dict/list with image data
+                                            if isinstance(content, list):
+                                                for item in content:
+                                                    if isinstance(item, dict) and item.get("type") == "image" and item.get("data"):
+                                                        image_data = item.get("data")
+                                                        if isinstance(image_data, str):
+                                                            if image_data.startswith("data:"):
+                                                                chart_image = image_data
+                                                            elif image_data.startswith("http"):
+                                                                chart_image = image_data
+                                                            else:
+                                                                chart_image = f"data:image/png;base64,{image_data}"
+                                                        logger.info(f"Extracted chart image from MCP tool result (list format)")
+                                            elif isinstance(content, dict):
+                                                if content.get("type") == "image" and content.get("data"):
+                                                    image_data = content.get("data")
                                                     if isinstance(image_data, str):
                                                         if image_data.startswith("data:"):
                                                             chart_image = image_data
@@ -1677,55 +2033,17 @@ async def run_agent(
                                                         else:
                                                             chart_image = f"data:image/png;base64,{image_data}"
                                                     logger.info(f"Extracted chart image from MCP tool result (dict format)")
-                                                elif parsed_content.get("url") and not chart_image:
-                                                    chart_image = parsed_content.get("url")
+                                                elif content.get("url") and not chart_image:
+                                                    chart_image = content.get("url")
                                                     logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
-                                            else:
-                                                # Fallback: treat as query results
-                                                query_results = parsed_content
-                                        except json.JSONDecodeError:
-                                            # Not JSON, might be plain text or other format
-                                            # Check if it looks like a URL
-                                            if content.startswith("http") and not chart_image:
-                                                chart_image = content
-                                                logger.info(f"Extracted chart URL from tool result: {chart_image}")
+                                                else:
+                                                    query_results = content
                                             else:
                                                 query_results = content
-                                    else:
-                                        # Content is not a string, check if it's a dict/list with image data
-                                        if isinstance(content, list):
-                                            for item in content:
-                                                if isinstance(item, dict) and item.get("type") == "image" and item.get("data"):
-                                                    image_data = item.get("data")
-                                                    if isinstance(image_data, str):
-                                                        if image_data.startswith("data:"):
-                                                            chart_image = image_data
-                                                        elif image_data.startswith("http"):
-                                                            chart_image = image_data
-                                                        else:
-                                                            chart_image = f"data:image/png;base64,{image_data}"
-                                                    logger.info(f"Extracted chart image from MCP tool result (list format)")
-                                        elif isinstance(content, dict):
-                                            if content.get("type") == "image" and content.get("data"):
-                                                image_data = content.get("data")
-                                                if isinstance(image_data, str):
-                                                    if image_data.startswith("data:"):
-                                                        chart_image = image_data
-                                                    elif image_data.startswith("http"):
-                                                        chart_image = image_data
-                                                    else:
-                                                        chart_image = f"data:image/png;base64,{image_data}"
-                                                logger.info(f"Extracted chart image from MCP tool result (dict format)")
-                                            elif content.get("url") and not chart_image:
-                                                chart_image = content.get("url")
-                                                logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
-                                            else:
-                                                query_results = content
-                                        else:
-                                            query_results = content
-                                except (json.JSONDecodeError, TypeError) as e:
-                                    logger.warning(f"Failed to parse tool message content: {e}")
-                                    query_results = msg.content
+                                    except (json.JSONDecodeError, TypeError) as e:
+                                        logger.warning(f"Failed to parse tool message content: {e}")
+                                        query_results = msg.content
+
         except BaseException as stream_error:
             # Catch TaskGroup and other stream errors (including ExceptionGroup)
             logger.error(f"Agent stream execution failed: {stream_error}", exc_info=True)
@@ -2373,7 +2691,11 @@ async def run_agent(
                 logger.error(f"❌ 尝试自动执行SQL时出错: {e}", exc_info=True)
                 # 即使执行失败，也继续处理，至少可以显示SQL和错误信息
 
-        # Build VisualizationResponse
+        # ========================================================================
+        # 🔥 数据一致性验证：防止 LLM 幻觉导致的数据不匹配问题
+        # ========================================================================
+        # 使用 data_validator 验证 SQL 结果与图表配置的一致性
+        # 核心原则：图表配置必须基于真实数据，拒绝 LLM 编造的字段
         query_result = QueryResult()
         chart_config = ChartConfig()
         echarts_option = None
@@ -2381,42 +2703,90 @@ async def run_agent(
         if query_results and isinstance(query_results, list):
             query_result = QueryResult.from_raw_data(query_results)
 
-            # Auto-infer chart type and prepare config with ECharts option
+            # 🔧 步骤1: 数据一致性验证
+            # 检查 LLM 生成的字段是否真实存在于查询结果中
+            validation_result = validate_sql_data_consistency(
+                executed_sql or "",
+                query_results,
+                llm_config={"x_field": None, "y_field": None}  # 如果有 LLM 配置可传入
+            )
+
+            if not validation_result.is_valid and validation_result.hallucinated_fields:
+                logger.warning(
+                    f"⚠️ [数据验证] 检测到 LLM 幻觉字段: {validation_result.hallucinated_fields}。"
+                    f"将使用智能字段映射替代。实际字段: {validation_result.actual_columns}"
+                )
+
+            # 🔧 步骤2: 智能字段映射
+            # 基于真实数据推断 X 轴和 Y 轴应使用的字段
+            field_mapping = smart_field_mapping(query_results, executed_sql)
+            logger.info(
+                f"📊 [字段映射] X轴: {field_mapping.x_field} ({field_mapping.x_type.value}), "
+                f"Y轴: {field_mapping.y_field} ({field_mapping.y_type.value}), "
+                f"置信度: {field_mapping.confidence:.2f} - {field_mapping.reasoning}"
+            )
+
+            # 🔧 步骤3: 图表推荐
+            # 根据数据特征和用户问题推荐图表类型
+            chart_recommendation = recommend_chart(query_results, executed_sql, question)
+            logger.info(
+                f"📈 [图表推荐] 类型: {chart_recommendation.chart_type}, "
+                f"标题: {chart_recommendation.title}, "
+                f"推理: {chart_recommendation.reasoning}"
+            )
+
+            # 🔧 步骤4: 使用验证后的字段映射生成图表配置
             if executed_sql:
-                # 从用户问题中推断图表类型（优先）
-                inferred_type = None
-                question_lower = question.lower()
-                if any(kw in question_lower for kw in ["趋势", "变化", "时间", "月份", "年度", "季度"]):
-                    inferred_type = "line"
-                elif any(kw in question_lower for kw in ["对比", "比较", "排名"]):
-                    inferred_type = "bar"
-                elif any(kw in question_lower for kw in ["占比", "分布", "比例"]):
-                    inferred_type = "pie"
-                
-                # 生成图表标题（从问题中提取或使用默认值）
-                chart_title = "查询结果"
-                if "收入" in question:
-                    chart_title = "收入趋势分析" if inferred_type == "line" else "收入分析"
-                elif "销售" in question:
-                    chart_title = "销售趋势分析" if inferred_type == "line" else "销售分析"
-                elif "趋势" in question:
-                    chart_title = "趋势分析"
-                
+                inferred_type = chart_recommendation.chart_type
+                chart_title = chart_recommendation.title
+
+                # 使用智能映射的字段，而不是 LLM 提供的字段
                 _, chart_config, echarts_option = prepare_mcp_chart_request(
                     sql_result=query_results,
                     sql=executed_sql,
                     title=chart_title,
                     chart_type=inferred_type,
+                    x_field=field_mapping.x_field,  # 使用智能映射的 X 字段
+                    y_field=field_mapping.y_field,  # 使用智能映射的 Y 字段
                     question=question
                 )
-        
-        # Prefer ECharts option from LLM text response over auto-generated one
-        if echarts_option_from_text:
+
+                logger.info(
+                    f"✅ [图表生成] 使用真实数据生成图表配置: "
+                    f"type={inferred_type}, x={field_mapping.x_field}, y={field_mapping.y_field}"
+                )
+
+        # ========================================================================
+        # 🔥🔥🔥 【核心修复】完全禁止优先使用 LLM 文本中的图表配置
+        # 原因：LLM 可能生成不存在的字段（幻觉），导致展示错误的数据
+        #
+        # 旧逻辑（已废弃）：
+        #   if echarts_option_from_text:
+        #       echarts_option = echarts_option_from_text  # ❌ 这会使用幻觉字段
+        #
+        # 新逻辑（当前）：
+        #   1. 只使用基于真实数据生成的 echarts_option
+        #   2. LLM 文本中的图表配置仅作为回退选项
+        #   3. 只有在没有真实数据时才考虑 LLM 配置
+        # ========================================================================
+        if echarts_option:
+            # ✅ 使用基于真实 SQL 结果自动生成的配置
+            logger.info("✅ [图表配置] 使用基于真实数据自动生成的 ECharts 配置")
+        elif echarts_option_from_text and not query_results:
+            # ⚠️ 只有在没有查询结果时才使用 LLM 配置（回退方案）
             echarts_option = echarts_option_from_text
-            logger.info("Using ECharts configuration from LLM text response")
-        elif echarts_option:
-            logger.info("Using auto-generated ECharts configuration")
-        elif query_results and isinstance(query_results, list) and len(query_results) > 0:
+            logger.warning(
+                "⚠️ [图表配置] 无查询结果，使用 LLM 文本中的配置作为回退（可能包含幻觉）"
+            )
+        else:
+            # 🔍 记录为什么没有生成图表配置
+            if not query_results:
+                logger.info("ℹ️ [图表配置] 无查询结果，未生成图表配置")
+            else:
+                logger.info("ℹ️ [图表配置] 未生成 ECharts 配置")
+
+        # 回退逻辑：如果仍然没有图表配置，但有查询结果，强制生成一个
+        if query_results and isinstance(query_results, list) and len(query_results) > 0 and not echarts_option:
             # 如果LLM没有生成图表配置，但有查询结果，强制生成一个基础图表配置
             logger.warning("LLM did not generate chart configuration, but query results exist. Auto-generating chart...")
             try:
@@ -2751,6 +3121,7 @@ __all__ = [
     "create_llm",
     "get_mcp_config",
     "MAX_RECURSION_LIMIT",
+    "apply_time_aggregation_fix_to_tool_calls",
     "AgentRequest",
     "VisualizationResponse",
 ]

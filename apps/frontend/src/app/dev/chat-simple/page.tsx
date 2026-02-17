@@ -1,11 +1,11 @@
 'use client'
 
-import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Send, Bot, User } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
+import { Bot, Send, User } from 'lucide-react'
+import { useState } from 'react'
 
 export default function SimpleChatPage() {
   const [input, setInput] = useState('')
@@ -33,7 +33,7 @@ export default function SimpleChatPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Bot className="w-6 h-6" />
-              智能数据Agent V4 - AI聊天助手
+              Insight Agent V4 - AI聊天助手
             </CardTitle>
             <p className="text-sm text-muted-foreground">
               多租户SaaS数据智能平台 - 让数据工作更智能
@@ -48,7 +48,7 @@ export default function SimpleChatPage() {
                 <div className="text-center text-gray-500 py-8">
                   <Bot className="w-12 h-12 mx-auto mb-4 text-gray-400" />
                   <p>开始您的对话</p>
-                  <p className="text-sm">我是您的智能数据助手，可以帮助您分析数据和回答问题</p>
+                  <p className="text-sm">我是您的 Insight Agent，可以帮助您分析数据和回答问题</p>
                 </div>
               ) : (
                 messages.map((message) => (

@@ -11,31 +11,31 @@
 import { cn } from '@/lib/utils'
 import * as React from 'react'
 
-// 渐变色配置
+// 渐变色配置 - 蒂芙尼蓝主题
 const gradientVariants = {
-  primary: 'from-violet-500/10 to-purple-500/10 dark:from-violet-500/20 dark:to-purple-500/20',
-  secondary: 'from-pink-500/10 to-rose-500/10 dark:from-pink-500/20 dark:to-rose-500/20',
-  accent: 'from-blue-500/10 to-cyan-500/10 dark:from-blue-500/20 dark:to-cyan-500/20',
-  success: 'from-green-500/10 to-emerald-500/10 dark:from-green-500/20 dark:to-emerald-500/20',
-  warning: 'from-orange-500/10 to-amber-500/10 dark:from-orange-500/20 dark:to-amber-500/20',
+  primary: 'from-tiffany-400/20 to-cyan-500/20 dark:from-tiffany-500/30 dark:to-cyan-600/30',
+  secondary: 'from-tiffany-100 to-cyan-100 dark:from-tiffany-950/20 dark:to-cyan-950/20',
+  accent: 'from-cyan-500/20 to-teal-500/20 dark:from-cyan-600/30 dark:to-teal-600/30',
+  success: 'from-emerald-400/20 to-teal-500/20 dark:from-emerald-500/30 dark:to-teal-600/30',
+  warning: 'from-amber-400/20 to-orange-500/20 dark:from-amber-500/30 dark:to-orange-600/30',
 } as const
 
-// 强渐变配置（用于按钮等）
+// 强渐变配置（用于按钮等） - 蒂芙尼蓝主题
 const strongGradientVariants = {
-  primary: 'from-violet-600 to-purple-600',
-  secondary: 'from-pink-500 to-rose-500',
-  accent: 'from-blue-500 to-cyan-500',
-  success: 'from-green-500 to-emerald-500',
-  warning: 'from-orange-500 to-amber-500',
+  primary: 'from-tiffany-500 to-cyan-600',
+  secondary: 'from-tiffany-300 to-cyan-400',
+  accent: 'from-cyan-500 to-teal-600',
+  success: 'from-emerald-500 to-teal-600',
+  warning: 'from-amber-500 to-orange-600',
 } as const
 
-// 边框色配置
+// 边框色配置 - 蒂芙尼蓝主题
 const borderVariants = {
-  primary: 'border-violet-200 dark:border-violet-500/30',
-  secondary: 'border-pink-200 dark:border-pink-500/30',
-  accent: 'border-blue-200 dark:border-blue-500/30',
-  success: 'border-green-200 dark:border-green-500/30',
-  warning: 'border-orange-200 dark:border-orange-500/30',
+  primary: 'border-tiffany-200 dark:border-tiffany-500/30',
+  secondary: 'border-cyan-200 dark:border-cyan-500/30',
+  accent: 'border-cyan-300 dark:border-cyan-600/30',
+  success: 'border-emerald-200 dark:border-emerald-500/30',
+  warning: 'border-amber-200 dark:border-amber-500/30',
 } as const
 
 export interface GradientCardProps extends React.HTMLAttributes<HTMLDivElement> {

@@ -60,6 +60,7 @@
  */
 
 import React, { useState, useRef, useCallback } from 'react'
+import { File, FileText, Folder } from 'lucide-react'
 import { useDocumentStore } from '@/store/documentStore'
 import { Button } from '@/components/ui/button'
 import { Alert } from '@/components/ui/alert'
@@ -71,13 +72,13 @@ const SUPPORTED_FILE_TYPES = {
     mimeTypes: ['application/pdf'],
     extensions: ['.pdf'],
     maxSize: 50 * 1024 * 1024, // 50MB
-    icon: '📄'
+    icon: <File className="w-6 h-6 text-red-500" />
   },
   'docx': {
     mimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
     extensions: ['.docx'],
     maxSize: 25 * 1024 * 1024, // 25MB
-    icon: '📝'
+    icon: <FileText className="w-6 h-6 text-blue-500" />
   }
 }
 
@@ -228,7 +229,7 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
     const fileType = Object.entries(SUPPORTED_FILE_TYPES).find(([_, config]) =>
       config.extensions.includes(extension)
     )
-    return fileType ? SUPPORTED_FILE_TYPES[fileType[0] as keyof typeof SUPPORTED_FILE_TYPES].icon : '📄'
+    return fileType ? SUPPORTED_FILE_TYPES[fileType[0] as keyof typeof SUPPORTED_FILE_TYPES].icon : <File className="w-6 h-6 text-gray-500" />
   }
 
   // 获取上传进度
@@ -257,10 +258,8 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
 
       {/* 拖拽上传区域 */}
       <div
-        className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-          dragActive
-            ? 'border-blue-400 bg-blue-50'
-            : 'border-gray-300 hover:border-gray-400'
+        className={`upload-area relative rounded-lg p-8 text-center ${
+          dragActive ? 'border-[#00BFB3]' : ''
         }`}
         onDragEnter={handleDrag}
         onDragLeave={handleDrag}
@@ -277,7 +276,9 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
         />
 
         <div className="space-y-4">
-          <div className="text-6xl">📁</div>
+          <div className="flex justify-center">
+            <Folder className="w-16 h-16 text-[#00BFB3]" />
+          </div>
           <div>
             <p className="text-lg font-medium text-gray-900 dark:text-slate-100">
               拖拽文件到这里，或者点击选择文件
@@ -319,7 +320,7 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
                 className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-800 rounded-lg"
               >
                 <div className="flex items-center space-x-3 flex-1">
-                  <span className="text-2xl">{getFileIcon(file)}</span>
+                  <div className="flex-shrink-0">{getFileIcon(file)}</div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 dark:text-slate-100 truncate">
                       {file.name}

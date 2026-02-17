@@ -41,11 +41,11 @@
  * - Clerk SDK初始化 (通过ClerkProviderWrapper)
  */
 
-import './globals.css'
-import { Fira_Sans, Fira_Code } from 'next/font/google'
-import { ClerkProviderWrapper } from '@/components/auth/ClerkProvider'
 import { AuthProvider } from '@/components/auth/AuthContext'
+import { ClerkProviderWrapper } from '@/components/auth/ClerkProvider'
 import { ThemeProvider } from '@/components/theme'
+import { Fira_Code, Fira_Sans } from 'next/font/google'
+import './globals.css'
 
 /**
  * Fira Sans - 主要正文字体，适合数据密集型界面
@@ -66,8 +66,11 @@ const firaCode = Fira_Code({
 })
 
 export const metadata = {
-  title: '智能数据Agent V4 - Multi-tenant SaaS Platform',
+  title: 'Insight Agent V4 - Multi-tenant SaaS Platform',
   description: 'Intelligent data analysis platform for modern businesses',
+  icons: {
+    icon: '/favicon.ico',
+  },
 }
 
 export default function RootLayout({
@@ -82,6 +85,12 @@ export default function RootLayout({
 
   return (
     <html lang="zh-CN" suppressHydrationWarning className={`${firaSans.variable} ${firaCode.variable}`}>
+      <head>
+        <link
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body className="font-sans antialiased">
         <ThemeProvider>
           {clerkPublishableKey ? (

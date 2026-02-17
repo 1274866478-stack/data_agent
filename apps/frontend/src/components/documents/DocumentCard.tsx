@@ -49,6 +49,7 @@
 import React, { useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
+import { Download, Eye, File, FileText, RefreshCw } from 'lucide-react'
 import { useDocumentStore, DocumentStatus, KnowledgeDocument } from '@/store/documentStore'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -81,11 +82,11 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   const getFileIcon = (fileType: string) => {
     switch (fileType) {
       case 'pdf':
-        return { icon: '📄', color: 'text-red-500' }
+        return { icon: <File className="w-8 h-8" />, color: 'text-red-500' }
       case 'docx':
-        return { icon: '📝', color: 'text-blue-500' }
+        return { icon: <FileText className="w-8 h-8" />, color: 'text-blue-500' }
       default:
-        return { icon: '📄', color: 'text-gray-500' }
+        return { icon: <File className="w-8 h-8" />, color: 'text-gray-500' }
     }
   }
 
@@ -95,32 +96,27 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
       case DocumentStatus.PENDING:
         return {
           text: '等待处理',
-          color: 'bg-yellow-100 text-yellow-800',
-          icon: '⏳'
+          color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
         }
       case DocumentStatus.INDEXING:
         return {
           text: '正在处理',
-          color: 'bg-blue-100 text-blue-800',
-          icon: '🔄'
+          color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
         }
       case DocumentStatus.READY:
         return {
           text: '处理完成',
-          color: 'bg-green-100 text-green-800',
-          icon: '✅'
+          color: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
         }
       case DocumentStatus.ERROR:
         return {
           text: '处理失败',
-          color: 'bg-red-100 text-red-800',
-          icon: '❌'
+          color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
         }
       default:
         return {
           text: '未知状态',
-          color: 'bg-gray-100 text-gray-800',
-          icon: '❓'
+          color: 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400'
         }
     }
   }
@@ -204,9 +200,8 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   return (
     <div
       className={`
-        relative bg-white dark:bg-slate-800 border rounded-lg p-4 hover:shadow-md transition-all duration-200
-        ${isSelected ? 'border-blue-500 shadow-md' : 'border-gray-200 dark:border-slate-700'}
-        ${showActions ? 'ring-2 ring-blue-200' : ''}
+        relative doc-card-glass rounded-lg p-4
+        ${isSelected ? 'ring-2 ring-[#00BFB3]' : ''}
       `}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
@@ -238,7 +233,6 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
           {/* 状态标签 */}
           <div className="mt-1 flex items-center space-x-2">
             <Badge className={statusInfo.color}>
-              <span className="mr-1">{statusInfo.icon}</span>
               {statusInfo.text}
             </Badge>
             <span className="text-xs text-gray-500">
@@ -286,7 +280,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
               disabled={isLoading}
               title="预览文档"
             >
-              👁️
+              <Eye className="w-4 h-4" />
             </Button>
           )}
           <Button
@@ -296,8 +290,8 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
             disabled={isLoading}
             title="下载文档"
           >
-              ⬇️
-            </Button>
+            <Download className="w-4 h-4" />
+          </Button>
           {canProcess && (
             <Button
               size="sm"
@@ -306,7 +300,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
               disabled={isLoading}
               title="处理文档"
             >
-              🔄
+              <RefreshCw className="w-4 h-4" />
             </Button>
           )}
         </div>

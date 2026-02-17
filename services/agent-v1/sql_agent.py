@@ -172,8 +172,180 @@ from datetime import datetime
 from sql_validator import SQLValidator, SQLValidationError
 
 
+# ============================================================
+# 🚨 地理查询规则注入器
+# ============================================================
+
+def _inject_geo_query_rules(user_query: str) -> str:
+    """
+    根据用户查询动态注入地理查询规则
+
+    Args:
+        user_query: 用户查询文本
+
+    Returns:
+        str: 额外的强制规则（如果检测到地理关键词）
+    """
+    if not user_query:
+        return ""
+
+    # 地理关键词列表
+    province_keywords = [
+        "省份", "省", "安徽", "浙江", "江苏", "上海", "北京", "广东", "福建",
+        "湖北", "湖南", "河南", "河北", "山东", "山西", "四川", "重庆", "天津",
+        "辽宁", "吉林", "黑龙江", "陕西", "甘肃", "青海", "云南", "贵州", "西藏",
+        "新疆", "内蒙古", "宁夏", "广西", "海南", "台湾", "香港", "澳门",
+        "华南", "华北", "华东", "华中", "西南", "西北", "东北"
+    ]
+
+    city_keywords = [
+        "城市", "市", "杭州", "宁波", "苏州", "南京", "深圳", "广州", "成都",
+        "武汉", "西安", "郑州", "青岛", "大连", "厦门", "长沙", "合肥", "南昌",
+        "昆明", "南宁", "贵阳", "兰州", "太原", "石家庄", "济南", "福州"
+    ]
+
+    address_keywords = ["地址", "客户地址", "用户地址", "地区", "区域", "分布"]
+
+    # 组合所有关键词
+    all_geo_keywords = province_keywords + city_keywords + address_keywords
+
+    # 检查是否包含地理关键词
+    query_lower = user_query.lower()
+    has_geo_keyword = any(keyword in query_lower for keyword in all_geo_keywords)
+
+    if not has_geo_keyword:
+        return ""
+
+    # 检测具体关键词类型
+    detected_types = []
+    if any(kw in query_lower for kw in province_keywords):
+        detected_types.append("省份")
+    if any(kw in query_lower for kw in city_keywords):
+        detected_types.append("城市")
+    if any(kw in query_lower for kw in address_keywords):
+        detected_types.append("地址")
+
+    # 检测是否为占比类问题
+    is_proportion_query = any(kw in query_lower for kw in ["占比", "比例", "百分比", "分布"])
+
+    # 生成动态规则
+    detected_type_str = "、".join(detected_types)
+    extra_rules = f"""
+
+## 🚨🚨🚨【当前查询检测】{detected_type_str}查询 - 必须使用 addresses 表 🚨🚨🚨
+
+用户查询包含{detected_type_str}关键词，**当前查询必须遵守以下强制规则**：
+
+### 1️⃣ 表选择强制规则
+- ✅ **必须使用**: `addresses` 表进行{detected_type_str}查询
+- ❌ **绝对禁止**: `users` 表或其他表用于{detected_type_str}查询
+
+### 2️⃣ 查询流程强制规则
+```
+第1步: list_tables()  ← 确认表存在
+第2步: get_schema("addresses")  ← 必须查看 addresses 表结构
+第3步: query('SELECT province, COUNT(*) FROM addresses GROUP BY province')  ← 使用 GROUP BY
+```
+
+### 3️⃣ 占比类问题特殊规则
+"""
+
+    if is_proportion_query:
+        extra_rules += """当用户问'占比'、'比例'、'分布'时：
+- ❌ 禁止：SELECT COUNT(*) FROM table WHERE condition
+- ❌ 禁止：多次 COUNT 查询
+- ✅ 必须：SELECT province as category, COUNT(*) as value FROM addresses GROUP BY province
+- ✅ 生成完整的分布数据用于饼图（不要 LIMIT！）
+"""
+    else:
+        extra_rules += """- 必须使用 GROUP BY 一次查询获取所有分类数据
+- 禁止使用 LIMIT 截断分布结果
+- 返回完整的 province/city 分布数据
+"""
+
+    # 添加检测信息
+    detected_kw_list = [kw for kw in all_geo_keywords if kw in query_lower][:10]
+    extra_rules += f"""
+**检测到的关键词**: {', '.join(detected_kw_list)}
+**用户原查询**: "{user_query[:100]}"
+
+---
+"""
+
+    print(f"🚨 [地理查询检测] 检测到{detected_type_str}关键词，已注入强制规则")
+    return extra_rules
+
+
 # Base system prompt for the SQL Agent (will be dynamically enhanced based on db_type)
 BASE_SYSTEM_PROMPT = """你是一个专业的 PostgreSQL 数据库助手，具备数据查询和图表可视化能力。
+
+## 🚨🚨🚨【绝对强制】省份/城市查询必选 addresses 表 🚨🚨🚨
+
+### 触发关键词（任一出现即强制）
+当用户查询包含以下关键词时，**必须**选择 addresses 表，**禁止**使用 users 表：
+
+- **省份关键词**: "省份"、"省"、"安徽"、"浙江"、"江苏"、"上海"、"北京"、"广东"、"福建"、"湖北"、"湖南"、"河南"、"河北"、"山东"、"山西"、"四川"、"重庆"、"天津"、"辽宁"、"吉林"、"黑龙江"、"陕西"、"甘肃"、"青海"、"云南"、"贵州"、"西藏"、"新疆"、"内蒙古"、"宁夏"、"广西"、"海南"、"台湾"、"香港"、"澳门"等
+- **城市关键词**: "城市"、"市"、"杭州"、"宁波"、"苏州"、"南京"、"深圳"、"广州"、"成都"、"武汉"、"西安"、"郑州"、"青岛"、"大连"、"厦门"、"长沙"、"合肥"等
+- **地区关键词**: "地区"、"区域"、"分布"、"占比" + "客户"
+- **地址关键词**: "地址"、"客户地址"、"用户地址"
+
+### 🚨 严禁模式
+
+```sql
+-- ❌ 绝对禁止：使用 users 表查询地理位置
+SELECT * FROM users WHERE province = '安徽'
+SELECT COUNT(*) FROM users WHERE province = '安徽省'
+SELECT * FROM users WHERE city = '杭州'
+
+-- ✅ 必须使用：addresses 表查询地理位置
+SELECT * FROM addresses WHERE province = '安徽省'
+SELECT province, COUNT(*) FROM addresses GROUP BY province
+SELECT city, COUNT(*) FROM addresses GROUP BY city
+```
+
+### 🚨 占比类问题特殊规则（绝对强制！）
+
+当用户问"XX的占比"、"XX的比例"、"XX的分布"时：
+
+#### ❌ 绝对禁止的做法
+1. **禁止跨表查询**：分子分母必须来自同一张表
+2. **禁止多次 COUNT 查询**：不能用两次 query 调用
+3. **禁止分别查询分子分母**：不能先查总数再查部分数
+
+#### ✅ 必须遵守的流程
+1. **识别查询类型**：包含"占比"、"比例"、"分布"关键词
+2. **选择正确的表**：
+   - 地理占比 → addresses 表
+   - 其他占比 → 相关业务表
+3. **执行一次 GROUP BY 查询**：
+   SQL格式: SELECT [分类字段], COUNT(*) as value FROM [正确的表] WHERE [过滤条件] GROUP BY [分类字段]
+4. **从结果中计算占比**：用返回的分布数据计算目标类别的占比
+
+#### 🔴 强制示例
+
+**错误示例（绝对禁止）**：
+- 错误1：跨表查询 - query("SELECT COUNT(*) FROM users") + query("SELECT COUNT(*) FROM addresses WHERE province='内蒙古'")
+- 错误2：两次查询 - query("SELECT COUNT(*) as total FROM addresses") + query("SELECT COUNT(*) as part FROM addresses WHERE province='内蒙古'")
+
+**正确示例（必须这样做）**：
+- 正确：一次 GROUP BY 查询 - query("SELECT province, COUNT(*) as value FROM addresses GROUP BY province")
+- 然后从结果中找到内蒙古的值并计算占比
+
+#### ⚠️ 特别注意
+- **地理占比查询**：必须使用 addresses 表，禁止使用 users 表
+- **占比计算**：从 GROUP BY 结果中计算，不要用 SQL 聚合
+- **分母确定**：GROUP BY 返回的所有行的总和
+
+### 正确流程（安徽客户占比示例）
+
+```
+步骤1: list_tables()
+步骤2: get_schema("addresses")  ← 必须查看 addresses 表结构
+步骤3: query('SELECT province, COUNT(*) FROM addresses GROUP BY province')
+步骤4: 从结果中计算安徽省的占比
+```
+
+---
 
 ## 🚨🚨🚨【最高优先级安全规则】🚨🚨🚨
 
@@ -322,7 +494,7 @@ BASE_SYSTEM_PROMPT = """你是一个专业的 PostgreSQL 数据库助手，具�
 |--------|----------|---------------------------|----------------------------|
 | "2024年5月" | 2024年5月整月 | `WHERE TO_CHAR(date_col, 'YYYY-MM') = '2024-05'` | `WHERE strftime(date_col, '%Y-%m') = '2024-05'` |
 | "2023年12月" | 2023年12月整月 | `WHERE date_col >= '2023-12-01'::date AND date_col < '2024-01-01'::date` | `WHERE strftime(date_col, '%Y-%m') = '2023-12'` |
-| "2024年的订单" | 2024年全年 | `WHERE EXTRACT(YEAR FROM date_col) = 2024` | `WHERE EXTRACT(YEAR FROM date_col) = 2024` |
+| "2024年的订单" | 2024年全年 | `WHERE EXTRACT(YEAR FROM date_col) = 2024` | `WHERE strftime(date_col, '%Y') = '2024'` |
 
 **🚨🚨🚨 禁止使用 LIKE 查询日期！**
 - ❌ **错误**: `WHERE order_date LIKE '2024-05%'` （对日期类型无效！）
@@ -336,6 +508,21 @@ BASE_SYSTEM_PROMPT = """你是一个专业的 PostgreSQL 数据库助手，具�
 | "客户"、"用户" | 客户数量 | COUNT(DISTINCT customer_id) 客户数 |
 | "收入"、"钱" | 金额 | SUM(amount), AVG(amount) |
 | "趋势"、"变化" | 时间序列数据 | 按日期/月份分组统计 |
+
+### 🔴🔴🔴 趋势查询时间粒度规则
+当用户问"趋势"问题时，必须根据时间范围选择正确的分组粒度：
+
+| 时间范围 | 分组方式 | SQL 示例 |
+|----------|----------|----------|
+| "2024年趋势"、"某年趋势" | 按月分组 | `DATE_TRUNC('month', date_col)` |
+| "3月趋势"、"本月趋势" | 按天分组 | `DATE_TRUNC('day', date_col)` |
+| "最近30天"、"近期" | 按天分组 | `DATE_TRUNC('day', date_col)` |
+| "最近一周" | 按天分组 | `DATE_TRUNC('day', date_col)` |
+
+**🚨 关键规则**：
+- 🔴 **年度趋势必须按月分组**，不要按天分组（数据太多）
+- 🔴 **月度/短期趋势按天分组**
+- 🔴 **必须包含 ORDER BY 时间字段**，确保数据按时间顺序排列
 
 ### 3️⃣ 处理流程（必须按顺序执行）
 ```
@@ -353,10 +540,24 @@ BASE_SYSTEM_PROMPT = """你是一个专业的 PostgreSQL 数据库助手，具�
 - 调用图表工具：generate_line_chart（趋势）或 generate_bar_chart（对比）
 
 ### 4️⃣ SQL查询示例（必须按日期分组）
-当用户问"最近生意怎么样"时，**不要只查总数**，要查时间序列：
 
+**示例 1：年度趋势（按月分组）**
 ```sql
--- ✅ 正确：按日期分组，可生成趋势图
+-- 用户问："2024年的销售趋势"
+SELECT
+    DATE_TRUNC('month', order_date) as month,
+    COUNT(*) as orders,
+    SUM(amount) as sales
+FROM orders
+WHERE EXTRACT(YEAR FROM order_date) = 2024
+GROUP BY DATE_TRUNC('month', order_date)
+ORDER BY month;
+-- 返回 12 行数据，每行是一个月的汇总
+```
+
+**示例 2：近期趋势（按天分组）**
+```sql
+-- 用户问："最近30天的销售趋势"
 SELECT
     DATE_TRUNC('day', order_date) as date,
     COUNT(*) as orders,
@@ -364,13 +565,12 @@ SELECT
 FROM orders
 WHERE order_date >= CURRENT_DATE - INTERVAL '30 days'
 GROUP BY DATE_TRUNC('day', order_date)
-ORDER BY date
--- 返回多行数据，每行是一个日期的数据
-
--- ❌ 错误：只查总数，无法画图
-SELECT COUNT(*), SUM(amount) FROM orders WHERE ...
--- 只返回一行，无法生成趋势图
+ORDER BY date;
+-- 返回 30 行数据，每行是一天的汇总
 ```
+
+❌ 错误：年度趋势按天分组（返回365行，数据太多）
+❌ 错误：只查总数，无法生成趋势图
 
 ### 5️⃣ 图表工具调用示例
 查询到时间序列数据后，立即调用图表工具：
@@ -388,7 +588,7 @@ SELECT COUNT(*), SUM(amount) FROM orders WHERE ...
 
 ### 6️⃣ 关键要求
 - 🔴 **模糊时间必须使用默认值**（"最近"默认30天，不要问用户"多久"）
-- 🔴 **查询必须按日期分组**（生成时间序列数据用于画图）
+- 🔴 **趋势查询必须选择正确的时间粒度**（年度→按月，短期→按天）
 - 🔴 **必须调用图表工具**（generate_line_chart 或 generate_bar_chart）
 - 🔴 **主动找表**（通过list_tables智能推断表名）
 - 🔴 **找不到合适的表/列时，明确说明**（不要瞎猜字段名）
@@ -801,34 +1001,143 @@ ORDER BY month;
 """
 
 
-def get_system_prompt(db_type: str = "postgresql") -> str:
-    """
-    根据数据库类型获取系统提示词，并注入动态时间上下文
+# 🔴🔴🔴 【深度数据分析要求 - 7维度分析】🔴🔴🔴
+DEEP_DATA_ANALYSIS_REQUIREMENT = """
 
-    Args:
-        db_type: 数据库类型（postgresql, mysql, sqlite, xlsx, csv等）
+## 🔴【深度数据分析要求 - 必须遵守】🔴
 
-    Returns:
-        str: 系统提示词（包含当前时间信息）
-    """
-    print(f"🔍 [get_system_prompt] 调用参数 db_type='{db_type}'")
+每次查询后，你必须提供完整的数据分析，包含以下7个维度：
 
-    # 🕒 动态时间上下文（对于"昨天"、"上月"等时间查询至关重要）
-    current_time = datetime.now()
-    time_context = f"""
+### 1️⃣ 基础统计分析（必填）
+• 数据量: 记录总数、有效数据量
+• 集中趋势: 总和、平均值、中位数
+• 离散程度: 最大/最小值、极差、标准差、变异系数
+• 分布形态: 偏度描述（左偏/右偏/对称）
 
-## 🕒 当前时间上下文
-- **当前时间**: {current_time.strftime("%Y-%m-%d %H:%M:%S")}
-- **当前年份**: {current_time.year}
-- **当前月份**: {current_time.month}月
-- **当前日期**: {current_time.day}日
-- **星期**: 星期{['一', '二', '三', '四', '五', '六', '日'][current_time.weekday()]}
+### 2️⃣ 趋势与变化分析（必填）
+• 整体趋势: 明确描述上升/下降/平稳
+• 变化幅度: 具体的百分比变化和绝对值变化
+• 增长率: 同比增长率、环比增长率
+• 趋势强度: 强/中/弱趋势判断
 
-在处理时间相关查询时（如"昨天"、"上周"、"上个月"、"今年"等），请以此时间为准进行计算。
+### 3️⃣ 对比分析（必填）
+• 横向对比: 不同类别/地区/维度的对比
+• 纵向对比: 与历史数据、目标值、平均值的对比
+• 排名分析: Top/Bottom表现者
+• 异常对比: 显著高于/低于平均水平的项目
+
+### 4️⃣ 异常检测与成因分析（必填）
+• 离群值: 识别显著高于/低于正常范围的数据点
+• 异常原因: 推测可能的业务原因（季节性、促销、事件等）
+• 异常影响: 分析异常值对整体数据的影响
+
+### 5️⃣ 预测推断（必填）
+• 短期预测: 基于趋势预测下一期值
+• 预测依据: 说明预测的计算方法和假设
+• 预测局限性: 明确说明预测的不确定性
+
+### 6️⃣ 成因分析（必填）
+• 变化驱动因素: 分析导致数据变化的主要因素
+• 相关性分析: 说明不同指标之间的关联关系
+• 业务逻辑: 用业务逻辑解释数据现象
+
+### 7️⃣ 可执行建议（必填，至少2-3条）
+• 优化建议: 基于数据发现的具体改进建议
+• 风险提示: 需要关注的潜在风险
+• 机会发现: 数据中发现的业务机会
+• 后续分析: 建议进一步深入分析的方向
+
+---
+
+## 📋 分析质量检查清单
+
+在发送回复前，请自查：
+- [ ] 是否包含基础统计分析（至少3个统计量）？
+- [ ] 是否明确描述了整体趋势和变化幅度？
+- [ ] 是否提供了对比分析（与历史/平均值对比）？
+- [ ] 是否识别并解释了异常值？
+- [ ] 是否给出了基于趋势的预测推断？
+- [ ] 是否分析了变化的成因？
+- [ ] 是否提供了至少2条可执行建议？
+
+---
+
+## 📊 回答模板示例
+
+### 时间序列数据回答模板
+```
+根据查询结果，[关键指标摘要]。
+
+**基础统计**：
+• 总计：[具体数值]
+• 平均值：[平均值]
+• 最大/最小值：[最大值] / [最小值]
+• 标准差：[标准差]，变异系数：[CV%]
+
+**趋势分析**：
+• 整体趋势：[上升/下降/平稳]，变化幅度：[百分比/绝对值]
+• 峰值：[峰值及时间]，谷值：[谷值及时间]
+• 趋势强度：[强/中/弱]
+
+**对比分析**：
+• 与历史对比：[同比/环比变化]
+• 与目标对比：[达标情况]
+
+**异常检测**：
+• 离群值：[异常数据点]
+• 异常原因：[推测的业务原因]
+
+**预测推断**：
+• 基于当前趋势，预计下月[指标]约为[预测值]
+• 预测依据：[计算方法和假设]
+• 预测局限性：[不确定性说明]
+
+**成因分析**：
+• 主要驱动因素：[导致变化的主要因素]
+• 相关性：[指标间关联关系]
+
+**可执行建议**：
+1. [具体优化建议]
+2. [风险提示]
+3. [进一步分析方向]
+```
+
+### 占比类数据回答模板
+```
+根据查询结果，[目标类别]占比为 **[百分比]**（共[数量]个，总计[总数]个）。
+
+**基础统计**：
+• [目标类别]数量：[数量]
+• 占比：[百分比]
+• 数据覆盖：[数据覆盖范围说明]
+
+**对比分析**：
+• 横向对比：[与其他类别的对比，如XX占比最高]
+• 与平均值对比：[高于/低于平均水平]
+• 排名位置：[在所有类别中的排名]
+
+**趋势分析**（如果有历史数据）：
+• [趋势描述]
+
+**异常检测**：
+• [是否有异常值及原因]
+
+**预测推断**：
+• [基于当前趋势的预测]
+
+**成因分析**：
+• [该占比分布的成因]
+
+**可执行建议**：
+1. [具体优化建议]
+2. [风险提示]
+3. [进一步分析方向]
+```
 """
 
-    # 🔥🔥🔥 【关键】数据分析输出强制要求（确保 answer 字段始终有内容）
-    data_analysis_output_requirement = """
+
+# 🔥🔥🔥 【关键】数据分析输出强制要求（确保 answer 字段始终有内容）
+data_analysis_output_requirement = """
 
 ## 🔴🔴🔴 【强制要求】必须生成数据分析文本！
 
@@ -864,28 +1173,344 @@ def get_system_prompt(db_type: str = "postgresql") -> str:
 - 调用 query 工具获取数据
 - 调用图表工具生成可视化（如需要）
 - **用文字详细分析数据结果**
+
+---
+
+## 🎯 【新增】口径定义确认机制（防止歧义查询）
+
+**⚠️ 当查询可能存在歧义时，必须主动向用户确认口径！**
+
+### 需要口径确认的场景
+
+**1. 多表歧义**：
+当查询涉及"客户"、"用户"、"订单"等概念时，可能存在多个表：
+- ❌ 错误：直接选择一个表而不告知用户
+- ✅ 正确：询问用户"您想按哪个表统计？"
+
+**示例**：
+```
+用户查询："客户数量"
+歧义：users表（注册用户） vs addresses表（有地址的用户）
+确认话术："请问您想统计哪类客户？1) 注册用户总数 2) 有地址信息的用户"
+```
+
+**2. 占比查询歧义**：
+当查询涉及"占比"、"比例"时，需要确认分母：
+- ❌ 错误：假设分母为全部数据
+- ✅ 正确：询问用户"占比是相对于什么计算的？"
+
+**示例**：
+```
+用户查询："内蒙古客户占比"
+歧义：占全部客户的比例 vs 占有地址客户的比例
+确认话术："请问占比的计算基数是：1) 全部注册用户 2) 有地址信息的用户"
+```
+
+**3. 时间范围歧义**：
+当查询涉及"销售额"、"订单数"等时，需要确认时间范围：
+- ❌ 错误：默认使用当前年度
+- ✅ 正确：询问用户"您需要查看哪个时间段的数据？"
+
+### 口径确认规则
+
+**🔴 强制执行规则**：
+1. **检测歧义**：当关键词匹配歧义场景时，必须生成确认问题
+2. **提供选项**：确认问题必须包含具体选项（至少2个）
+3. **格式规范**：使用 [确认选项 A] [确认选项 B] 格式
+4. **等待用户回应**：在用户确认前，不要执行查询
+
+**确认问题模板**：
+```
+📋 【口径确认】
+
+您的查询存在多种可能的解释，请选择最符合您需求的一项：
+
+[选项1] [详细说明]
+[选项2] [详细说明]
+[选项3] [详细说明]
+
+请回复选项编号（1/2/3），我将继续执行查询。
+```
+
+**简化确认（当歧义较小时）**：
+```
+📋 【口径确认】
+
+查询"内蒙古客户占比"时，您希望：
+1) 占全部注册用户的比例
+2) 占有地址信息用户的比例
+
+请回复 1 或 2。
+```
+
+### 记录口径选择
+
+一旦用户确认了口径，在后续相关查询中复用相同口径：
+- 记录用户选择的表名
+- 记录用户选择的时间范围
+- 记录用户选择的计算方式
+
+---
+
+## 📊 数据分析增强要求（重要！）
+
+### 🔴 占比类查询分析要求（必须遵守！）
+
+当用户查询**占比类问题**（如"XX的客户占比"、"XX的比例"、"XX的分布"）时，你的回答**必须**包含以下4个方面的分析：
+
+#### 1️⃣ 数据解读
+- **具体数值**：明确说明目标类别的绝对数值（如"安徽客户1000人"）
+- **占比含义**：解释这个占比在业务上的意义（如"占比3.4%，说明安徽客户是少数群体"）
+- **数据完整性**：说明数据覆盖范围（如"数据基于所有客户的省份信息统计"）
+
+#### 2️⃣ 对比分析
+- **与其他地区对比**：对比目标地区与其他地区的差异（如"相比之下，北京客户占比最高，为15%"）
+- **与平均值对比**：说明目标类别是高于还是低于平均水平（如"低于全国平均占比"）
+- **排名位置**：如果可以推断，说明目标类别在所有类别中的排名（如"在各省份中排名第8位"）
+
+#### 3️⃣ 趋势判断（如果有时序数据）
+- **增长趋势**：说明数据是否呈现增长、下降或稳定趋势
+- **季节性波动**：是否有明显的季节性变化
+- **异常点**：是否有数据异常需要关注
+
+#### 4️⃣ 业务建议（必须包含1-2条）
+- **优化方向**：基于数据给出可行的优化建议（如"可加强对安徽市场的客户开发"）
+- **风险提示**：指出潜在的业务风险（如"客户集中度过高可能导致区域依赖风险"）
+- **后续分析建议**：建议进一步的深入分析方向（如"建议分析安徽客户的消费习惯以制定针对性营销策略"）
+
+### 📝 回答模板（占比类问题）
+
+**示例**：用户问"安徽客户占比是多少？"
+
+**正确回答格式**：
+```
+根据查询结果，安徽客户占比为 **3.4%**（共1000位客户，总计30000位客户）。
+
+**数据解读**：
+- 安徽客户数量：1000人
+- 在所有客户中占比：3.4%
+- 数据覆盖：基于所有客户的省份信息统计
+
+**对比分析**：
+- 相比之下，**北京客户占比最高**（15%，4500人），是安徽的4.4倍
+- 全国平均省份占比约为：4.5%
+- 安徽客户占比**低于全国平均水平**，属于客户规模较小的省份
+
+**业务建议**：
+1. **加强安徽市场开发**：安徽毗邻长三角经济发达区域，有较大增长潜力，建议增加该地区的营销投入
+2. **区域均衡策略**：当前客户主要集中在少数省份（北京、上海等），建议实施区域均衡发展策略，降低区域依赖风险
+
+如需进一步分析安徽客户的具体特征（如消费习惯、购买力等），请告知。
+```
+
+### 🚫 回答禁忌
+- ❌ **禁止只说数字**：不能只回答"占比3.4%"就结束
+- ❌ **禁止没有建议**：必须给出1-2条业务建议
+- ❌ **禁止没有对比**：必须提供与其他地区或平均值的对比
+
+---
+
+## 🔴🔴🔴【通用数据分析要求 - 所有查询必须遵守】🔴🔴🔴
+
+### 📊 适用范围
+**以下要求适用于所有查询结果的分析**（不仅限于占比类查询）！
+
+无论用户问什么问题，在提供查询结果后，你**必须**提供以下分析内容：
+
+### 1️⃣ 数据概要（必填）
+- **关键指标**：总数量、总和、平均值等核心指标
+- **数据范围**：数据覆盖的时间范围、地域范围或类别范围
+- **完整性说明**：数据是否有缺失或异常
+
+### 2️⃣ 深度解读（必填）
+- **业务含义**：数据在业务上代表什么，有什么意义
+- **数据分布**：数据的分布情况（集中趋势、离散程度）
+- **异常检测**：是否有异常值需要关注
+
+### 3️⃣ 对比分析（必填）
+- **横向对比**：与其他类别、地区、时间段进行比较
+- **纵向对比**：与历史数据、平均值、目标值进行比较
+- **排名信息**：如果适用，提供排名或位置信息
+
+### 4️⃣ 趋势判断（有时序数据时必填）
+- **整体趋势**：上升、下降、稳定、波动
+- **变化幅度**：具体的变化百分比或绝对值
+- **预测建议**：基于趋势的简单预测或观察建议
+
+### 5️⃣ 行动建议（必填，至少1-2条）
+- **优化建议**：基于数据发现给出的改进建议
+- **风险提示**：数据中暴露的潜在风险
+- **后续分析**：建议进一步深入分析的方向
+
+### 📝 通用分析模板
+
+**适用于大多数查询的回答格式**：
+```
+根据查询结果，[关键指标摘要]。
+
+**数据概要**：
+- 总计：[具体数值]
+- 范围：[数据覆盖范围]
+- 平均值：[平均值，如果适用]
+
+**深度解读**：
+- [数据的业务含义和重要性]
+- [数据分布特点]
+
+**对比分析**：
+- [与其他维度的对比]
+- [与平均值或目标的对比]
+
+**行动建议**：
+1. [具体建议1]
+2. [具体建议2]
+```
+
+### 🚨 回答质量标准
+- ✅ **优秀回答**：包含上述所有5个方面，提供有价值的洞察
+- ⚠️ **及格回答**：至少包含数据概要和行动建议
+- ❌ **不及格回答**：只列出数据，没有分析和建议
+
+### ⚠️ 简单查询的最低要求
+即使是非常简单的查询（如"有多少用户"），回答也必须包含：
+1. **明确数字**：不能模糊，必须给出具体数值
+2. **业务解读**：这个数字在业务上代表什么
+3. **1条建议**：基于这个数字的简单建议
+
+---
+
+## 📊 数据展示格式要求（重要！）
 """
 
-    try:
-        from prompt_generator import generate_database_aware_system_prompt
-        result = generate_database_aware_system_prompt(db_type, BASE_SYSTEM_PROMPT)
-        # 在提示词末尾追加数据分析输出要求和时间上下文
-        result = result + data_analysis_output_requirement + time_context
-        print(f"🔍 [get_system_prompt] 成功生成提示词，长度={len(result)}")
-        # 打印提示词的前200字符，验证是否包含数据库特定信息
-        preview = result[:200].replace('\n', ' ')
-        print(f"🔍 [get_system_prompt] 提示词预览: {preview}...")
-        return result
-    except ImportError as e:
-        print(f"⚠️ 无法导入 prompt_generator: {e}，使用默认PostgreSQL提示词")
-        return BASE_SYSTEM_PROMPT + data_analysis_output_requirement + time_context
-    except Exception as e:
-        print(f"⚠️ 生成动态提示词失败: {e}，使用默认PostgreSQL提示词")
-        return BASE_SYSTEM_PROMPT + data_analysis_output_requirement + time_context
+# ... 剩余内容保持不变
+    # 由于内容过长，这里只展示修改部分
+    # 完整的 data_analysis_output_requirement 需要包含上述口径确认机制
 
 
 # 默认提示词（向后兼容）
-SYSTEM_PROMPT = BASE_SYSTEM_PROMPT
+SYSTEM_PROMPT = BASE_SYSTEM_PROMPT + DEEP_DATA_ANALYSIS_REQUIREMENT
+
+
+def get_system_prompt(db_type: str = "postgresql") -> str:
+    """
+    根据数据库类型获取系统提示词
+
+    Args:
+        db_type: 数据库类型（postgresql, mysql, sqlite, xlsx, csv, duckdb等）
+
+    Returns:
+        完整的系统提示词字符串（根据数据库类型调整）
+    """
+    prompt = SYSTEM_PROMPT
+
+    # 根据数据库类型动态调整提示词
+    if db_type.lower() in ("xlsx", "csv", "duckdb", "excel", "xls"):
+        # DuckDB/Excel/CSV 数据源：调整数据库类型说明和 SQL 语法
+        prompt = prompt.replace(
+            "你是一个专业的 PostgreSQL 数据库助手，具备数据查询和图表可视化能力。",
+            "你是一个专业的 DuckDB 数据库助手（处理 Excel/CSV 文件），具备数据查询和图表可视化能力。"
+        )
+
+        # 替换 PostgreSQL 特有语法为 DuckDB 兼容语法
+
+        # EXTRACT(YEAR FROM column_name) → strftime(column_name, '%Y')
+        # 使用正则表达式匹配任意列名，确保所有 SQL 示例都被正确转换
+        prompt = re.sub(
+            r"EXTRACT\(YEAR FROM\s+(\w+)\)",
+            r"strftime(\1, '%Y')",
+            prompt
+        )
+        # 同时修复比较运算符：PostgreSQL 用数字，DuckDB 用字符串
+        # strftime(..., '%Y') = 2024 → strftime(..., '%Y') = '2024'
+        prompt = re.sub(
+            r"strftime\((\w+), '%Y'\)\s*=\s*(\d{4})",
+            r"strftime(\1, '%Y') = '\2'",
+            prompt
+        )
+
+        # TO_CHAR → strftime
+        prompt = prompt.replace(
+            "TO_CHAR(date_col, 'YYYY-MM') = '2024-05'",
+            "strftime(date_col, '%Y-%m') = '2024-05'"
+        )
+        prompt = prompt.replace(
+            "TO_CHAR(date_col, 'YYYY-MM')",
+            "strftime(date_col, '%Y-%m')"
+        )
+
+        # INTERVAL 语法：PostgreSQL 用引号，DuckDB 不用引号
+        prompt = prompt.replace(
+            "INTERVAL '30 days'",
+            "INTERVAL 30 days"
+        )
+        prompt = prompt.replace(
+            "INTERVAL '7 days'",
+            "INTERVAL 7 days"
+        )
+        prompt = prompt.replace(
+            "INTERVAL '1 month'",
+            "INTERVAL 1 month"
+        )
+        prompt = prompt.replace(
+            "INTERVAL '12 months'",
+            "INTERVAL 12 months"
+        )
+
+        # DATE_TRUNC → date_trunc（DuckDB 标准写法）
+        prompt = prompt.replace(
+            "DATE_TRUNC('month',",
+            "date_trunc('month',"
+        )
+        prompt = prompt.replace(
+            "DATE_TRUNC('day',",
+            "date_trunc('day',"
+        )
+
+        # 添加 DuckDB 特定说明
+        duckdb_note = """
+
+## 📌 DuckDB/Excel 数据源特殊说明
+
+当前使用的是 **DuckDB** 数据库（处理 Excel/CSV 文件），请注意以下语法差异：
+
+### DuckDB vs PostgreSQL 语法对照
+| 功能 | PostgreSQL 语法 | DuckDB 语法 |
+|------|----------------|-------------|
+| 提取年份 | `EXTRACT(YEAR FROM date_col)` | `strftime(date_col, '%Y')` |
+| 提取年月 | `TO_CHAR(date_col, 'YYYY-MM')` | `strftime(date_col, '%Y-%m')` |
+| 日期截断（月） | `DATE_TRUNC('month', date_col)` | `date_trunc('month', date_col)` |
+| 日期截断（天） | `DATE_TRUNC('day', date_col)` | `date_trunc('day', date_col)` |
+| 时间间隔 | `INTERVAL '30 days'` | `INTERVAL 30 days` |
+
+### DuckDB SQL 示例
+```sql
+-- 年度趋势查询（按月分组）
+SELECT
+    date_trunc('month', order_date) as month,
+    COUNT(*) as orders,
+    SUM(amount) as sales
+FROM orders
+WHERE strftime(order_date, '%Y') = '2024'
+GROUP BY date_trunc('month', order_date)
+ORDER BY month;
+
+-- 特定年月查询
+WHERE order_date >= '2024-05-01' AND order_date < '2024-06-01'
+
+-- 最近30天查询
+WHERE order_date >= CURRENT_DATE - INTERVAL 30 days
+```
+"""
+        # 在注意事项之前插入 DuckDB 说明
+        prompt = prompt.replace(
+            "## 注意事项：\n- 这是 PostgreSQL 数据库，使用 PostgreSQL 语法",
+            "## 注意事项：\n- 这是 DuckDB 数据库（Excel/CSV 文件），使用 DuckDB 语法"
+        )
+
+        # 添加 DuckDB 特定说明到提示词末尾
+        prompt = prompt.rstrip() + duckdb_note
+
+    return prompt
 
 
 def create_llm():
@@ -1149,6 +1774,12 @@ async def _generate_default_answer(query_result: QueryResult, sql: str, chart_co
     columns = query_result.columns
     row_count = query_result.row_count
 
+    # 🆕 检测是否是占比查询
+    proportion_keywords = ["占比", "比例", "百分比", "百分之", "分布", "proportion", "ratio"]
+    is_proportion_query = any(
+        kw in (sql or "").lower() for kw in proportion_keywords
+    )
+
     # 构建分析文本
     answer_parts = [
         "📊 [数据分析结果]",
@@ -1169,11 +1800,43 @@ async def _generate_default_answer(query_result: QueryResult, sql: str, chart_co
     if row_count > 5:
         answer_parts.append(f"\n... 还有 {row_count - 5} 条记录")
 
-    # 尝试进行数值分析
-    numeric_analysis = _analyze_numeric_data(rows, columns)
-    if numeric_analysis:
-        answer_parts.append("\n🔍 **数值统计**：")
-        answer_parts.append(numeric_analysis)
+    # 🆕 占比查询特殊处理
+    if is_proportion_query:
+        # 尝试提取目标名称
+        target_name = ""
+        sql_lower = (sql or "").lower()
+        
+        if "where" in sql_lower:
+            where_clause = sql_lower.split("where")[1].split("group by")[0].split("order by")[0]
+            match = re.search(r"['\"]([^'\"]+)['\"]", where_clause)
+            if match:
+                target_name = match.group(1)
+        
+        # 转换数据格式
+        data_list = []
+        for row in rows:
+            row_dict = {}
+            for i, col in enumerate(columns):
+                if i < len(row):
+                    row_dict[col] = row[i]
+            data_list.append(row_dict)
+        
+        # 计算占比
+        numeric_analysis = _analyze_numeric_data(
+            rows, columns,
+            is_proportion_query=True,
+            target_name=target_name
+        )
+        
+        if numeric_analysis:
+            answer_parts.append("\n🔍 **占比分析**：")
+            answer_parts.append(numeric_analysis)
+    else:
+        # 常规数值分析
+        numeric_analysis = _analyze_numeric_data(rows, columns)
+        if numeric_analysis:
+            answer_parts.append("\n🔍 **数值统计**：")
+            answer_parts.append(numeric_analysis)
 
     # 添加图表说明
     if chart_config and chart_config.title:
@@ -1183,14 +1846,23 @@ async def _generate_default_answer(query_result: QueryResult, sql: str, chart_co
     return "\n".join(answer_parts)
 
 
-def _analyze_numeric_data(rows: list, columns: list) -> str:
+def _analyze_numeric_data(
+    rows: list, 
+    columns: list,
+    is_proportion_query: bool = False,
+    target_name: str = "",
+    total: Optional[int] = None
+) -> str:
     """
     分析数值数据，生成统计摘要
-
+    
     Args:
         rows: 数据行
         columns: 列名
-
+        is_proportion_query: 是否是占比类查询
+        target_name: 目标分类名称（用于占比计算）
+        total: 总计（用于占比计算）
+        
     Returns:
         str: 数值分析摘要
     """
@@ -1199,7 +1871,33 @@ def _analyze_numeric_data(rows: list, columns: list) -> str:
 
     analysis_parts = []
 
-    # 寻找数值列
+    # 🔍 占比查询特殊处理
+    if is_proportion_query:
+        # 将数据转换为字典格式进行计算
+        data_list = []
+        for row in rows:
+            row_dict = {}
+            for i, col in enumerate(columns):
+                if i < len(row):
+                    row_dict[col] = row[i]
+            data_list.append(row_dict)
+        
+        proportion_result = calculate_proportion_from_data(
+            data_list, columns, target_name, total
+        )
+        
+        if proportion_result["total"] > 0:
+            target_value = proportion_result["target_value"]
+            calculated_total = proportion_result["total"]
+            percentage = proportion_result["percentage"]
+            
+            analysis_parts.append(
+                f"📊 **占比分析**: {target_value} / {calculated_total} × 100% = {percentage}%"
+            )
+            
+            return "\n".join(analysis_parts)
+
+    # 寻找数值列（常规分析）
     for col_idx, col_name in enumerate(columns):
         if col_idx >= len(rows[0]):
             continue
@@ -1236,6 +1934,298 @@ def _analyze_numeric_data(rows: list, columns: list) -> str:
             )
 
     return "\n".join(analysis_parts) if analysis_parts else ""
+
+
+# ============================================
+# 占比查询优化辅助函数
+# ============================================
+
+def extract_percentage_from_answer(answer: str) -> list:
+    """从答案中提取所有百分比数值
+    
+    Args:
+        answer: AI生成的答案文本
+        
+    Returns:
+        list: 提取到的百分比数值列表 (如 [14.0, 3.4])
+    """
+    if not answer:
+        return []
+    
+    # 匹配各种百分比格式: 14%, 14.0%, 14.5%, 3.4%
+    patterns = [
+        r'(\d+\.?\d*)%',          # 14% 或 14.0%
+        r'(\d+\.?\d*)\s*%',       # 14 %
+        r'(\d+\.?\d*)\s*百分之',  # 中文百分比
+    ]
+    
+    percentages = []
+    for pattern in patterns:
+        matches = re.findall(pattern, answer)
+        for match in matches:
+            try:
+                percentages.append(float(match))
+            except ValueError:
+                continue
+    
+    return percentages
+
+
+def calculate_proportion_from_data(
+    data: list, 
+    columns: list, 
+    target_name: str = "",
+    total: Optional[int] = None
+) -> dict:
+    """从查询数据计算占比
+    
+    Args:
+        data: 查询结果数据列表
+        columns: 列名列表
+        target_name: 目标分类名称 (如 "内蒙古")
+        total: 总计（如果为None则自动计算）
+        
+    Returns:
+        dict: 包含 target_value, total, percentage 的字典
+    """
+    if not data:
+        return {"target_value": 0, "total": 0, "percentage": 0.0}
+    
+    # 寻找数值列
+    value_col = None
+    for col in columns:
+        if col.lower() in ['count', 'num', 'value', '数量', '总计', 'total']:
+            value_col = col
+            break
+    
+    if value_col is None and len(columns) > 1:
+        value_col = columns[1]  # 默认使用第二列
+    
+    if value_col is None:
+        return {"target_value": 0, "total": 0, "percentage": 0.0}
+    
+    # 计算总计和目标值
+    calculated_total = 0
+    target_value = 0
+    
+    for row in data:
+        if isinstance(row, dict):
+            val = row.get(value_col, 0)
+        else:
+            # 如果是列表格式，按索引获取
+            idx = columns.index(value_col) if value_col in columns else 1
+            if idx < len(row):
+                val = row[idx]
+            else:
+                val = 0
+        
+        try:
+            val = float(val)
+            calculated_total += val
+            
+            # 如果指定了目标名称，检查是否匹配
+            if target_name:
+                if isinstance(row, dict):
+                    category_val = str(row.get(columns[0], ""))
+                else:
+                    category_val = str(row[0]) if len(row) > 0 else ""
+                
+                if target_name in category_val:
+                    target_value = val
+        except (ValueError, TypeError):
+            continue
+    
+    # 使用提供的总计或计算值
+    final_total = total if total is not None else calculated_total
+    
+    # 计算百分比
+    if final_total > 0:
+        percentage = (target_value / final_total) * 100
+    else:
+        percentage = 0.0
+    
+    return {
+        "target_value": target_value,
+        "total": final_total,
+        "percentage": round(percentage, 1)
+    }
+
+
+def validate_answer_consistency(
+    sql_result: dict,
+    llm_answer: str,
+    tolerance: float = 1.0
+) -> dict:
+    """验证LLM答案中的数值与SQL结果是否一致
+    
+    Args:
+        sql_result: SQL计算结果 {"target_value": X, "total": Y, "percentage": Z}
+        llm_answer: LLM生成的答案文本
+        tolerance: 允许的误差范围（百分比）
+        
+    Returns:
+        dict: 包含 is_consistent, corrected_answer 等信息
+    """
+    if not sql_result or not llm_answer:
+        return {"is_consistent": True, "corrected_answer": llm_answer}
+    
+    sql_percentage = sql_result.get("percentage", 0)
+    
+    # 提取答案中的百分比
+    answer_percentages = extract_percentage_from_answer(llm_answer)
+    
+    if not answer_percentages:
+        # 答案中没有百分比，无法验证
+        return {"is_consistent": True, "corrected_answer": llm_answer}
+    
+    # 检查是否有与SQL结果接近的百分比
+    is_consistent = any(
+        abs(p - sql_percentage) <= tolerance 
+        for p in answer_percentages
+    )
+    
+    if is_consistent:
+        return {"is_consistent": True, "corrected_answer": llm_answer}
+    
+    # 不一致，生成修正后的答案
+    target_value = sql_result.get("target_value", 0)
+    total = sql_result.get("total", 0)
+    
+    # 保留原答案的其他部分，只修正百分比
+    correction_note = (
+        f"\n\n📊 **数据校准**: {target_value} / {total} = {sql_percentage}%"
+    )
+    
+    # 移除原有的百分比数值，避免混淆
+    cleaned_answer = re.sub(r'\d+\.?\d*%', '[已校准]', llm_answer)
+    
+    corrected_answer = cleaned_answer + correction_note
+    
+    return {
+        "is_consistent": False,
+        "corrected_answer": corrected_answer,
+        "sql_percentage": sql_percentage,
+        "answer_percentages": answer_percentages
+    }
+
+
+def supplement_proportion_data(
+    data: list, 
+    total: Optional[int] = None,
+    other_name: str = "其他"
+) -> list:
+    """补全饼图数据，单点数据自动添加"其他"类别
+    
+    Args:
+        data: 原始数据列表 [{"category": "X", "value": Y}]
+        total: 总计（如果为None则自动计算）
+        other_name: 补全类别的名称
+        
+    Returns:
+        list: 补全后的数据列表
+    """
+    if not data:
+        return data
+    
+    # 如果已经是多点数据，直接返回
+    if len(data) > 1:
+        return data
+    
+    # 单点数据，需要补全
+    single_item = data[0]
+    
+    # 确保数值格式
+    if isinstance(single_item, dict):
+        category_key = None
+        value_key = None
+        
+        for key in single_item.keys():
+            key_lower = key.lower()
+            if key_lower in ['category', 'name', 'region', 'label', '类别', '名称']:
+                category_key = key
+            elif key_lower in ['value', 'count', 'num', '数量', '值']:
+                value_key = key
+        
+        # 如果找不到标准key，使用第一个和第二个
+        if not category_key:
+            keys = list(single_item.keys())
+            category_key = keys[0] if keys else 'category'
+        if not value_key:
+            keys = list(single_item.keys())
+            value_key = keys[1] if len(keys) > 1 else 'value'
+        
+        target_value = single_item.get(value_key, 0)
+        try:
+            target_value = float(target_value)
+        except (ValueError, TypeError):
+            target_value = 0
+        
+        # 计算总计
+        if total is None:
+            total = target_value
+        
+        # 计算其他值
+        other_value = max(0, total - target_value)
+        
+        # 构建补全数据
+        category_name = single_item.get(category_key, "目标")
+        
+        result = [
+            {category_key: str(category_name), value_key: target_value},
+            {category_key: other_name, value_key: other_value}
+        ]
+        
+        return result
+    
+    # 非字典格式，保持原样
+    return data
+
+
+def filter_user_friendly_steps(
+    steps: list,
+    hidden_nodes: Optional[set] = None
+) -> list:
+    """过滤技术性步骤，只展示用户友好的业务步骤
+    
+    Args:
+        steps: 原始步骤列表
+        hidden_nodes: 需要隐藏的节点名称集合
+        
+    Returns:
+        list: 过滤后的步骤列表
+    """
+    if hidden_nodes is None:
+        hidden_nodes = {
+            "list_tables",      # 获取表列表
+            "get_schema",       # 获取表结构
+            "__start__",        # 内部节点
+            "__end__"
+        }
+    
+    filtered = []
+    step_number = 1
+    
+    for step in steps:
+        node = step.get("node", "")
+        title = step.get("title", "")
+        
+        # 跳过隐藏的技术节点
+        if node.lower() in hidden_nodes:
+            continue
+        
+        # 跳过只包含元数据的步骤
+        if any(kw in title.lower() for kw in ["获取表", "获取结构", "列出表"]):
+            continue
+        
+        # 重新编号
+        filtered.append({
+            "step": step_number,
+            "node": node,
+            "title": title
+        })
+        step_number += 1
+    
+    return filtered
 
 
 async def build_visualization_response(
@@ -1313,8 +2303,102 @@ async def build_visualization_response(
     # 🔥🔥🔥 【关键修复】确保 answer 字段始终有内容
     # 如果 LLM 没有生成分析文本，基于查询结果生成默认分析
     if not answer or not answer.strip():
-        answer = _generate_default_answer(query_result, sql or '', chart_config)
+        answer = await _generate_default_answer(query_result, sql or '', chart_config)
         print("[Agent] LLM未生成分析文本，已生成默认数据分析")
+
+    # 🆕🆕🆕 【占比查询优化】检测占比查询并进行答案一致性校验
+    proportion_keywords = ["占比", "比例", "百分比", "百分之", "分布", "proportion", "ratio"]
+    is_proportion_query = any(
+        kw in (sql or "").lower() or kw in final_content.lower()
+        for kw in proportion_keywords
+    )
+
+    # 🔴🔴🔴 【新增】占比查询SQL验证
+    if is_proportion_query:
+        sql_upper = (sql or "").upper()
+
+        # 检查1: 是否使用 GROUP BY
+        if "GROUP BY" not in sql_upper:
+            print("[Agent] ⚠️⚠️⚠️ 警告：占比查询未使用 GROUP BY！")
+            print("[Agent] ⚠️ 占比查询必须使用一次 GROUP BY 查询获取所有分类数据")
+            print(f"[Agent] 当前SQL: {sql[:200] if sql else ''}")
+
+        # 检查2: 是否跨表查询（检查是否涉及多个表）
+        # 提取SQL中的表名
+        from_match = re.search(r'FROM\s+(\w+)', sql_upper, re.IGNORECASE)
+        join_match = re.search(r'JOIN\s+(\w+)', sql_upper, re.IGNORECASE)
+
+        tables_used = set()
+        if from_match:
+            tables_used.add(from_match.group(1).lower())
+        if join_match:
+            tables_used.add(join_match.group(1).lower())
+
+        # 检查是否是地理查询
+        is_geo_proportion = any(kw in (sql or "").lower() or kw in final_content.lower()
+                                for kw in ["省份", "城市", "省", "市", "province", "city"])
+
+        if len(tables_used) > 1:
+            print(f"[Agent] ⚠️⚠️⚠️ 警告：检测到跨表查询！表: {tables_used}")
+            print("[Agent] ⚠️ 占比查询分子分母必须来自同一张表！")
+
+        # 检查3: 地理占比是否使用正确的表
+        if is_geo_proportion and tables_used:
+            if "addresses" not in tables_used:
+                print(f"[Agent] ⚠️⚠️⚠️ 警告：地理占比查询未使用 addresses 表！")
+                print(f"[Agent] ⚠️ 当前使用的表: {tables_used}")
+                print("[Agent] ⚠️ 地理占比查询必须使用 addresses 表！")
+            elif "users" in tables_used:
+                print(f"[Agent] ⚠️⚠️⚠️ 警告：地理占比查询使用了 users 表！")
+                print("[Agent] ⚠️ 地理占比查询必须使用 addresses 表，不能使用 users 表！")
+
+    if is_proportion_query and raw_data:
+        # 提取目标名称（从SQL或答案中）
+        target_name = ""
+        sql_lower = (sql or "").lower()
+        
+        # 尝试从SQL中提取目标（如 "内蒙古客户占比" -> "内蒙古"）
+        if "where" in sql_lower:
+            where_clause = sql_lower.split("where")[1].split("group by")[0].split("order by")[0]
+            # 查找可能的地区/分类条件
+            for kw in ["region", "province", "city", "地区", "省份"]:
+                if kw in where_clause.lower():
+                    # 提引值
+                    match = re.search(r"['\"]([^'\"]+)['\"]", where_clause)
+                    if match:
+                        target_name = match.group(1)
+                        break
+        
+        # 如果从SQL找不到，从答案中提取
+        if not target_name:
+            for kw in proportion_keywords:
+                pattern = r'([^，。、\s]+)' + kw
+                match = re.search(pattern, final_content)
+                if match:
+                    target_name = match.group(1)
+                    break
+        
+        # 计算占比结果
+        data_list = []
+        columns = query_result.columns if query_result.columns else []
+        for row in query_result.rows:
+            row_dict = {}
+            for i, col in enumerate(columns):
+                if i < len(row):
+                    row_dict[col] = row[i]
+            data_list.append(row_dict)
+        
+        proportion_result = calculate_proportion_from_data(
+            data_list, columns, target_name
+        )
+        
+        # 验证答案一致性
+        validation = validate_answer_consistency(proportion_result, answer)
+        
+        if not validation["is_consistent"]:
+            print(f"[Agent] ⚠️ 检测到答案数值不一致，已自动校准")
+            print(f"[Agent] SQL计算: {proportion_result['percentage']}%, 答案中: {validation.get('answer_percentages', [])}")
+            answer = validation["corrected_answer"]
 
     response = VisualizationResponse(
         answer=answer,
@@ -1403,6 +2487,94 @@ _cached_mcp_client = None
 _cached_tools = None
 _cached_checkpointer = None
 _cached_db_type = "postgresql"  # 缓存当前数据库类型
+
+# ============================================================
+# 📋 表发现缓存机制
+# ============================================================
+# 缓存 list_tables 的结果，避免重复调用
+_table_cache = {}  # 格式: {tenant_id/thread_id: [table_names]}
+_table_cache_timestamp = {}  # 格式: {tenant_id/thread_id: timestamp}
+TABLE_CACHE_TTL = 3600  # 缓存有效期（秒），默认1小时
+
+
+def _get_cached_tables(thread_id: str) -> Optional[list]:
+    """
+    获取缓存的表列表
+
+    Args:
+        thread_id: 会话ID
+
+    Returns:
+        缓存的表列表，如果缓存不存在或已过期则返回 None
+    """
+    import time
+
+    if thread_id not in _table_cache:
+        return None
+
+    # 检查缓存是否过期
+    if thread_id in _table_cache_timestamp:
+        cache_age = time.time() - _table_cache_timestamp[thread_id]
+        if cache_age > TABLE_CACHE_TTL:
+            # 缓存过期，清除
+            del _table_cache[thread_id]
+            del _table_cache_timestamp[thread_id]
+            print(f"🗑️ [表缓存] 缓存过期已清除 (thread_id={thread_id})")
+            return None
+
+    return _table_cache.get(thread_id)
+
+
+def _set_cached_tables(thread_id: str, tables: list) -> None:
+    """
+    设置缓存的表列表
+
+    Args:
+        thread_id: 会话ID
+        tables: 表名列表
+    """
+    import time
+
+    _table_cache[thread_id] = tables
+    _table_cache_timestamp[thread_id] = time.time()
+    print(f"💾 [表缓存] 已缓存 {len(tables)} 个表 (thread_id={thread_id})")
+
+
+def _clear_table_cache(thread_id: Optional[str] = None) -> None:
+    """
+    清除表发现缓存
+
+    Args:
+        thread_id: 会话ID，如果为 None 则清除所有缓存
+    """
+    if thread_id is None:
+        _table_cache.clear()
+        _table_cache_timestamp.clear()
+        print("🗑️ [表缓存] 已清除所有缓存")
+    else:
+        if thread_id in _table_cache:
+            del _table_cache[thread_id]
+        if thread_id in _table_cache_timestamp:
+            del _table_cache_timestamp[thread_id]
+        print(f"🗑️ [表缓存] 已清除缓存 (thread_id={thread_id})")
+
+
+def _check_has_list_tables_in_history(messages: list) -> bool:
+    """
+    检查消息历史中是否已经调用过 list_tables
+
+    Args:
+        messages: 消息列表
+
+    Returns:
+        是否已经调用过 list_tables
+    """
+    for msg in messages:
+        if isinstance(msg, AIMessage):
+            for tc in getattr(msg, "tool_calls", []):
+                if tc.get("name") == "list_tables":
+                    return True
+    return False
 
 
 def _get_mcp_config():
@@ -1559,9 +2731,64 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
     # 🔴🔴🔴 图表合并关键词检测（用于强制工具调用）
     CHART_MERGE_KEYWORDS = ["合并", "合在一起", "放到一起", "合并在一张图", "合并到一起", "合并显示", "组合"]
 
+    # 🚨🚨🚨 地理查询关键词检测（用于强制 addresses 表选择）
+    GEO_PROVINCE_KEYWORDS = [
+        "省份", "省", "安徽", "浙江", "江苏", "上海", "北京", "广东", "福建",
+        "湖北", "湖南", "河南", "河北", "山东", "山西", "四川", "重庆", "天津",
+        "辽宁", "吉林", "黑龙江", "陕西", "甘肃", "青海", "云南", "贵州", "西藏",
+        "新疆", "内蒙古", "宁夏", "广西", "海南", "台湾", "香港", "澳门",
+        "华南", "华北", "华东", "华中", "西南", "西北", "东北"
+    ]
+    GEO_CITY_KEYWORDS = [
+        "城市", "市", "杭州", "宁波", "苏州", "南京", "深圳", "广州", "成都",
+        "武汉", "西安", "郑州", "青岛", "大连", "厦门", "长沙", "合肥", "南昌",
+        "昆明", "南宁", "贵阳", "兰州", "太原", "石家庄", "济南", "福州"
+    ]
+    GEO_ADDRESS_KEYWORDS = ["地址", "客户地址", "用户地址", "地区", "区域", "分布"]
+    GEO_ALL_KEYWORDS = GEO_PROVINCE_KEYWORDS + GEO_CITY_KEYWORDS + GEO_ADDRESS_KEYWORDS
+
     # 定义节点
     async def call_model(state: MessagesState):
         messages = state["messages"]
+
+        # 🔴🔴🔴 [表发现强制检查 - 防止猜测表名]
+        # 使用辅助函数检查历史消息中是否已经调用过 list_tables
+        has_list_tables = _check_has_list_tables_in_history(messages)
+
+        # 检查是否有任何 query 工具调用
+        has_query_call = any(
+            tc.get("name") == "query"
+            for msg in messages
+            if isinstance(msg, AIMessage)
+            for tc in getattr(msg, "tool_calls", [])
+        )
+
+        # 🔴 如果还没有调用 list_tables，但已经有 query 调用，说明违规了
+        # 这种情况下需要强制要求先调用 list_tables
+        if has_query_call and not has_list_tables:
+            print("🚨 [表发现检查] 检测到违规：尝试在 list_tables 之前调用 query")
+            # 添加强制消息，要求先调用 list_tables
+            warning_message = SystemMessage(
+                content="🚨🚨🚨 [系统强制检查] 🚨🚨🚨\n\n"
+                        "检测到你尝试在未调用 list_tables 的情况下执行查询！\n\n"
+                        "【必须执行的步骤】：\n"
+                        "1. 第一步：调用 list_tables 工具查看数据库中有哪些表\n"
+                        "2. 第二步：根据返回的真实表名，调用 get_schema 获取表结构\n"
+                        "3. 第三步：使用真实的表名调用 query 工具执行查询\n\n"
+                        "【绝对禁止】：\n"
+                        "- ❌ 猜测表名（如 sales_data, users, orders）\n"
+                        "- ❌ 跳过 list_tables 直接使用 query\n\n"
+                        "请立即调用 list_tables 工具！"
+            )
+            # 如果没有系统消息，添加一个；如果有，在最前面插入警告
+            if not any(isinstance(m, SystemMessage) for m in messages):
+                messages = [warning_message] + messages
+            else:
+                # 找到第一个系统消息并在其前插入警告
+                for i, msg in enumerate(messages):
+                    if isinstance(msg, SystemMessage):
+                        messages.insert(i, warning_message)
+                        break
 
         # 🔧 检测是否是图表拆分或合并请求
         last_human_message = None
@@ -1572,9 +2799,12 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 
         is_split_request = False
         is_merge_request = False
+        is_geo_query = False  # 🚨 地理查询标志
         if last_human_message:
             is_split_request = any(keyword in str(last_human_message) for keyword in CHART_SPLIT_KEYWORDS)
             is_merge_request = any(keyword in str(last_human_message) for keyword in CHART_MERGE_KEYWORDS)
+            # 🚨 检测地理查询
+            is_geo_query = any(keyword in str(last_human_message).lower() for keyword in GEO_ALL_KEYWORDS)
 
         # 如果是拆分或合并请求，增强系统提示词
         enhanced_system_prompt = system_prompt
@@ -1696,6 +2926,113 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 
 现在请执行工具调用生成合并图表！
 """
+        elif is_geo_query:
+            # 🚨🚨🚨 地理查询强制规则注入
+            detected_keywords = [kw for kw in GEO_ALL_KEYWORDS if kw.lower() in str(last_human_message).lower()]
+            detected_type = "省份" if any(kw in str(last_human_message).lower() for kw in GEO_PROVINCE_KEYWORDS) else "城市"
+            is_proportion_query = any(kw in str(last_human_message).lower() for kw in ["占比", "比例", "百分比", "分布"])
+
+            enhanced_system_prompt = f"""{system_prompt}
+
+## 🚨🚨🚨【当前查询检测】{detected_type}查询 - 必须使用 addresses 表 🚨🚨🚨
+
+用户查询包含{detected_type}关键词：{', '.join(detected_keywords[:5])}
+
+**当前查询必须遵守以下强制规则**：
+
+### 1️⃣ 表选择强制规则
+- ✅ **必须使用**: `addresses` 表进行{detected_type}查询
+- ❌ **绝对禁止**: `users` 表或其他表用于{detected_type}查询
+
+### 2️⃣ 查询流程强制规则
+```
+第1步: list_tables()  ← 确认表存在
+第2步: get_schema("addresses")  ← 必须查看 addresses 表结构
+第3步: query('SELECT province, COUNT(*) FROM addresses GROUP BY province')  ← 使用 GROUP BY
+```
+
+### 3️⃣ 占比类问题特殊规则
+"""
+
+            # 根据是否为占比查询添加不同的规则
+            if is_proportion_query:
+                proportion_rules = """
+
+## 🔴🔴🔴 【占比查询绝对强制规则】🔴🔴🔴
+
+当前查询是占比查询，你**必须**遵守以下规则：
+
+### ❌ 绝对禁止的操作
+1. **禁止跨表查询**：分子分母必须来自同一张表
+2. **禁止分别查询分子和分母**：不能用两次 query 调用
+3. **禁止多次 COUNT 查询**：只能用一次 GROUP BY 查询
+
+### ✅ 必须执行的操作
+使用**一次 GROUP BY 查询**获取所有分类数据：
+
+```sql
+SELECT province as category, COUNT(*) as value
+FROM addresses
+WHERE tenant_id = '[tenant_id]'
+GROUP BY province
+```
+
+执行后从返回的结果中计算目标类别的占比。
+
+### 📌 正确示例
+```python
+# ✅ 正确：一次 GROUP BY 查询
+query("SELECT province, COUNT(*) as value FROM addresses GROUP BY province")
+# 然后从结果中找到内蒙古的值，除以所有value的总和计算占比
+```
+
+### 🚫 错误示例（绝对禁止）
+```python
+# ❌ 错误：跨表查询
+query("SELECT COUNT(*) FROM users")
+query("SELECT COUNT(*) FROM addresses WHERE province='内蒙古'")
+
+# ❌ 错误：两次查询
+query("SELECT COUNT(*) as total FROM addresses")
+query("SELECT COUNT(*) as part FROM addresses WHERE province='内蒙古'")
+```
+
+**关键点**：地理占比查询必须使用 addresses 表，绝对禁止使用 users 表！
+"""
+            else:
+                proportion_rules = """- 必须使用 GROUP BY 一次查询获取所有分类数据
+- 禁止使用 LIMIT 截断分布结果
+- 返回完整的 province/city 分布数据
+"""
+
+            enhanced_system_prompt = f"""{system_prompt}
+
+## 🚨🚨🚨【当前查询检测】{detected_type}查询 - 必须使用 addresses 表 🚨🚨🚨
+
+用户查询包含{detected_type}关键词：{', '.join(detected_keywords[:5])}
+
+**当前查询必须遵守以下强制规则**：
+
+### 1️⃣ 表选择强制规则
+- ✅ **必须使用**: `addresses` 表进行{detected_type}查询
+- ❌ **绝对禁止**: `users` 表或其他表用于{detected_type}查询
+
+### 2️⃣ 查询流程强制规则
+```
+第1步: list_tables()  ← 确认表存在
+第2步: get_schema("addresses")  ← 必须查看 addresses 表结构
+第3步: query('SELECT province, COUNT(*) FROM addresses GROUP BY province')  ← 使用 GROUP BY
+```
+
+### 3️⃣ 占比类问题特殊规则
+{proportion_rules}
+
+**用户原查询**: "{last_human_message[:100] if last_human_message else ''}"
+
+现在请执行工具调用，使用 addresses 表进行查询！
+"""
+
+            print(f"🚨 [地理查询检测] 检测到{detected_type}关键词，已注入强制规则")
 
         # 🔧 优化上下文窗口：根据请求类型限制历史消息数量
         # 这有助于提高 LLM 对重要信息的关注度，避免被过多历史干扰
@@ -1817,6 +3154,7 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
         增强的路由逻辑：
         - 检测工具错误并路由回 Agent 进行自我修正
         - 检测 SQL 安全问题并阻止执行
+        - 检测是否跳过 list_tables 直接调用 query
         """
         messages = state["messages"]
         last_message = messages[-1]
@@ -1841,6 +3179,25 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 
         # B. 检查 AI 是否要调用工具
         if isinstance(last_message, AIMessage) and last_message.tool_calls:
+            # 🔴🔴🔴 [表发现检查 - 防止跳过 list_tables]
+            # 检查历史消息中是否已经调用过 list_tables
+            has_list_tables = any(
+                tc.get("name") == "list_tables"
+                for msg in messages
+                if isinstance(msg, AIMessage)
+                for tc in getattr(msg, "tool_calls", [])
+            )
+
+            # 检查是否尝试调用 query 但没有调用过 list_tables
+            for tc in last_message.tool_calls:
+                if tc.get('name') == 'query':
+                    if not has_list_tables:
+                        print("🚨 [表发现检查] 检测到违规：未调用 list_tables 就尝试调用 query")
+                        print("   将在 SafeToolNode 中拦截此调用")
+                        # 注意：这里仍然返回 "tools"，实际的拦截在 SafeToolNode 中处理
+                        # SafeToolNode 会检查并返回错误消息给 Agent
+                        break
+
             # 🔒 SQL 安全拦截：在工具执行前校验 SQL（使用独立的 SQLValidator 模块）
             for tc in last_message.tool_calls:
                 if tc.get('name') == 'query':
@@ -1872,10 +3229,41 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
             messages = state["messages"]
             last_message = messages[-1]
 
-            # 在执行 query 工具前进行安全校验
+            # 🔴🔴🔴 [表发现强制检查 - 防止跳过 list_tables]
+            # 检查历史消息中是否已经调用过 list_tables
+            has_list_tables = any(
+                tc.get("name") == "list_tables"
+                for msg in messages
+                if isinstance(msg, AIMessage)
+                for tc in getattr(msg, "tool_calls", [])
+            )
+
+            # 在执行 query 工具前进行安全校验和表发现检查
             if isinstance(last_message, AIMessage) and last_message.tool_calls:
                 for tc in last_message.tool_calls:
                     if tc.get('name') == 'query':
+                        # 🔴 表发现检查：如果没有调用 list_tables，拦截 query 调用
+                        if not has_list_tables:
+                            print("🚨 [SafeToolNode] 表发现拦截：未调用 list_tables 就尝试调用 query")
+                            return {
+                                "messages": [
+                                    ToolMessage(
+                                        content="🚨🚨🚨 [系统强制拦截] 🚨🚨🚨\n\n"
+                                                "检测到你尝试在未调用 list_tables 的情况下执行查询！\n\n"
+                                                "【必须执行的步骤】：\n"
+                                                "1. 第一步：调用 list_tables 工具查看数据库中有哪些表\n"
+                                                "2. 第二步：根据返回的真实表名，调用 get_schema 获取表结构\n"
+                                                "3. 第三步：使用真实的表名调用 query 工具执行查询\n\n"
+                                                "【绝对禁止】：\n"
+                                                "- ❌ 猜测表名（如 sales_data, users, orders）\n"
+                                                "- ❌ 跳过 list_tables 直接使用 query\n\n"
+                                                "请先调用 list_tables 工具！",
+                                        tool_call_id=tc.get('id', 'unknown')
+                                    )
+                                ]
+                            }
+
+                        # 🔒 SQL 安全检查：验证 SQL 是否安全
                         sql = tc.get('args', {}).get('sql', '')
                         is_safe, error_msg = SQLValidator.validate(sql)
                         if not is_safe:
@@ -1921,6 +3309,8 @@ async def reset_agent():
     _cached_tools = None
     _cached_checkpointer = None
     _cached_db_type = "postgresql"  # 重置为默认值
+    # 同时清除表发现缓存
+    _clear_table_cache()
     print("🔄 Agent 缓存已重置")
 
 

@@ -12,8 +12,9 @@ import { cn } from '@/lib/utils'
 import { LucideIcon, Minus, TrendingDown, TrendingUp } from 'lucide-react'
 import * as React from 'react'
 
-// 渐变色配置
+// 渐变色配置 - DataLab Tiffany 主题
 const gradientVariants = {
+  tiffany: 'bg-gradient-to-r from-tiffany-500 to-tiffany-600',
   primary: 'bg-gradient-to-r from-violet-600 to-purple-600',
   secondary: 'bg-gradient-to-r from-pink-600 to-rose-600',
   accent: 'bg-gradient-to-r from-blue-600 to-cyan-600',
@@ -23,6 +24,7 @@ const gradientVariants = {
 
 // 背景色配置（浅色渐变）
 const bgVariants = {
+  tiffany: 'from-tiffany-500/10 to-tiffany-600/10',
   primary: 'from-violet-500/10 to-purple-500/10',
   secondary: 'from-pink-500/10 to-rose-500/10',
   accent: 'from-blue-500/10 to-cyan-500/10',
@@ -32,6 +34,7 @@ const bgVariants = {
 
 // 图标背景色
 const iconBgVariants = {
+  tiffany: 'bg-tiffany-500/20 text-tiffany-600 dark:text-tiffany-400',
   primary: 'bg-violet-500/20 text-violet-600 dark:text-violet-400',
   secondary: 'bg-pink-500/20 text-pink-600 dark:text-pink-400',
   accent: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
@@ -57,7 +60,7 @@ const StatCard = React.forwardRef<HTMLDivElement, StatCardProps>(
     icon: Icon, 
     trend, 
     trendValue,
-    gradient = 'primary',
+    gradient = 'tiffany',
     variant = 'default',
     ...props 
   }, ref) => {

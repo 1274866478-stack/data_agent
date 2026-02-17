@@ -38,7 +38,7 @@
 - **processing_time_ms: int** - 处理时间毫秒（默认0）
 - **confidence_score: float** - 置信度分数（默认0.0）
 - **explanation: str** - 查询解释（默认空字符串）
-- **processing_steps: List[str]** - 处理步骤（默认空列表）
+- **processing_steps: List[Dict[str, Any]]** - 处理步骤（默认空列表）
 - **validation_result: Optional[Dict[str, Any]]** - 验证结果（默认None）
 - **execution_result: Optional[Dict[str, Any]]** - 执行结果（默认None）
 - **correction_attempts: int** - 纠正尝试次数（默认0）
@@ -118,7 +118,7 @@ class QueryResponseV3(BaseModel):
     processing_time_ms: int = Field(0, description="处理时间(毫秒)")
     confidence_score: float = Field(0.0, description="置信度分数")
     explanation: str = Field("", description="查询解释")
-    processing_steps: List[str] = Field(default_factory=list, description="处理步骤")
+    processing_steps: List[Dict[str, Any]] = Field(default_factory=list, description="处理步骤")
     validation_result: Optional[Dict[str, Any]] = Field(None, description="验证结果")
     execution_result: Optional[Dict[str, Any]] = Field(None, description="执行结果")
     correction_attempts: int = Field(0, description="纠正尝试次数")
