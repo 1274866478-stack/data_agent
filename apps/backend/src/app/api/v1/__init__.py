@@ -3,7 +3,7 @@ API v1 版本路由包
 """
 
 from fastapi import APIRouter
-from .endpoints import health, tenants, documents, data_sources, config, test, llm, auth, upload, reasoning, file_upload
+from .endpoints import health, tenants, documents, data_sources, config, llm, auth, upload, reasoning, file_upload
 from .endpoints import performance_monitoring
 from .endpoints import sql_error_memories
 from .endpoints import logs
@@ -23,9 +23,8 @@ api_router.include_router(tenants.router, prefix="/tenants", tags=["Tenants"])
 api_router.include_router(documents.router, prefix="/documents", tags=["Documents"])
 api_router.include_router(data_sources.router, prefix="/data-sources", tags=["Data Sources"])
 
-# 新增配置验证和测试端点
+# 新增配置验证端点
 api_router.include_router(config.router, prefix="/config", tags=["Configuration"])
-api_router.include_router(test.router, prefix="/test", tags=["Testing"])
 
 # 新增安全配置和审计端点 - 暂时禁用
 # api_router.include_router(security.router, prefix="/security", tags=["Security"])

@@ -119,31 +119,22 @@ except ImportError as e:
 
 # 添加 Agent 目录到 Python 路径
 # agent_service.py 位于 backend/src/app/services/
-# 需要向上到项目根目录，然后进入 Agent 目录
-_agent_path = Path(__file__).parent.parent.parent.parent.parent / "Agent"
+# 需要向上到项目根目录，然后进入 agent 目录
+_agent_path = Path(__file__).parent.parent.parent.parent.parent / "agent"
 if _agent_path.exists() and str(_agent_path) not in sys.path:
     sys.path.insert(0, str(_agent_path))
 
 try:
     from models import VisualizationResponse
-    # 🔧 [迁移计划] 强制使用稳定的 V1 Agent (sql_agent.py)
-    # V1 更简单稳定，没有复杂的中间件和子代理系统
-    # 参考: Agent V1 到 V2 退化问题分析报告 - 方案 C 渐进式迁移
-    from sql_agent import run_agent as run_agent_v1
-    run_agent = run_agent_v1
-    _use_new_agent = False  # 标记为使用 V1
+    from sql_agent import run_agent
     _agent_available = True
-    logger.info("✅ 使用稳定的 V1 Agent (sql_agent.py)")
 
-    # 🔥 【QA集成】导入错误追踪模块
     try:
         from error_tracker import error_tracker, log_agent_error, ErrorCategory
         _error_tracking_available = True
-        logger.info("✅ 错误追踪模块已加载")
     except ImportError as track_err:
         _error_tracking_available = False
         error_tracker = None
-        logger.warning(f"⚠️ 错误追踪模块导入失败: {track_err}，错误追踪功能将不可用")
 except ImportError as e:
     logger.warning(f"Agent模块导入失败: {e}，Agent功能将不可用")
     _agent_available = False

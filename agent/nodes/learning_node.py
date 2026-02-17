@@ -271,7 +271,7 @@ class LearningNode:
         else:
             return ErrorCategory.UNKNOWN.value
 
-    def _process_success_learning(
+    async def _process_success_learning(
         self,
         question: str,
         sql: str,
@@ -337,7 +337,7 @@ class LearningNode:
                 message=f"学习失败: {str(e)}"
             )
 
-    def _process_error_learning(
+    async def _process_error_learning(
         self,
         question: str,
         sql: str,

@@ -72,8 +72,6 @@ from .services.query_performance_monitor import query_perf_monitor
 from .api.v1 import api_router
 from .api.v2 import api_router_v2
 
-# 设置结构化日志
-print("[ROCKET] System Initializing: Data Agent Backend v1.0.0")
 setup_logging()
 logger = get_logger(__name__)
 

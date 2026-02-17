@@ -436,7 +436,7 @@ def _calculate_security_score(security_validation, upcoming_rotations, overdue_r
         level = "良好"
     elif score >= 70:
         grade = "C"
-        level = "一?
+        level = "一般"
     elif score >= 60:
         grade = "D"
         level = "较差"
@@ -470,8 +470,8 @@ def _generate_security_alerts(security_validation, upcoming_rotations, overdue_r
     if overdue_rotations:
         alerts.append({
             "type": "error",
-            "title": "密钥已过?,
-            "message": f"发现 {len(overdue_rotations)} 个已过期密钥需要立即轮?,
+            "title": "密钥已过期",
+            "message": f"发现 {len(overdue_rotations)} 个已过期密钥需要立即轮换",
             "priority": "high"
         })
 
@@ -480,7 +480,7 @@ def _generate_security_alerts(security_validation, upcoming_rotations, overdue_r
         alerts.append({
             "type": "warning",
             "title": "密钥即将到期",
-            "message": f"未来30天内?{len(upcoming_rotations)} 个密钥需要轮?,
+            "message": f"发现 {len(upcoming_rotations)} 个密钥即将过期",
             "priority": "medium"
         })
 
