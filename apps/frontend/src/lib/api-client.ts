@@ -1,0 +1,361 @@
+/**
+ * API Client - Data Agent Backend API
+ *
+ * 提供与后端 FastAPI 的通信接口
+ */
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'
+const API_V2_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/v1', '/v2') || 'http://localhost:8004/api/v2'
+
+// ============================================
+// 类型定义
+// ============================================
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+}
+
+export interface ChatQueryRequest {
+  query: string
+  session_id?: string
+  history?: ChatMessage[]
+  context?: {
+    data_sources?: string[]
+  }
+  connection_id?: string
+}
+
+export interface ChatCompletionRequest {
+  messages: ChatMessage[]
+  session_id?: string
+  stream?: boolean
+}
+
+export interface ChatQueryResultTable {
+  columns: string[]
+  rows: any[][]
+  row_count: number
+}
+
+export interface ChatQueryChart {
+  type: string
+  title: string
+  data: Record<string, any>
+}
+
+export interface ChatQueryResponse {
+  answer: string
+  table?: ChatQueryResultTable
+  chart?: ChatQueryChart
+  sources?: string[]
+  reasoning?: string
+  confidence?: number
+}
+
+export interface StreamCallbacks {
+  onContent?: (content: string) => void
+  onTable?: (table: ChatQueryResultTable) => void
+  onChart?: (chart: ChatQueryChart) => void
+  onComplete?: () => void
+  onError?: (error: string) => void
+}
+
+export interface V2StreamCallbacks {
+  onProgress?: (progress: number) => void
+  onStep?: (step: string, data: any) => void
+  onContent?: (content: string) => void
+  onTable?: (table: ChatQueryResultTable) => void
+  onChart?: (chart: ChatQueryChart) => void
+  onComplete?: () => void
+  onError?: (error: string) => void
+}
+
+// ============================================
+// API 客户端类
+// ============================================
+
+class APIClient {
+  private baseURL: string
+
+  constructor(baseURL: string = API_BASE_URL) {
+    this.baseURL = baseURL
+  }
+
+  /**
+   * V2 API 专用客户端（使用 V2 base URL）
+   */
+  static getV2Client(): APIClient {
+    return new APIClient(API_V2_BASE_URL)
+  }
+
+  /**
+   * 通用请求方法
+   */
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<T> {
+    const url = `${this.baseURL}${endpoint}`
+
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }))
+      throw new Error(error.detail || '请求失败')
+    }
+
+    return response.json()
+  }
+
+  /**
+   * V1 聊天完成 API（非流式）
+   */
+  async chatCompletion(request: ChatCompletionRequest): Promise<ChatQueryResponse> {
+    return this.request<ChatQueryResponse>('/chat/completion', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * V2 查询 API（非流式）
+   */
+  async query(request: ChatQueryRequest): Promise<ChatQueryResponse> {
+    // 使用 V2 专用客户端，确保请求发送到正确的 URL
+    const v2Client = APIClient.getV2Client()
+    return v2Client.request<ChatQueryResponse>('/query', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  }
+
+  /**
+   * V1 流式聊天完成（带回调）
+   */
+  async streamChatCompletionWithCallbacks(
+    request: ChatCompletionRequest,
+    callbacks: StreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<AbortController> {
+    const controller = new AbortController()
+    const signal = abortSignal || controller.signal
+
+    const url = `${this.baseURL}/chat/completion`
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ...request, stream: true }),
+        signal,
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('无法获取响应流')
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+
+        if (done) {
+          callbacks.onComplete?.()
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+
+        // 处理 SSE 格式
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6)
+
+            if (data === '[DONE]') {
+              callbacks.onComplete?.()
+              break
+            }
+
+            try {
+              const parsed = JSON.parse(data)
+
+              if (parsed.content) {
+                callbacks.onContent?.(parsed.content)
+              }
+
+              if (parsed.table) {
+                callbacks.onTable?.(parsed.table)
+              }
+
+              if (parsed.chart) {
+                callbacks.onChart?.(parsed.chart)
+              }
+
+              if (parsed.error) {
+                callbacks.onError?.(parsed.error)
+              }
+            } catch (e) {
+              console.error('解析 SSE 数据失败:', e)
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('请求已取消')
+      } else {
+        callbacks.onError?.(error instanceof Error ? error.message : '未知错误')
+      }
+    }
+
+    return controller
+  }
+
+  /**
+   * 通用流式查询方法（V1 和 V2 通用）
+   */
+  async streamQuery(
+    endpoint: string,
+    request: ChatQueryRequest,
+    callbacks: V2StreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<AbortController> {
+    const controller = new AbortController()
+    const signal = abortSignal || controller.signal
+
+    const url = `${this.baseURL}${endpoint}`
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request),
+        signal,
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('无法获取响应流')
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+
+        if (done) {
+          callbacks.onComplete?.()
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6)
+
+            if (data === '[DONE]') {
+              callbacks.onComplete?.()
+              break
+            }
+
+            try {
+              const parsed = JSON.parse(data)
+
+              // V2 特定的处理
+              if (parsed.type === 'progress') {
+                callbacks.onProgress?.(parsed.progress)
+              } else if (parsed.type === 'step') {
+                callbacks.onStep?.(parsed.step, parsed.data)
+              } else if (parsed.type === 'content') {
+                callbacks.onContent?.(parsed.content)
+              } else if (parsed.type === 'table') {
+                callbacks.onTable?.(parsed.table)
+              } else if (parsed.type === 'chart') {
+                callbacks.onChart?.(parsed.chart)
+              } else if (parsed.type === 'error') {
+                callbacks.onError?.(parsed.message)
+              } else if (parsed.content) {
+                callbacks.onContent?.(parsed.content)
+              }
+            } catch (e) {
+              console.error('解析 SSE 数据失败:', e)
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('请求已取消')
+      } else {
+        callbacks.onError?.(error instanceof Error ? error.message : '未知错误')
+      }
+    }
+
+    return controller
+  }
+
+  /**
+   * V2 流式查询（带回调）
+   */
+  async streamV2Query(
+    request: ChatQueryRequest,
+    callbacks: V2StreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<AbortController> {
+    // 使用 V2 专用客户端，确保请求发送到正确的 URL
+    const v2Client = APIClient.getV2Client()
+    return v2Client.streamQuery('/query/stream', request, callbacks, abortSignal)
+  }
+}
+
+// ============================================
+// 导出单例
+// ============================================
+
+export const apiClient = new APIClient()
+
+// 向后兼容的导出
+export const api = {
+  chat: {
+    completion: (request: ChatCompletionRequest) => apiClient.chatCompletion(request),
+  },
+  v2: {
+    query: (request: ChatQueryRequest) => apiClient.query(request),
+    stream: (
+      request: ChatQueryRequest,
+      callbacks: V2StreamCallbacks,
+      signal?: AbortSignal
+    ) => apiClient.streamV2Query(request, callbacks, signal),
+  },
+}
+
+export default apiClient
