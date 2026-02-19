@@ -468,16 +468,3 @@ def _get_default_fix_prompt(
 现在请修复上述失败的SQL查询，直接返回修复后的SQL语句："""
 
 
-if __name__ == "__main__":
-    # 测试代码
-    print("=== 测试 PostgreSQL 提示词 ===")
-    pg_prompt = generate_database_aware_system_prompt("postgresql")
-    print(pg_prompt[:500])
-
-    print("\n\n=== 测试 MySQL 提示词 ===")
-    mysql_prompt = generate_database_aware_system_prompt("mysql")
-    print(mysql_prompt[:500])
-
-    print("\n\n=== 测试 SQLite 提示词 ===")
-    sqlite_prompt = generate_database_aware_system_prompt("sqlite")
-    print(sqlite_prompt[:500])

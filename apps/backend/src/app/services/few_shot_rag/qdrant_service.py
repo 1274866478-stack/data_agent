@@ -9,6 +9,7 @@ Qdrant 向量数据库服务
 使用 REST API 避免与 qdrant-client 的兼容性问题
 """
 
+import logging
 from typing import List, Dict, Any, Optional
 
 # 使用 REST 客户端避免 httpx 兼容性问题
@@ -16,6 +17,8 @@ from typing import List, Dict, Any, Optional
 from ..qdrant_rest_client import QdrantRESTClient
 
 from backend.src.app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class QdrantService:
@@ -42,7 +45,7 @@ class QdrantService:
                 vector_size=vector_size,
                 distance="Cosine"
             )
-            print(f"创建 Qdrant 集合: {collection_name}")
+            logger.info("创建 Qdrant 集合: %s", collection_name)
 
     async def store_query(
         self,

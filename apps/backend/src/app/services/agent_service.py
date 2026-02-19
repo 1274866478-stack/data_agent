@@ -96,7 +96,6 @@
 **模块层级**: Level 1 (服务层)
 **依赖深度**: 跨模块依赖Agent目录（外部依赖）
 """
-import sys
 import os
 import base64
 import re
@@ -104,6 +103,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import asyncio
 import logging
+from src.app.integrations.agentv2_gateway import agentv2_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -117,30 +117,14 @@ except ImportError as e:
     get_stats_service = None
     logger.warning(f"⚠️ 统计分析服务导入失败: {e}，统计功能将不可用")
 
-# 添加 Agent 目录到 Python 路径
-# agent_service.py 位于 backend/src/app/services/
-# 需要向上到项目根目录，然后进入 agent 目录
 _agent_path = Path(__file__).parent.parent.parent.parent.parent / "agent"
-if _agent_path.exists() and str(_agent_path) not in sys.path:
-    sys.path.insert(0, str(_agent_path))
-
-try:
-    from models import VisualizationResponse
-    from sql_agent import run_agent
-    _agent_available = True
-
-    try:
-        from error_tracker import error_tracker, log_agent_error, ErrorCategory
-        _error_tracking_available = True
-    except ImportError as track_err:
-        _error_tracking_available = False
-        error_tracker = None
-except ImportError as e:
-    logger.warning(f"Agent模块导入失败: {e}，Agent功能将不可用")
-    _agent_available = False
-    run_agent = None
-    _use_new_agent = False
-    VisualizationResponse = None
+_agent_available = agentv2_gateway.is_available()
+_error_tracking_available = False
+error_tracker = None
+log_agent_error = None
+ErrorCategory = None
+_use_new_agent = True
+VisualizationResponse = Any
 
 
 def extract_chart_path_from_answer(answer: str) -> Optional[str]:
@@ -974,397 +958,44 @@ def convert_agent_response_to_chat_response(
     
     return response
 
-
 async def run_agent_query(
     question: str,
     thread_id: str,
     database_url: Optional[str] = None,
     verbose: bool = False,
-    enable_echarts: bool = True,  # 默认启用 ECharts 功能
-    db_type: str = "postgresql"  # 数据库类型
+    enable_echarts: bool = True,
+    db_type: str = "postgresql",
+    connection_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    db_session: Any = None,
 ) -> Optional[VisualizationResponse]:
     """
-    运行Agent查询
-
-    Args:
-        question: 用户问题
-        thread_id: 线程ID（用于会话管理）
-        database_url: 数据库连接URL（可选，如果不提供则使用Agent配置）
-        verbose: 是否显示详细输出
-        enable_echarts: 是否启用 ECharts 图表生成功能（默认启用）
-        db_type: 数据库类型（postgresql, mysql, sqlite, xlsx, csv等）
-
-    Returns:
-        VisualizationResponse: Agent响应，如果失败则返回None
+    AgentV2-only shim for legacy callers.
     """
-    logger.info(
-        "run_agent_query called",
-        extra={
-            "question_preview": question[:100],
-            "thread_id": thread_id,
-            "has_database_url": bool(database_url),
-            "agent_available": _agent_available,
-            "db_type": db_type,  # 添加数据库类型到日志
-        },
+    if not agentv2_gateway.is_available():
+        logger.error("AgentV2 gateway unavailable")
+        return None
+
+    result = await agentv2_gateway.run_legacy_query(
+        question=question,
+        thread_id=thread_id,
+        connection_id=connection_id,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        session_id=session_id,
+        db_session=db_session,
+        db_type=db_type,
     )
-    if not _agent_available:
-        logger.error("Agent模块不可用，直接返回 None")
+    response = result.get("response")
+    if not response:
+        logger.error("AgentV2 gateway returned no response")
         return None
-    
-    try:
-        # -----------------------------------------------------
-        # 1️⃣ STEP 1: EARLY ROUTING DETECTION (Check raw URL before modification)
-        # -----------------------------------------------------
-        # 先判断文件模式，在清理 database_url 之前
-        is_file_mode = False
-        raw_url_for_check = database_url or ""
-        
-        if isinstance(raw_url_for_check, str):
-            # Check for file extensions or local paths
-            if (raw_url_for_check.endswith(('.xlsx', '.xls', '.csv')) or 
-                raw_url_for_check.startswith(('/', './', 'file://', 'local://')) or
-                '/uploads/' in raw_url_for_check or
-                '/data/' in raw_url_for_check):
-                is_file_mode = True
-        
-        logger.info(
-            f"🔧 [Router] 早期路由检测: {'FILE MODE' if is_file_mode else 'DATABASE MODE'}",
-            extra={
-                "is_file_mode": is_file_mode,
-                "raw_url_preview": raw_url_for_check[:100] if raw_url_for_check else None
-            }
-        )
-        
-        # -----------------------------------------------------
-        # 2️⃣ STEP 2: DATABASE URL SANITIZATION (Prevent Postgres Crash)
-        # -----------------------------------------------------
-        # 如果检测到是文件模式，清理 database_url，防止 Postgres 工具崩溃
-        original_url = None
-        if is_file_mode:
-            if database_url:
-                logger.warning(
-                    f"🔧 [Sanitization] 检测到文件路径，清理 database_url 配置以防止 Postgres 工具崩溃: {database_url[:100]}",
-                    extra={
-                        "database_url_preview": database_url[:100],
-                        "reason": "file_mode_detected"
-                    }
-                )
-            # 设置为 None，防止 Postgres 工具尝试连接
-            database_url = None
-        elif database_url:
-            # 这是有效的数据库 URL，可以设置到 config
-            # 检查是否是有效的数据库 URL（以数据库协议开头）
-            is_valid_db_url = (
-                database_url.startswith('postgresql://') or
-                database_url.startswith('postgres://') or
-                database_url.startswith('mysql://') or
-                database_url.startswith('mysql+pymysql://') or
-                database_url.startswith('sqlite://') or
-                database_url.startswith('sqlite:///') or
-                database_url.startswith('mssql://') or
-                database_url.startswith('oracle://')
-            )
-            
-            if is_valid_db_url:
-                # 这是有效的数据库 URL，可以设置
-                from config import config
-                original_url = getattr(config, "database_url", None)
-                logger.info(
-                    "Temporarily overriding Agent database_url",
-                    extra={
-                        "old_url_preview": str(original_url)[:80] if original_url else None,
-                        "new_url_preview": str(database_url)[:80],
-                    },
-                )
-                config.database_url = database_url
-            else:
-                # 不是有效的数据库 URL，也不像是文件路径，记录警告
-                logger.warning(
-                    f"⚠️ database_url 参数格式异常，既不是文件路径也不是有效的数据库 URL: {database_url[:100]}",
-                    extra={
-                        "database_url_preview": database_url[:100],
-                        "reason": "invalid_format"
-                    }
-                )
-        
-        # -----------------------------------------------------
-        # 3️⃣ STEP 3: CONSTRUCT SYSTEM INSTRUCTION (Based on Step 1)
-        # -----------------------------------------------------
-        
-        system_instruction = ""
-        
-        if is_file_mode:
-            # 📂 FILE MODE: Aggressive Anti-SQL Prompt (核威慑级别)
-            system_instruction = (
-                "【🛑 SYSTEM ALERT: FILE MODE ACTIVE】\n"
-                "You are processing a local Excel/CSV file. \n"
-                "CRITICAL RULES:\n"
-                "1. The 'query' tool and SQL tools are DISCONNECTED and will cause a SYSTEM CRASH.\n"
-                "2. You MUST ONLY use `analyze_dataframe` (for data analysis) or `inspect_file` (for schema).\n"
-                "3. DO NOT attempt to list tables or schema. The data is already loaded in the dataframe tool.\n"
-                "4. If you use 'query', the task will fail immediately.\n"
-                "5. The SQL database connection is NOT available in file mode. All SQL tools (`query`, `list_tables`, `get_schema`, `query_database`, `execute_sql_safe`) are DISABLED and will return errors.\n"
-                "6. You MUST use file-specific tools: `inspect_file` to see file structure, `analyze_dataframe` to query data."
-            )
-            logger.info("🔧 [Router] Detected FILE MODE. Locking SQL tools.")
-        else:
-            # 🛢️ DATABASE MODE: Standard SQL behavior with enhanced analysis requirements
-            system_instruction = (
-                "【SYSTEM MODE: DATABASE ANALYSIS】\n"
-                "You are connected to a SQL database. \n"
-                "RULES:\n"
-                "1. Use `list_available_tables` or `list_tables` to see available tables first.\n"
-                "2. Query the relevant tables using `execute_sql_safe` or `query_database` tools.\n"
-                "\n\n🔴【CRITICAL: DEEP DATA ANALYSIS REQUIREMENT】\n"
-                "After executing SQL, you MUST provide detailed analysis including:\n"
-                "\n"
-                "**1. Statistical Metrics (必填)**:\n"
-                "- Total, Mean, Median, Standard Deviation\n"
-                "- Min/Max values and Range\n"
-                "- Growth rates (同比/环比) if time series data\n"
-                "- Coefficient of Variation (data stability)\n"
-                "\n"
-                "**2. Trend & Pattern Analysis (必填)**:\n"
-                "- Overall trend direction (上升/下降/平稳)\n"
-                "- Key fluctuations and volatility\n"
-                "- Seasonal patterns (if applicable)\n"
-                "- Outliers and anomalies detection\n"
-                "\n"
-                "**3. Numerical Insights (必填)**:\n"
-                "- What the numbers actually mean\n"
-                "- Percentage changes and comparisons\n"
-                "- Rankings (top/bottom performers)\n"
-                "- Correlations between metrics\n"
-                "\n"
-                "**4. Business Intelligence (必填)**:\n"
-                "- Actionable recommendations\n"
-                "- Risk identification\n"
-                "- Opportunity detection\n"
-                "- Strategic suggestions\n"
-                "\n"
-                "**5. Prediction & Forecasting (必填)**:\n"
-                "- Short-term prediction based on trends\n"
-                "- Prediction methodology and assumptions\n"
-                "- Prediction limitations and uncertainty\n"
-                "\n"
-                "**6. Root Cause Analysis (必填)**:\n"
-                "- Driving factors behind data changes\n"
-                "- Correlation analysis between metrics\n"
-                "- Business logic explanation\n"
-                "\n"
-                "**7. Actionable Insights (必填)**:\n"
-                "- Optimization recommendations (at least 2-3)\n"
-                "- Risk identification\n"
-                "- Opportunity discovery\n"
-                "- Suggested further analysis\n"
-                "\n"
-                "⚠️ Example format for time series:\n"
-                "• 总销售额：X 万元，平均每月 Y 万元\n"
-                "• 整体趋势：上升/下降 Z%（从 A 万增长到 B 万）\n"
-                "• 峰值：C 万元（某月），谷值：D 万元（某月）\n"
-                "• 波动性：标准差 E，变异系数 F%\n"
-                "• 预测：预计下月约 [预测值]（基于 [增长率] 推算）\n"
-                "• 成因：主要驱动因素是 [因素描述]\n"
-                "• 建议：基于以上发现...\n"
-                "\n"
-                "⚠️ Even for simple queries, calculate and present statistics.\n"
-                "⚠️ Do NOT just list data rows - provide insights!\n"
-            )
-            logger.info("🛢️ [Router] Detected DATABASE MODE.")
-        
-        # -----------------------------------------------------
-        # 4️⃣ STEP 4: INJECT & EXECUTE
-        # -----------------------------------------------------
-        # Inject the instruction into the question (Prompt Engineering)
-        enhanced_question = f"{system_instruction}\n\nUser Question: {question}"
-        logger.info("📋 [Prompt Injection] System instruction added to question.")
-        
-        # Log full system instruction for debugging
-        if system_instruction:
-            logger.debug(
-                f"📋 [系统指令注入] 完整系统指令内容",
-                extra={
-                    "system_instruction": system_instruction,
-                    "instruction_length": len(system_instruction),
-                    "is_file_mode": is_file_mode
-                }
-            )
-        
-        # -----------------------------------------------------
-        
-        # 运行Agent
-        logger.info(
-            "Starting underlying LangGraph Agent run",
-            extra={"thread_id": thread_id, "enable_echarts": enable_echarts},
-        )
-
-        # 🔥 【QA集成】开始计时
-        import time as _time_module
-        _qa_start_time = _time_module.time()
-        _qa_context = {
-            "source": "backend_api",
-            "endpoint": "/api/v1/llm/query-with-agent",
-            "user_question": question,  # 原始问题（未增强）
-            "thread_id": thread_id,
-            "db_type": db_type,
-            "enable_echarts": enable_echarts,
-        }
-
-        # 根据使用的 Agent 版本调用不同的函数
-        if _use_new_agent:
-            # 新版本：需要传递 database_url，返回 Dict 包含 response 字段
-            from config import config as agent_config
-            
-            # 在文件模式下，传递原始文件路径；在数据库模式下，传递数据库 URL
-            if is_file_mode:
-                # 文件模式：传递原始文件路径（raw_url_for_check）
-                effective_db_url = raw_url_for_check if raw_url_for_check else None
-                logger.info(
-                    f"📂 [文件模式] 传递文件路径给 run_agent: {effective_db_url[:100] if effective_db_url else None}",
-                    extra={"file_path": effective_db_url}
-                )
-            else:
-                # 数据库模式：使用清理后的 database_url 或配置中的默认值
-                effective_db_url = database_url or getattr(agent_config, "database_url", None)
-                if not effective_db_url:
-                    logger.error("无法获取数据库连接URL")
-                    return None
-                logger.info(
-                    f"🛢️ [数据库模式] 传递数据库 URL 给 run_agent",
-                    extra={"database_url_preview": effective_db_url[:80] if effective_db_url else None}
-                )
-            
-            result = await run_agent(
-                question=enhanced_question,  # 🔥 使用增强后的问题（包含智能路由指令）
-                database_url=effective_db_url,  # 文件模式下传递文件路径，数据库模式下传递数据库 URL
-                thread_id=thread_id,
-                enable_echarts=enable_echarts,
-                verbose=verbose,
-                db_type=db_type  # 传递数据库类型
-            )
-            # 新版本返回 Dict，提取 response 字段（VisualizationResponse 对象）
-            if result and isinstance(result, dict) and "response" in result:
-                response = result["response"]
-                # 🔥 修复：response对象已经包含metadata字段，不需要再动态添加
-                # metadata已经在run_agent中设置到VisualizationResponse对象中
-            else:
-                response = None
-        else:
-            # 旧版本：不支持 enable_echarts 参数
-            response = await run_agent(enhanced_question, thread_id, verbose=verbose, db_type=db_type)  # 传递 db_type
-        logger.info(
-            "Underlying LangGraph Agent finished",
-            extra={
-                "success": getattr(response, "success", None) if response else None,
-                "sql_preview": (response.sql or "")[:120] if getattr(response, "sql", None) else None,
-                "row_count": getattr(getattr(response, "data", None), "row_count", None) if response else None,
-                "error": getattr(response, "error", None) if response else None,
-            },
-        )
-
-        # 🔥 【QA集成】记录成功
-        if _error_tracking_available and error_tracker:
-            _qa_elapsed = _time_module.time() - _qa_start_time
-            _response_success = getattr(response, "success", False) if response else False
-            _response_answer = getattr(response, "answer", "")[:500] if response else ""
-            _response_sql = getattr(response, "sql", "")[:200] if response else ""
-            _response_error = getattr(response, "error", None) if response else None
-
-            if _response_success:
-                error_tracker.log_success(
-                    question=question,
-                    response=_response_answer or "查询成功",
-                    context={
-                        **_qa_context,
-                        "sql": _response_sql,
-                        "chart_type": getattr(getattr(response, "chart", None), "chart_type", None) if response else None,
-                    },
-                    execution_time=_qa_elapsed
-                )
-                logger.info(f"✅ [QA] 成功记录已保存 (耗时: {_qa_elapsed:.2f}s)")
-            elif _response_error:
-                # 有错误但没抛异常的情况
-                log_agent_error(
-                    question=question,
-                    error=Exception(_response_error),
-                    category=ErrorCategory.UNKNOWN,
-                    context={**_qa_context, "execution_time": _qa_elapsed}
-                )
-                logger.info(f"⚠️ [QA] 错误记录已保存 (Agent返回错误: {_response_error[:100]})")
-
-        # 🆕 深度统计分析集成
-        stats_result = None  # 在外部变量中保存统计结果
-        if _stats_analysis_available and response and getattr(response, 'success', False):
-            try:
-                # 获取查询数据
-                data_obj = getattr(response, 'data', None)
-                if data_obj and hasattr(data_obj, 'rows') and data_obj.rows:
-                    # 准备数据格式
-                    data_for_stats = {
-                        "columns": list(data_obj.columns) if hasattr(data_obj, 'columns') else [],
-                        "rows": data_obj.rows
-                    }
-
-                    # 调用统计分析服务
-                    stats_service = get_stats_service()
-                    stats_result = stats_service.analyze_query_result(data_for_stats)
-
-                    # 将统计结果添加到 response 对象中（使用私有属性避免冲突）
-                    if stats_result and 'error' not in stats_result:
-                        setattr(response, '_stats_analysis', stats_result)
-                        logger.info(
-                            "✅ [统计分析] 深度统计指标计算完成",
-                            extra={
-                                "stats_basic": stats_result.get('basic_stats', {}),
-                                "stats_trend": stats_result.get('trend_analysis', {})
-                            }
-                        )
-            except Exception as stats_error:
-                logger.warning(f"统计分析失败（非致命）: {stats_error}", exc_info=True)
-
-        # 恢复原始配置（只有当 original_url 被设置时才恢复）
-        if original_url is not None:
-            from config import config
-            logger.info("Restoring original Agent database_url")
-            config.database_url = original_url
-
-        return response
-    
-    except Exception as e:
-        logger.error("Agent查询失败", extra={"error": str(e)}, exc_info=True)
-
-        # 🔥 【QA集成】记录异常错误
-        if _error_tracking_available and error_tracker:
-            try:
-                _qa_elapsed = _time_module.time() - _qa_start_time
-                # 自动推断错误类别
-                _error_category = ErrorCategory.UNKNOWN
-                error_str = str(e).lower()
-                if "connection" in error_str or "connect" in error_str:
-                    _error_category = ErrorCategory.DATABASE_CONNECTION
-                elif "timeout" in error_str:
-                    _error_category = ErrorCategory.TIMEOUT
-                elif "schema" in error_str or "table" in error_str or "column" in error_str:
-                    _error_category = ErrorCategory.SCHEMA_NOT_FOUND
-                elif "mcp" in error_str or "tool" in error_str:
-                    _error_category = ErrorCategory.MCP_TOOL_FAILURE
-                elif "api" in error_str or "llm" in error_str or "rate" in error_str:
-                    _error_category = ErrorCategory.LLM_API_ERROR
-
-                log_agent_error(
-                    question=question,
-                    error=e,
-                    category=_error_category,
-                    context={**_qa_context, "execution_time": _qa_elapsed}
-                )
-                logger.info(f"❌ [QA] 异常错误已记录 (类别: {_error_category.value})")
-            except Exception as track_error:
-                logger.warning(f"错误追踪记录失败: {track_error}")
-
-        return None
+    return response
 
 
 def is_agent_available() -> bool:
     """检查Agent是否可用"""
-    return _agent_available
+    return agentv2_gateway.is_available()
 

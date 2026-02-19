@@ -26,71 +26,11 @@ import time
 # Database imports
 from ....data.database import get_db
 
-# AgentV2 imports
-import sys
-from pathlib import Path
-
-# 添加项目根目录到路径 - 更健壮的方法
-def find_project_root():
-    """查找项目根目录（包含 AgentV2 和 backend 的目录）"""
-    current = Path(__file__).resolve()
-
-    # 方法1：向上查找直到找到包含 AgentV2 的目录
-    for _ in range(10):  # 最多向上查 10 层
-        parent = current.parent
-        if (parent / "AgentV2").exists() or (parent / "backend").exists():
-            return parent
-        current = parent
-
-    # 方法2：从当前文件路径推算
-    # backend/src/app/api/v2/endpoints/query_v2.py
-    # 向上 7 层应该是项目根
-    project_root = Path(__file__).resolve().parent.parent.parent.parent.parent.parent
-    if str(project_root).endswith("backend"):
-        project_root = project_root.parent
-
-    return project_root
-
-project_root = find_project_root()
-sys.path.insert(0, str(project_root))
+from ....integrations.agentv2_gateway import agentv2_gateway
 
 # 创建 logger
 logger = logging.getLogger(__name__)
-
-# 尝试导入 Agent 模块
-AGENTV2_AVAILABLE = False
-try:
-    from agent.core import AgentFactory, get_default_factory, get_response_cache
-    from agent.middleware import TenantIsolationMiddleware, SQLSecurityMiddleware
-    AGENTV2_AVAILABLE = True
-    logger.info("[query_v2 import] SUCCESS: Agent module imported successfully")
-except ImportError as e:
-    AGENTV2_AVAILABLE = False
-    logger.error(f"[query_v2 import] ERROR: Failed to import Agent module: {e}")
-
-    # 提供回退的类型定义（当 AgentV2 不可用时）
-    from typing import Any, Optional
-
-    class MockAgent:
-        """模拟 Agent 实例"""
-        async def invoke(self, inputs: dict, config: Optional[dict] = None) -> dict:
-            return {"messages": [{"role": "assistant", "content": "AgentV2 不可用"}]}
-
-    class AgentFactory:
-        """回退的 AgentFactory 类型"""
-        def get_or_create_agent(self, tenant_id: str, user_id: str, session_id: Optional[str] = None):
-            """返回模拟的 agent 实例"""
-            return MockAgent()
-
-    class TenantIsolationMiddleware:
-        """回退的租户隔离中间件"""
-        pass
-
-    class SQLSecurityMiddleware:
-        """回退的 SQL 安全中间件"""
-        pass
-
-    logging.warning("AgentV2 module not available, using mock mode")
+AGENTV2_AVAILABLE = agentv2_gateway.is_available()
 
 # ============================================================================
 # 请求/响应模型
@@ -126,11 +66,12 @@ class QueryResponseV2(BaseModel):
     data: Optional[List[Dict[str, Any]]] = None
     row_count: int = 0
     # 新增 V2 特性
-    processing_steps: List[str] = Field(default_factory=list)
+    processing_steps: List[Dict[str, Any] | str] = Field(default_factory=list)
     subagent_calls: List[str] = Field(default_factory=list)
     reasoning_log: Optional[Dict[str, Any]] = None
     # 图表
     chart_config: Optional[Dict[str, Any]] = None
+    processing_time_ms: int = 0
     # 元数据
     tenant_id: str
     session_id: Optional[str] = None
@@ -172,9 +113,11 @@ router = APIRouter(prefix="/query", tags=["query-v2"])
 # 依赖
 # ============================================================================
 
-def get_agent_factory() -> AgentFactory:
+def get_agent_factory() -> Any:
     """获取 AgentFactory 实例"""
-    return get_default_factory()
+    if not agentv2_gateway.is_available():
+        return None
+    return agentv2_gateway.get_default_factory()
 
 def get_tenant_from_request(request: QueryRequestV2) -> str:
     """
@@ -201,7 +144,7 @@ async def create_query_v2(
     tenant_id: str = Depends(get_tenant_from_request),
     user_id: str = Depends(get_user_from_request),
     db: Session = Depends(get_db),
-    agent_factory: AgentFactory = Depends(get_agent_factory)
+    agent_factory: Any = Depends(get_agent_factory)
 ):
     """
     Data Agent V2 查询端点
@@ -232,15 +175,25 @@ async def create_query_v2(
                 detail="租户ID缺失"
             )
 
+        if not AGENTV2_AVAILABLE or agent_factory is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "success": False,
+                    "error": "AgentV2 runtime unavailable",
+                    "error_type": "agent_unavailable",
+                },
+            )
+
         # 2. 创建 Agent (带租户隔离和数据源连接)
         try:
             # DEBUG: 打印中间件类信息
-            import agent.middleware as mid_module
-            logger.info(f"[DEBUG] TenantIsolationMiddleware 类检查: {hasattr(mid_module.TenantIsolationMiddleware, 'wrap_tool_call')}")
-            logger.info(f"[DEBUG] SQLSecurityMiddleware 类检查: {hasattr(mid_module.SQLSecurityMiddleware, 'wrap_model_call')}")
-            logger.info(f"[DEBUG] 所有方法: {[a for a in dir(mid_module.TenantIsolationMiddleware) if not a.startswith('_')]}")
+            mid_module = agentv2_gateway.get_middleware_module()
+            logger.debug(f"TenantIsolationMiddleware 类检查: {hasattr(mid_module.TenantIsolationMiddleware, 'wrap_tool_call')}")
+            logger.debug(f"SQLSecurityMiddleware 类检查: {hasattr(mid_module.SQLSecurityMiddleware, 'wrap_model_call')}")
+            logger.debug(f"所有方法: {[a for a in dir(mid_module.TenantIsolationMiddleware) if not a.startswith('_')]}")
 
-            logger.info(f"[DEBUG] 开始创建agent... connection_id={request.connection_id}, session_id={session_id}")
+            logger.debug(f"开始创建agent... connection_id={request.connection_id}, session_id={session_id}")
             agent = agent_factory.get_or_create_agent(
                 tenant_id=tenant_id,
                 user_id=user_id,
@@ -248,7 +201,7 @@ async def create_query_v2(
                 connection_id=request.connection_id,
                 db_session=db
             )
-            logger.info("[DEBUG] Agent 创建成功")
+            logger.debug("Agent 创建成功")
         except Exception as e:
             # 添加详细的错误信息
             import traceback
@@ -279,7 +232,7 @@ async def create_query_v2(
         # 5. 检查响应缓存
         cached_response = None
         if AGENTV2_AVAILABLE:
-            response_cache = get_response_cache()
+            response_cache = agentv2_gateway.get_response_cache()
             cached_response = response_cache.get(
                 query=request.query,
                 tenant_id=tenant_id,
@@ -297,10 +250,8 @@ async def create_query_v2(
         # 这解决了 AI 跳过 list_tables() 直接猜测表名的问题
         if AGENTV2_AVAILABLE and request.connection_id:
             try:
-                from agent.tools.database_tools import list_tables
                 logger.info(f"[V2] 强制预调用 list_tables() 获取表名...")
-                tables_result = await asyncio.to_thread(
-                    list_tables,
+                tables_result = await agentv2_gateway.list_tables(
                     connection_id=request.connection_id,
                     db_session=db,
                     tenant_id=tenant_id
@@ -309,8 +260,7 @@ async def create_query_v2(
                     table_names = tables_result["tables"]
                     logger.info(f"[V2] 预期获取到表名列表: {table_names}")
                     # 缓存表名到 AgentFactory
-                    from agent.core import AgentFactory
-                    AgentFactory.set_cached_table_names(
+                    agentv2_gateway.cache_table_names(
                         tenant_id=tenant_id,
                         table_names=table_names,
                         connection_id=request.connection_id
@@ -326,15 +276,8 @@ async def create_query_v2(
         from contextvars import copy_context
 
         user_query_set = False
-        clear_user_query = None
         if AGENTV2_AVAILABLE:
-            try:
-                from agent.tools.database_tools import _set_user_query, _clear_user_query
-                _set_user_query(request.query)
-                user_query_set = True
-                clear_user_query = _clear_user_query
-            except Exception as e:
-                logger.warning(f"[V2] 设置用户查询上下文失败: {e}")
+            user_query_set = agentv2_gateway.set_user_query_context(request.query)
 
         # 添加超时保护，防止 Agent 调用无限期挂起
         QUERY_TIMEOUT = 120.0  # 120秒超时
@@ -359,11 +302,8 @@ async def create_query_v2(
                 }
             )
         finally:
-            if user_query_set and clear_user_query:
-                try:
-                    clear_user_query()
-                except Exception as e:
-                    logger.warning(f"[V2] 清理用户查询上下文失败: {e}")
+            if user_query_set:
+                agentv2_gateway.clear_user_query_context()
 
         # 8. 解析返回结果
         # DeepAgents 返回的结果通常包含 messages 字段
@@ -380,6 +320,22 @@ async def create_query_v2(
         else:
             messages = []
 
+        # 从消息中回填 answer（避免返回空字符串）
+        if not answer:
+            for msg in reversed(messages):
+                if isinstance(msg, dict):
+                    role = msg.get("role")
+                    content = msg.get("content")
+                    if role == "assistant" and isinstance(content, str) and content.strip():
+                        answer = content
+                        break
+                else:
+                    content = getattr(msg, "content", None)
+                    class_name = msg.__class__.__name__.lower()
+                    if isinstance(content, str) and ("ai" in class_name or "assistant" in class_name) and content.strip():
+                        answer = content
+                        break
+
         # ========== [数据验证模块] 从消息中提取 SQL 和数据 ==========
         extracted_sql = None
         extracted_data = None
@@ -389,35 +345,14 @@ async def create_query_v2(
         lineage: List[Dict[str, Any]] = []
         insights: List[str] = []
 
-        # 导入数据验证模块
-        DATA_VALIDATION_AVAILABLE = False
-        try:
-            # 尝试多种导入路径以支持不同环境
-            try:
-                from agent.tools.data_validator import (
-                    validate_sql_data_consistency,
-                    smart_field_mapping,
-                    recommend_chart,
-                    validate_chart_fields_in_sql,
-                    build_cell_lineage,
-                    generate_insights_from_rows
-                )
-                DATA_VALIDATION_AVAILABLE = True
-                logger.info("[V2] 数据验证模块已加载")
-            except ImportError:
-                from src.app.services.agent.data_validator import (
-                    validate_sql_data_consistency,
-                    smart_field_mapping,
-                    recommend_chart,
-                    validate_chart_fields_in_sql,
-                    build_cell_lineage,
-                    generate_insights_from_rows
-                )
-                DATA_VALIDATION_AVAILABLE = True
-                logger.info("[V2] 数据验证模块已加载")
-        except ImportError as e:
-            DATA_VALIDATION_AVAILABLE = False
-            logger.warning(f"[V2] 数据验证模块不可用: {e}")
+        validator_funcs = agentv2_gateway.get_data_validator_functions()
+        validate_sql_data_consistency = validator_funcs["validate_sql_data_consistency"]
+        smart_field_mapping = validator_funcs["smart_field_mapping"]
+        recommend_chart = validator_funcs["recommend_chart"]
+        validate_chart_fields_in_sql = validator_funcs["validate_chart_fields_in_sql"]
+        build_cell_lineage = validator_funcs["build_cell_lineage"]
+        generate_insights_from_rows = validator_funcs["generate_insights_from_rows"]
+        DATA_VALIDATION_AVAILABLE = True
 
         if DATA_VALIDATION_AVAILABLE:
             logger.info("[V2] 消息数量: {len(messages)}")
@@ -695,7 +630,7 @@ async def create_query_v2(
 
             # 存储到缓存
             if AGENTV2_AVAILABLE:
-                response_cache = get_response_cache()
+                response_cache = agentv2_gateway.get_response_cache()
                 response_cache.set(
                     query=request.query,
                     response=response_obj.model_dump(),
@@ -705,17 +640,6 @@ async def create_query_v2(
                 )
                 logger.info(f"[V2] 响应已缓存: {request.query[:30]}...")
             return response_obj
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={
-                    "success": False,
-                    "error": str(e),
-                    "error_type": "internal_error",
-                    "tenant_id": tenant_id,
-                    "processing_time_ms": 0
-                }
-            )
     except HTTPException as http_exc:
         # 直接传递 HTTP 异常
         raise http_exc
@@ -741,11 +665,10 @@ async def create_query_v2(
 @router.get("/cache/stats")
 async def get_cache_stats_v2():
     """获取缓存统计信息"""
-    if not AGENTV2_AVAILABLE:
+    if not agentv2_gateway.is_available():
         return {"error": "AgentV2 not available"}
     try:
-        from agent.core import get_cache_stats
-        stats = get_cache_stats()
+        stats = agentv2_gateway.get_cache_stats()
         return {
             "success": True,
             "cache_stats": stats
@@ -843,29 +766,3 @@ def _sanitize_response_for_tenant(response: str, tenant_id: str) -> str:
     """确保响应中不包含其他租户的数据"""
     # 这里可以添加额外的过滤逻辑
     return response
-
-# ============================================================================
-# 测试代码
-# ============================================================================
-
-if __name__ == "__main__":
-    import uvicorn
-
-    print("=" * 60)
-    print("启动 AgentV2 Query API 测试服务")
-    print("=" * 60)
-    print(
-        "[INFO] 可用端点:",
-        " - POST /api/v2/query/",
-        " - GET /api/v2/query/health",
-        " - GET /api/v2/query/capabilities"
-    )
-    print(
-        "[INFO] 启动服务",
-    )
-    uvicorn.run(
-        "query_v2:router",
-        host="0.0.0.0",
-        port=8005,
-        log_level="info"
-    )

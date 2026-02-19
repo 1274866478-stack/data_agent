@@ -4,8 +4,30 @@
  * 提供与后端 FastAPI 的通信接口
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'
-const API_V2_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/v1', '/v2') || 'http://localhost:8004/api/v2'
+const rawApiBase = process.env.NEXT_PUBLIC_API_URL
+
+const resolveApiBases = (base?: string) => {
+  const fallbackV1 = 'http://localhost:8004/api/v1'
+  const fallbackV2 = 'http://localhost:8004/api/v2'
+
+  if (!base) {
+    return { v1: fallbackV1, v2: fallbackV2 }
+  }
+
+  const normalized = base.replace(/\/+$/, '')
+  if (normalized.includes('/api/v1')) {
+    return { v1: normalized, v2: normalized.replace('/api/v1', '/api/v2') }
+  }
+  if (normalized.includes('/api/v2')) {
+    return { v1: normalized.replace('/api/v2', '/api/v1'), v2: normalized }
+  }
+  if (normalized.endsWith('/api')) {
+    return { v1: `${normalized}/v1`, v2: `${normalized}/v2` }
+  }
+  return { v1: `${normalized}/api/v1`, v2: `${normalized}/api/v2` }
+}
+
+const { v1: API_BASE_URL, v2: API_V2_BASE_URL } = resolveApiBases(rawApiBase)
 
 // ============================================
 // 类型定义

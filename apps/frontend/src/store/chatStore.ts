@@ -468,13 +468,17 @@ const baseChatStore = create<ChatState>()(
 
         const start = Date.now()
         try {
-          const resp = await api.v2.query(payload)
+          const resp: any = await api.v2.query(payload)
+          const isSuccess =
+            typeof resp?.success === 'boolean'
+              ? resp.success
+              : resp?.status === 'success'
 
-          if (!resp || resp.status !== 'success') {
-            throw new Error(resp?.error || '发送消息失败')
+          if (!resp || !isSuccess) {
+            throw new Error(resp?.error || resp?.message || '发送消息失败')
           }
 
-          const data: any = resp.data || {}
+          const data: any = resp?.data ?? resp ?? {}
           let answer: string | undefined = data.answer || data?.data?.answer || data.explanation
           const sources = data.sources || data?.data?.sources || data.data_sources || []
           const confidence = data.confidence ?? data.confidence_score ?? data?.data?.confidence

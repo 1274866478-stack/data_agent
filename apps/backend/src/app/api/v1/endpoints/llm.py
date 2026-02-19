@@ -781,7 +781,6 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
             active_only=True
         )
         perf_msg = f"[PERF] get_data_sources took {time.time() - t1:.2f}s, found {len(data_sources) if data_sources else 0} sources"
-        print(perf_msg)  # 直接打印到控制台
         logger.info(perf_msg)
 
         if not data_sources:
@@ -819,9 +818,9 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
                         tenant_id=tenant_id,
                         db=db
                     )
-                    print(f"[PERF] get_decrypted_connection_string for {ds.name} took {time.time() - t2:.2f}s")
+                    logger.info(f"[PERF] get_decrypted_connection_string for {ds.name} took {time.time() - t2:.2f}s")
                 except Exception as decrypt_error:
-                    print(f"[PERF] 解密数据源 {ds.name} 连接字符串失败: {decrypt_error}")
+                    logger.warning(f"[PERF] 解密数据源 {ds.name} 连接字符串失败: {decrypt_error}")
                     # 对于文件类型数据源，尝试从MinIO直接搜索文件
                     if ds.db_type in ["xlsx", "xls", "csv"]:
                         connection_string = await _try_find_file_in_minio(tenant_id, ds.id, ds.db_type)
@@ -899,7 +898,7 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
                         }
                     finally:
                         await adapter.disconnect()
-                    print(f"[PERF] PostgreSQL get_schema for {ds.name} took {time.time() - t3:.2f}s")
+                    logger.info(f"[PERF] PostgreSQL get_schema for {ds.name} took {time.time() - t3:.2f}s")
 
                 elif ds.db_type in ["xlsx", "xls", "csv"]:
                     # 🔧 修复：从connection_config或connection_string提取文件路径
@@ -915,13 +914,13 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
                         # 文件类型数据源：从文件读取并解析schema
                         t4 = time.time()
                         schema_info = await _get_file_schema(file_path, ds.db_type, ds.name)
-                        print(f"[PERF] _get_file_schema for {ds.name} took {time.time() - t4:.2f}s")
+                        logger.info(f"[PERF] _get_file_schema for {ds.name} took {time.time() - t4:.2f}s")
                     else:
                         # 连接字符串获取失败，尝试备选方案
-                        print(f"[PERF] 尝试备选方案获取数据源 {ds.name} 的schema")
+                        logger.info(f"[PERF] 尝试备选方案获取数据源 {ds.name} 的schema")
                         schema_info = await _try_get_file_schema_fallback(tenant_id, ds.id, ds.db_type, ds.name)
 
-                print(f"[PERF] Total processing for data source {ds.name} took {time.time() - ds_start:.2f}s")
+                logger.info(f"[PERF] Total processing for data source {ds.name} took {time.time() - ds_start:.2f}s")
 
                 if schema_info and schema_info.get("tables"):
                     context_parts.append(f"\n### 数据源: {ds.name}")
@@ -1028,13 +1027,13 @@ def _build_system_prompt_with_context(
     import sys
     from pathlib import Path
 
-    # 路径计算：优先使用 Docker 容器中的绝对路径 /Agent
-    # 如果 /Agent 不存在，则使用相对路径计算（本地开发环境）
-    if Path("/Agent").exists():
-        agent_path = Path("/Agent")
+    # 路径计算：优先使用 Docker 容器中的绝对路径 /agent
+    # 如果 /agent 不存在，则使用相对路径计算（本地开发环境）
+    if Path("/agent").exists():
+        agent_path = Path("/agent")
     else:
-        # 本地开发环境：从 llm.py 向上 5 级到 backend，然后到 Agent
-        agent_path = Path(__file__).parent.parent.parent.parent.parent / "Agent"
+        # 本地开发环境：从 llm.py 向上 5 级到 backend，然后到 agent
+        agent_path = Path(__file__).parent.parent.parent.parent.parent / "agent"
 
     if str(agent_path) not in sys.path:
         sys.path.insert(0, str(agent_path))
@@ -4258,11 +4257,7 @@ async def chat_completion(
         # 获取tenant_id，支持开发环境下的默认租户
         tenant_id = getattr(current_user, 'tenant_id', None) or current_user.get('tenant_id', 'default_tenant')
         logger.info(f"Chat completion request for tenant: {tenant_id}, stream={request.stream}, data_source_ids={request.data_source_ids}")
-        print(f"[DEBUG] Chat completion request - stream={request.stream}, data_source_ids={request.data_source_ids}")
-        # 强制输出到日志文件
-        import sys
-        print(f"[DEBUG] Chat completion request - stream={request.stream}, data_source_ids={request.data_source_ids}", file=sys.stderr)
-
+        logger.debug(f"Chat completion request debug - stream={request.stream}, data_source_ids={request.data_source_ids}")
         # 转换提供商
         provider = None
         if request.provider:
@@ -4275,12 +4270,12 @@ async def chat_completion(
                 )
 
         # 获取数据源上下文，如果指定了数据源ID则只获取指定的数据源
-        print(f"[DEBUG] Starting _get_data_sources_context for tenant: {tenant_id}, data_source_ids: {request.data_source_ids}")
+        logger.debug(f"Starting _get_data_sources_context for tenant: {tenant_id}, data_source_ids: {request.data_source_ids}")
         import time as _time
         _ctx_start = _time.time()
         data_sources_context = await _get_data_sources_context(tenant_id, db, request.data_source_ids)
         schema_duration_ms = int((_time.time() - _ctx_start) * 1000)
-        print(f"[DEBUG] _get_data_sources_context took {_time.time() - _ctx_start:.2f}s")
+        logger.debug(f"_get_data_sources_context took {_time.time() - _ctx_start:.2f}s")
         
         # 收集Schema信息用于前端展示
         schema_info = None
@@ -4422,7 +4417,7 @@ async def chat_completion(
             # 流式响应
             # 注意：chat_completion 是异步函数，需要 await 来获取 AsyncGenerator
             logger.info(f"[STREAM] Starting stream request for tenant {tenant_id}")
-            print(f"[STREAM] Starting stream request for tenant {tenant_id}", file=sys.stderr)
+            logger.info(f"[STREAM] Starting stream request for tenant {tenant_id}")
             
             # 方案 B: 不使用 Function Calling，改用 SQL 代码块检测
             # DeepSeek 不支持标准的 OpenAI Function Calling 协议

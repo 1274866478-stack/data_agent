@@ -1,4 +1,4 @@
-﻿"""
+"""
 API v1 版本路由包
 """
 
@@ -11,8 +11,6 @@ from .endpoints import logs
 # from .endpoints import security
 # 启用query端点，Agent集成已完成
 from .endpoints import query
-# 暂时禁用rag端点，因为导入错误
-# from .endpoints import rag
 
 # 创建API路由器
 api_router = APIRouter()
@@ -52,9 +50,6 @@ api_router.include_router(performance_monitoring.router, prefix="/performance", 
 
 # 新增SQL错误记忆端点 - SQL Error Learning System
 api_router.include_router(sql_error_memories.router, prefix="/sql-error-memories", tags=["SQL Error Memories"])
-
-# 新增RAG服务端点 - Story 3.3 - 暂时禁用
-# api_router.include_router(rag.router, tags=["RAG"])
 
 # 新增前端日志接收端点 - 全量埋点
 api_router.include_router(logs.router, prefix="/logs", tags=["Logging"])

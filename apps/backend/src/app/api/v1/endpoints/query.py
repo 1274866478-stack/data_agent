@@ -106,6 +106,7 @@ from src.app.services.agent_service import (
     convert_agent_response_to_query_response,
     is_agent_available
 )
+from src.app.integrations.agentv2_gateway import agentv2_gateway
 from src.app.services.data_source_service import DataSourceService
 from src.app.core.jwt_utils import get_current_user_from_token
 from fastapi import Request
@@ -770,7 +771,6 @@ async def create_query(
     logger.info(f"🔍 [诊断] force_refresh={request.force_refresh}")
     logger.info(f"🔍 [诊断] merge_request={request.merge_request is not None}")
     logger.info("="*80)
-    print(f"[SEARCH] [诊断] /query 端点被调用 - connection_id={request.connection_id}, query={request.query[:100]}")
     # ============================================================
 
     # 📊 图表合并请求处理
@@ -862,8 +862,6 @@ async def create_query(
             agent_available=is_agent_available(),
             use_agent=use_agent,
         )
-        # 添加额外的调试日志
-        print(f"[DEBUG] Query /query - connection_id: {request.connection_id}, data_source_id: {data_source_id}, use_agent: {use_agent}")
         
         agent_success = False
         if use_agent:
@@ -908,8 +906,6 @@ async def create_query(
 
 用户问题：{request.query}"""
                     logger.info(f"🔧 [数据源类型修复] 检测到文件数据源（{selected_source.db_type}），已增强问题提示")
-                    print(f"🔧 [数据源类型修复] 检测到文件数据源（{selected_source.db_type}），已增强问题提示")
-                    print(f"🔧 [增强后的问题] {enhanced_question[:200]}...")
                 elif selected_source.db_type in ["postgresql", "mysql", "postgres"]:
                     # SQL数据库：明确告诉AI这是SQL数据库
                     enhanced_question = f"""【重要提示：当前数据源是{selected_source.db_type.upper()}数据库】
@@ -922,7 +918,6 @@ async def create_query(
 
 用户问题：{request.query}"""
                     logger.info(f"🔧 [数据源类型修复] 检测到SQL数据库（{selected_source.db_type}），已增强问题提示")
-                    print(f"🔧 [数据源类型修复] 检测到SQL数据库（{selected_source.db_type}），已增强问题提示")
                 
                 agent_response = await run_agent_query(
                     question=enhanced_question,  # 使用增强后的问题
@@ -930,7 +925,12 @@ async def create_query(
                     database_url=database_url,
                     verbose=True,  # 🔍 启用详细日志以诊断编造数据问题
                     enable_echarts=True,  # 启用 ECharts 图表生成功能
-                    db_type=selected_source.db_type  # 传递数据库类型
+                    db_type=selected_source.db_type,  # 传递数据库类型
+                    connection_id=data_source_id,
+                    tenant_id=tenant.id,
+                    user_id=user_id,
+                    session_id=request.session_id,
+                    db_session=db,
                 )
                 if agent_response:
                     logger.info(
@@ -1386,10 +1386,8 @@ async def create_sota_query(
                 "dimensions": ["created_at", "category", "region"]
             }
 
-        # 构建并执行 Swarm Graph
-        from agent.graphs.swarm_graph import run_swarm_query
-
-        result = await run_swarm_query(
+        # 构建并执行 Swarm Graph（通过 AgentV2 gateway）
+        result = await agentv2_gateway.run_swarm_query(
             query=request.query,
             tenant_id=tenant.id,
             llm=llm_service,

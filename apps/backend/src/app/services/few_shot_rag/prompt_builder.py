@@ -8,11 +8,14 @@ Prompt Builder - 动态少样本 Prompt 构建
 """
 
 import os
+import logging
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
 
 from backend.src.app.core.config import settings
 from .qdrant_service import QdrantService
+
+logger = logging.getLogger(__name__)
 
 
 class PromptBuilder:
@@ -38,7 +41,7 @@ class PromptBuilder:
             )
             return response.data[0].embedding
         except Exception as e:
-            print(f"获取 embedding 失败: {e}")
+            logger.warning("获取 embedding 失败: %s", e)
             # 返回零向量
             return [0.0] * settings.embedding_dimension
 
