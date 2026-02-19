@@ -468,7 +468,7 @@ const baseChatStore = create<ChatState>()(
 
         const start = Date.now()
         try {
-          const resp = await api.chat.sendQuery(payload)
+          const resp = await api.v2.query(payload)
 
           if (!resp || resp.status !== 'success') {
             throw new Error(resp?.error || '发送消息失败')
@@ -598,7 +598,7 @@ const baseChatStore = create<ChatState>()(
         set({ isSyncing: true })
         try {
           const result = await syncMessages(async (content, sessionId) => {
-            await api.chat.sendQuery({ query: content, session_id: sessionId })
+            await api.v2.query({ query: content, session_id: sessionId })
           })
           logger.info('ChatStore', 'syncMessages finished', { result })
           const stats = recalcStats(get().sessions, get().stats)
