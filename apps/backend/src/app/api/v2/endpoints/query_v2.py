@@ -57,16 +57,16 @@ sys.path.insert(0, str(project_root))
 # 创建 logger
 logger = logging.getLogger(__name__)
 
-# 尝试导入 AgentV2 模块
+# 尝试导入 Agent 模块
 AGENTV2_AVAILABLE = False
 try:
-    from AgentV2.core import AgentFactory, get_default_factory, get_response_cache
-    from AgentV2.middleware import TenantIsolationMiddleware, SQLSecurityMiddleware
+    from agent.core import AgentFactory, get_default_factory, get_response_cache
+    from agent.middleware import TenantIsolationMiddleware, SQLSecurityMiddleware
     AGENTV2_AVAILABLE = True
-    logger.info("[query_v2 import] SUCCESS: AgentV2 imported successfully")
+    logger.info("[query_v2 import] SUCCESS: Agent module imported successfully")
 except ImportError as e:
     AGENTV2_AVAILABLE = False
-    logger.error(f"[query_v2 import] ERROR: Failed to import AgentV2: {e}")
+    logger.error(f"[query_v2 import] ERROR: Failed to import Agent module: {e}")
 
     # 提供回退的类型定义（当 AgentV2 不可用时）
     from typing import Any, Optional
