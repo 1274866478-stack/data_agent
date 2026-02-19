@@ -8,8 +8,8 @@ FROM python:3.11-slim AS base
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-# 🔧 修复：扩展 PYTHONPATH 使 AgentV2 和 Agent 模块可以正确导入
-# 注意：需要添加根目录 / 使 import AgentV2 能正确找到 /AgentV2
+# 🔧 修复：扩展 PYTHONPATH 使 agent 模块可以正确导入
+# 注意：需要添加根目录 / 使 import agent 能正确找到 /agent
 ENV PYTHONPATH=/app:/
 
 # Set work directory

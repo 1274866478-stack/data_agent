@@ -1079,7 +1079,7 @@ router = APIRouter(prefix="/query", tags=["query-v2-stream"])
 
 # 延迟导入 AgentFactory（可能不可用�?
 try:
-    from AgentV2.core import AgentFactory, get_default_factory
+    from agent.core import AgentFactory, get_default_factory
     AGENTV2_AVAILABLE = True
 except ImportError:
     AGENTV2_AVAILABLE = False

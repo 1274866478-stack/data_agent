@@ -1387,7 +1387,7 @@ async def create_sota_query(
             }
 
         # 构建并执行 Swarm Graph
-        from AgentV2.graphs.swarm_graph import run_swarm_query
+        from agent.graphs.swarm_graph import run_swarm_query
 
         result = await run_swarm_query(
             query=request.query,

@@ -235,7 +235,7 @@ async def create_query_v2(
         # 2. 创建 Agent (带租户隔离和数据源连接)
         try:
             # DEBUG: 打印中间件类信息
-            import AgentV2.middleware as mid_module
+            import agent.middleware as mid_module
             logger.info(f"[DEBUG] TenantIsolationMiddleware 类检查: {hasattr(mid_module.TenantIsolationMiddleware, 'wrap_tool_call')}")
             logger.info(f"[DEBUG] SQLSecurityMiddleware 类检查: {hasattr(mid_module.SQLSecurityMiddleware, 'wrap_model_call')}")
             logger.info(f"[DEBUG] 所有方法: {[a for a in dir(mid_module.TenantIsolationMiddleware) if not a.startswith('_')]}")
@@ -297,7 +297,7 @@ async def create_query_v2(
         # 这解决了 AI 跳过 list_tables() 直接猜测表名的问题
         if AGENTV2_AVAILABLE and request.connection_id:
             try:
-                from AgentV2.tools.database_tools import list_tables
+                from agent.tools.database_tools import list_tables
                 logger.info(f"[V2] 强制预调用 list_tables() 获取表名...")
                 tables_result = await asyncio.to_thread(
                     list_tables,
@@ -309,7 +309,7 @@ async def create_query_v2(
                     table_names = tables_result["tables"]
                     logger.info(f"[V2] 预期获取到表名列表: {table_names}")
                     # 缓存表名到 AgentFactory
-                    from AgentV2.core import AgentFactory
+                    from agent.core import AgentFactory
                     AgentFactory.set_cached_table_names(
                         tenant_id=tenant_id,
                         table_names=table_names,
@@ -329,7 +329,7 @@ async def create_query_v2(
         clear_user_query = None
         if AGENTV2_AVAILABLE:
             try:
-                from AgentV2.tools.database_tools import _set_user_query, _clear_user_query
+                from agent.tools.database_tools import _set_user_query, _clear_user_query
                 _set_user_query(request.query)
                 user_query_set = True
                 clear_user_query = _clear_user_query
@@ -394,7 +394,7 @@ async def create_query_v2(
         try:
             # 尝试多种导入路径以支持不同环境
             try:
-                from AgentV2.tools.data_validator import (
+                from agent.tools.data_validator import (
                     validate_sql_data_consistency,
                     smart_field_mapping,
                     recommend_chart,
@@ -744,7 +744,7 @@ async def get_cache_stats_v2():
     if not AGENTV2_AVAILABLE:
         return {"error": "AgentV2 not available"}
     try:
-        from AgentV2.core import get_cache_stats
+        from agent.core import get_cache_stats
         stats = get_cache_stats()
         return {
             "success": True,
