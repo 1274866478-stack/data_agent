@@ -7,7 +7,9 @@
  * - 实现核心功能：会话/消息管理、API 调用、持久化、本地缓存占位、V2 控制占位、图表合并占位
  */
 
-import { api, ChatQueryRequest } from '@/lib/api-client'
+import { chatService } from '@/services/api'
+import type { ChatQueryRequest } from '@/types/api/chat'
+import type { ChatMessage, ChatSession, StreamingStatus } from '@/types/store/chat'
 import logger from '@/lib/logger'
 import {
   cacheMessage,
@@ -20,41 +22,6 @@ import {
 import { V2SessionState } from '@/types/chat'
 import { create } from 'zustand'
 import { devtools, subscribeWithSelector } from 'zustand/middleware'
-
-export type StreamingStatus = 'idle' | 'streaming' | 'paused' | 'error' | 'completed'
-
-export interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  timestamp: Date
-  status?: 'sending' | 'sent' | 'error'
-  metadata?: {
-    sources?: string[]
-    reasoning?: string
-    confidence?: number
-    table?: import('@/lib/api-client').ChatQueryResultTable
-    chart?: import('@/lib/api-client').ChatQueryChart
-    echarts_option?: Record<string, any>
-    processing_steps?: Array<import('@/types/chat').ProcessingStep>
-    progress?: number
-    insight?: string
-    insights?: string[]
-    query_chain?: import('@/types/chat').QueryChainItem[]
-    chart_validation?: import('@/types/chat').ChartValidation
-    lineage?: import('@/types/chat').CellLineage[]
-    context_info?: Record<string, any>
-  }
-}
-
-export interface ChatSession {
-  id: string
-  title: string
-  createdAt: Date
-  updatedAt: Date
-  messages: ChatMessage[]
-  isActive: boolean
-}
 
 interface ChatStats {
   totalMessages: number
@@ -280,7 +247,7 @@ const baseChatStore = create<ChatState>()(
 
         // 异步通知后端创建会话（不影响本地状态）
         Promise.resolve()
-          .then(() => api.chat?.createSession?.(sessionTitle))
+          .then(() => chatService.createSession?.(sessionTitle))
           .catch((error: unknown) =>
             logger.warn('ChatStore', 'createSession api failed, use local id', { error })
           )
@@ -317,7 +284,7 @@ const baseChatStore = create<ChatState>()(
         }
 
         // 调用后端删除（忽略错误）
-        api.chat?.deleteSession?.(sessionId).catch((error: unknown) =>
+        chatService.deleteSession?.(sessionId).catch((error: unknown) =>
           logger.warn('ChatStore', 'deleteSession api failed', { error })
         )
 
@@ -468,7 +435,7 @@ const baseChatStore = create<ChatState>()(
 
         const start = Date.now()
         try {
-          const resp: any = await api.v2.query(payload)
+          const resp: any = await chatService.query(payload)
           const isSuccess =
             typeof resp?.success === 'boolean'
               ? resp.success
@@ -602,7 +569,7 @@ const baseChatStore = create<ChatState>()(
         set({ isSyncing: true })
         try {
           const result = await syncMessages(async (content, sessionId) => {
-            await api.v2.query({ query: content, session_id: sessionId })
+            await chatService.query({ query: content, session_id: sessionId })
           })
           logger.info('ChatStore', 'syncMessages finished', { result })
           const stats = recalcStats(get().sessions, get().stats)

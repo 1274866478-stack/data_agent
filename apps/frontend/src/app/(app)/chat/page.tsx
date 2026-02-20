@@ -29,7 +29,7 @@
  */
 'use client'
 
-import { ChatInterface } from '@/components/chat/ChatInterface'
+import { ChatInterface } from '@/components/features/chat/ChatInterface'
 
 export default function ChatPage() {
   return (

@@ -1,5 +1,4 @@
-"""
-# Services Package
-
-业务服务层，集成外部服务(MinIO, ChromaDB, 智谱AI, Agent等)。
+﻿"""
+Legacy services shim package.
+All business logic now lives under domains/ or integrations/.
 """

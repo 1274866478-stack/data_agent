@@ -11,6 +11,12 @@ jest.mock('@/lib/api-client', () => ({
   api: {
     chat: {
       sendQuery: jest.fn(),
+      createSession: jest.fn(),
+      deleteSession: jest.fn(),
+    },
+    v2: {
+      query: jest.fn(),
+      stream: jest.fn(),
     },
   },
 }))

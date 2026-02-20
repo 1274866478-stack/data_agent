@@ -49,7 +49,7 @@ from datetime import datetime
 
 from src.app.data.database import get_db
 from src.app.data.models import SQLErrorMemory, SQLErrorType
-from src.app.services.sql_error_memory_service import (
+from src.app.domains.llm.sql_error_memory import (
     get_sql_error_memory_service,
     SQLErrorMemoryService
 )

@@ -18,7 +18,7 @@
  * **上游依赖**:
  * - [../../components/layout/Layout.tsx](../../components/layout/Layout.tsx) - 原有布局组件
  * - [../../components/layout/ModernLayout.tsx](../../components/layout/ModernLayout.tsx) - 现代化布局组件
- * - [../../components/auth/ProtectedRoute.tsx](../../components/auth/ProtectedRoute.tsx) - 认证保护组件
+ * - [../../components/features/auth/ProtectedRoute.tsx](../../components/features/auth/ProtectedRoute.tsx) - 认证保护组件
  *
  * **下游依赖**:
  * - 所有 (app) 路由组下的页面组件（作为children）
@@ -42,7 +42,7 @@
 
 'use client'
 
-import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
+import { ProtectedRoute } from '@/components/features/auth/ProtectedRoute'
 import { Layout } from '@/components/layout/Layout'
 import { ModernLayout } from '@/components/layout/ModernLayout'
 

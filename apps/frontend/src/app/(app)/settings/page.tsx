@@ -2,11 +2,11 @@
 
 import { Button } from '@/components/ui/button'
 import { MaterialIcon } from '@/components/icons/MaterialIcon'
-import { GlassPanel } from '@/components/settings/GlassPanel'
-import { SettingsInput } from '@/components/settings/SettingsInput'
-import { SettingsToggle } from '@/components/settings/SettingsToggle'
-import { ProgressBar } from '@/components/settings/ProgressBar'
-import { SettingsSectionHeader } from '@/components/settings/SettingsSectionHeader'
+import { GlassPanel } from '@/components/features/settings/GlassPanel'
+import { SettingsInput } from '@/components/features/settings/SettingsInput'
+import { SettingsToggle } from '@/components/features/settings/SettingsToggle'
+import { ProgressBar } from '@/components/features/settings/ProgressBar'
+import { SettingsSectionHeader } from '@/components/features/settings/SettingsSectionHeader'
 import { useState, useEffect } from 'react'
 
 interface TenantSettings {

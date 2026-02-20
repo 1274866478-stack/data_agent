@@ -1,0 +1,35 @@
+import { useDocumentStore } from '@/store/documentStore'
+
+export const useDocuments = () => {
+  return useDocumentStore((state) => ({
+    documents: state.documents,
+    stats: state.stats,
+    isLoading: state.isLoading,
+    error: state.error,
+    uploadProgress: state.uploadProgress,
+    selectedDocuments: state.selectedDocuments,
+    total: state.total,
+    currentPage: state.currentPage,
+    pageSize: state.pageSize,
+    statusFilter: state.statusFilter,
+    fileTypeFilter: state.fileTypeFilter,
+    searchQuery: state.searchQuery,
+    fetchDocuments: state.fetchDocuments,
+    uploadDocument: state.uploadDocument,
+    uploadMultipleDocuments: state.uploadMultipleDocuments,
+    deleteDocument: state.deleteDocument,
+    deleteSelectedDocuments: state.deleteSelectedDocuments,
+    getDocumentPreviewUrl: state.getDocumentPreviewUrl,
+    getDocumentDownloadUrl: state.getDocumentDownloadUrl,
+    processDocument: state.processDocument,
+    openPreviewModal: state.openPreviewModal,
+    closePreviewModal: state.closePreviewModal,
+    setSelectedDocuments: state.setSelectedDocuments,
+    toggleDocumentSelection: state.toggleDocumentSelection,
+    clearSelection: state.clearSelection,
+    setFilter: state.setFilter,
+    setPage: state.setPage,
+    clearError: state.clearError,
+    refreshDocuments: state.refreshDocuments,
+  }))
+}

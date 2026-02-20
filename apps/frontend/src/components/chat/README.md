@@ -1,50 +1,50 @@
 # Chat Interface Components
 
-这个目录包含了 Data Agent V4 聊天界面相关的所有组件和功能。
+这个目录包含�?Data Agent V4 聊天界面相关的所有组件和功能�?
 
 ## 组件概览
 
 ### 核心组件
 
 #### `ChatInterface.tsx`
-主聊天界面组件，包含：
-- 侧边栏：会话列表、搜索、操作按钮
+主聊天界面组件，包含�?
+- 侧边栏：会话列表、搜索、操作按�?
 - 主聊天区域：消息列表、输入框
-- 响应式设计：支持移动端和桌面端
+- 响应式设计：支持移动端和桌面�?
 
 #### `MessageList.tsx`
 消息列表组件，负责：
 - 渲染用户和AI消息
 - 支持Markdown格式显示
-- 显示消息状态和时间戳
-- 自动滚动到最新消息
-- 显示元数据（来源、推理过程、置信度）
+- 显示消息状态和时间�?
+- 自动滚动到最新消�?
+- 显示元数据（来源、推理过程、置信度�?
 
 #### `MessageInput.tsx`
 消息输入组件，功能包括：
 - 多行文本输入
 - 自动调整高度
-- 键盘快捷键支持（Enter发送、Shift+Enter换行、Escape清空）
+- 键盘快捷键支持（Enter发送、Shift+Enter换行、Escape清空�?
 - 文件拖拽上传支持
-- 字符计数和限制
-- 发送状态指示
+- 字符计数和限�?
+- 发送状态指�?
 
-## 状态管理
+## 状态管�?
 
 ### `chatStore.ts`
 使用Zustand进行状态管理：
 - 会话管理（创建、切换、删除）
 - 消息管理（添加、更新、删除）
-- 加载和错误状态
-- 本地存储持久化
+- 加载和错误状�?
+- 本地存储持久�?
 
-### 主要状态
+### 主要状�?
 ```typescript
 interface ChatState {
   sessions: ChatSession[]           // 会话列表
   currentSession: ChatSession | null // 当前会话
-  isLoading: boolean               // 加载状态
-  isTyping: boolean                // 输入状态
+  isLoading: boolean               // 加载状�?
+  isTyping: boolean                // 输入状�?
   error: string | null            // 错误信息
   stats: ChatStats                // 统计信息
 }
@@ -54,7 +54,7 @@ interface ChatState {
 
 ### 创建的UI组件
 - `textarea.tsx`: 多行文本输入组件
-- `separator.tsx`: 分隔线组件
+- `separator.tsx`: 分隔线组�?
 - `sheet.tsx`: 侧边抽屉组件
 - `scroll-area.tsx`: 滚动区域组件
 - `markdown.tsx`: Markdown渲染组件
@@ -63,34 +63,34 @@ interface ChatState {
 ## API集成
 
 ### `api-client.ts`
-统一的API客户端，支持：
-- 聊天查询（/api/v1/query）
-- 会话管理（/api/v1/chat/sessions）
-- 数据源管理（/api/v1/data-sources）
-- 文档管理（/api/v1/documents）
-- 健康检查（/api/v1/health）
+统一的API客户端，支持�?
+- 聊天查询�?api/v1/query�?
+- 会话管理�?api/v1/chat/sessions�?
+- 数据源管理（/api/v1/data-sources�?
+- 文档管理�?api/v1/documents�?
+- 健康检查（/api/v1/health�?
 
-## 功能特性
+## 功能特�?
 
-### ✅ 已实现功能
+### �?已实现功�?
 1. **会话管理**
-   - 创建新会话
+   - 创建新会�?
    - 切换会话
    - 删除会话
-   - 会话持久化存储
+   - 会话持久化存�?
 
 2. **消息处理**
-   - 发送用户消息
+   - 发送用户消�?
    - 接收AI响应
-   - 消息状态显示
+   - 消息状态显�?
    - Markdown渲染
-   - 元数据显示
+   - 元数据显�?
 
 3. **用户体验**
-   - 响应式设计
-   - 键盘快捷键
+   - 响应式设�?
+   - 键盘快捷�?
    - 拖拽文件上传
-   - 实时输入状态
+   - 实时输入状�?
    - 自动滚动
 
 4. **界面设计**
@@ -99,10 +99,10 @@ interface ChatState {
    - 深色/浅色主题支持
    - 移动端适配
 
-### 🔧 待优化功能
+### 🔧 待优化功�?
 1. **性能优化**
    - 消息虚拟滚动
-   - 图片懒加载
+   - 图片懒加�?
    - 代码分割
 
 2. **功能增强**
@@ -114,13 +114,13 @@ interface ChatState {
 3. **错误处理**
    - 网络重试机制
    - 离线支持
-   - 更好的错误提示
+   - 更好的错误提�?
 
 ## 使用方法
 
 ### 基本用法
 ```tsx
-import { ChatInterface } from '@/components/chat/ChatInterface'
+import { ChatInterface } from '@/components/features/chat/ChatInterface'
 
 export default function ChatPage() {
   return (
@@ -131,9 +131,9 @@ export default function ChatPage() {
 }
 ```
 
-### 自定义消息输入
+### 自定义消息输�?
 ```tsx
-import { MessageInput } from '@/components/chat/MessageInput'
+import { MessageInput } from '@/components/features/chat/MessageInput'
 
 export default function CustomChat() {
   const handleFileAttach = (files: File[]) => {
@@ -150,7 +150,7 @@ export default function CustomChat() {
 }
 ```
 
-### 使用聊天状态
+### 使用聊天状�?
 ```tsx
 import { useChatStore } from '@/store/chatStore'
 
@@ -161,7 +161,7 @@ export default function ChatStats() {
     <div>
       <p>总会话数: {stats.totalSessions}</p>
       <p>总消息数: {stats.totalMessages}</p>
-      <p>当前会话数: {sessions.length}</p>
+      <p>当前会话�? {sessions.length}</p>
     </div>
   )
 }
@@ -186,15 +186,15 @@ export default function ChatStats() {
 ### 组件测试
 ```tsx
 import { render, screen } from '@testing-library/react'
-import { ChatInterface } from '@/components/chat/ChatInterface'
+import { ChatInterface } from '@/components/features/chat/ChatInterface'
 
 test('renders chat interface', () => {
   render(<ChatInterface />)
-  expect(screen.getByText('开始对话')).toBeInTheDocument()
+  expect(screen.getByText('开始对�?)).toBeInTheDocument()
 })
 ```
 
-### 状态测试
+### 状态测�?
 ```tsx
 import { useChatStore } from '@/store/chatStore'
 
@@ -207,17 +207,17 @@ test('creates new session', () => {
 })
 ```
 
-## 开发指南
+## 开发指�?
 
-### 添加新功能
-1. 在 `chatStore.ts` 中添加状态和操作
-2. 创建相应的组件
+### 添加新功�?
+1. �?`chatStore.ts` 中添加状态和操作
+2. 创建相应的组�?
 3. 更新 API 客户端（如需要）
 4. 添加测试用例
 5. 更新文档
 
-### 调试技巧
-1. 使用浏览器开发工具检查状态变化
+### 调试技�?
+1. 使用浏览器开发工具检查状态变�?
 2. 查看 Network 标签检查API调用
 3. 使用 React DevTools 检查组件树
 4. 检查控制台错误信息
@@ -226,13 +226,13 @@ test('creates new session', () => {
 
 1. **环境变量**: 确保 `NEXT_PUBLIC_API_URL` 正确配置
 2. **CORS设置**: 后端API需要正确配置CORS
-3. **静态资源**: 确保所有组件和依赖正确打包
+3. **静态资�?*: 确保所有组件和依赖正确打包
 4. **性能监控**: 使用性能监控工具跟踪用户体验
 
 ## 相关文件
 
-- `src/store/chatStore.ts`: 聊天状态管理
-- `src/lib/api-client.ts`: API客户端
+- `src/store/chatStore.ts`: 聊天状态管�?
+- `src/lib/api-client.ts`: API客户�?
 - `src/app/(app)/chat/page.tsx`: 聊天页面路由
-- `src/components/ui/`: UI组件库
+- `src/components/ui/`: UI组件�?
 - `tailwind.config.js`: Tailwind配置

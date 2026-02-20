@@ -61,8 +61,8 @@ from .database import Base
 # 使用通用的 JSON 类型代替 JSONB，以支持 SQLite 和 PostgreSQL
 # 在 PostgreSQL 中会自动使用 JSONB
 JSONB = JSON
-from ..services.encryption_service import encryption_service
-from ..services.database_factory import DatabaseAdapterFactory
+from ..core.encryption import encryption_service
+from ..integrations.db_adapters.database_factory import DatabaseAdapterFactory
 
 
 class TenantStatus(str, enum.Enum):

@@ -53,9 +53,9 @@
  * - 无（Store是叶子状态管理模块）
  *
  * **调用方**:
- * - [../components/tenant/TenantProfile.tsx](../components/tenant/TenantProfile.tsx) - 租户资料组件
- * - [../components/tenant/TenantStats.tsx](../components/tenant/TenantStats.tsx) - 租户统计组件
- * - [../components/tenant/TenantSettings.tsx](../components/tenant/TenantSettings.tsx) - 租户设置组件
+ * - [../components/features/tenant/TenantProfile.tsx](../components/features/tenant/TenantProfile.tsx) - 租户资料组件
+ * - [../components/features/tenant/TenantStats.tsx](../components/features/tenant/TenantStats.tsx) - 租户统计组件
+ * - [../components/features/tenant/TenantSettings.tsx](../components/features/tenant/TenantSettings.tsx) - 租户设置组件
  * - [../app/(app)/settings/page.tsx](../app/(app)/settings/page.tsx) - 设置页面
  *
  * ## [STATE]

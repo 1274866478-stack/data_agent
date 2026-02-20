@@ -59,7 +59,7 @@ from datetime import datetime
 
 from src.app.data.database import get_db
 from src.app.data.models import Tenant
-from src.app.services.tenant_service import get_tenant_service, get_tenant_setup_service, TenantService, TenantSetupService
+from src.app.domains.tenants.service import get_tenant_service, get_tenant_setup_service, TenantService, TenantSetupService
 from src.app.middleware.tenant_context import get_current_tenant, get_current_tenant_id
 
 router = APIRouter()

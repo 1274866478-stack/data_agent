@@ -1,4 +1,4 @@
-from src.app.services.query_context import get_query_context
+from src.app.domains.rag_sql.query_context import get_query_context
 
 
 class QueryContextService:

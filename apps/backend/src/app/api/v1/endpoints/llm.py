@@ -88,7 +88,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import pandas as pd
 
-from src.app.services.llm_service import (
+from src.app.domains.llm.service import (
     llm_service,
     LLMProvider,
     LLMMessage,
@@ -98,12 +98,12 @@ from src.app.services.llm_service import (
 from src.app.core.auth import get_current_user_with_tenant
 from src.app.data.models import Tenant, DataSourceConnection, DataSourceConnectionStatus
 from src.app.data.database import get_db
-from src.app.services.data_source_service import data_source_service
-from src.app.services.minio_client import minio_service
-from src.app.services.database_interface import PostgreSQLAdapter
-from src.app.services.zhipu_client import zhipu_service
-from src.app.services.sql_error_memory_service import SQLErrorMemoryService
-from src.app.services.agent.tools import (
+from src.app.domains.data_sources.service import data_source_service
+from src.app.integrations.storage_minio.client import minio_service
+from src.app.integrations.db_adapters.database_interface import PostgreSQLAdapter
+from src.app.integrations.llm_providers.zhipu_client import zhipu_service
+from src.app.domains.llm.sql_error_memory import SQLErrorMemoryService
+from src.app.domains.query.agent_tools import (
     list_available_tables,
     get_table_schema,
     execute_sql_safe,
@@ -511,7 +511,7 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
     """
     try:
         # 🔧 修复：使用新的路径解析逻辑，优先尝试本地文件系统
-        from src.app.services.agent.path_extractor import resolve_file_path_with_fallback
+        from src.app.domains.query.agent_path import resolve_file_path_with_fallback
         
         # 首先尝试解析路径（包含本地回退逻辑）
         local_file_path = resolve_file_path_with_fallback(connection_string)
@@ -905,7 +905,7 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
                     file_path = connection_string
                     if hasattr(ds, 'connection_config') and ds.connection_config:
                         # 如果存在connection_config字段，优先使用它
-                        from src.app.services.agent.path_extractor import extract_file_path_from_config
+                        from src.app.domains.query.agent_path import extract_file_path_from_config
                         extracted_path = extract_file_path_from_config(ds.connection_config, connection_string)
                         if extracted_path:
                             file_path = extracted_path
@@ -1257,7 +1257,7 @@ ORDER BY 月份;
 
         # 使用数据库特定的提示词生成器
         try:
-            from src.app.services.prompt_generator import generate_database_aware_system_prompt
+            from src.app.domains.llm.prompts import generate_database_aware_system_prompt
             result = generate_database_aware_system_prompt(db_type, base_prompt)
             logger.info(f"🔍 [LLM端点] 使用数据库类型感知提示词生成器，db_type={db_type}")
             return result
@@ -1470,7 +1470,7 @@ async def _fix_sql_with_ai(
     try:
         # 尝试使用动态生成的数据库特定修复提示词
         try:
-            from src.app.services.prompt_generator import generate_sql_fix_prompt_with_db_type
+            from src.app.domains.llm.prompts import generate_sql_fix_prompt_with_db_type
             fix_prompt = generate_sql_fix_prompt_with_db_type(
                 original_sql=original_sql,
                 error_message=error_message,
@@ -1855,7 +1855,7 @@ async def _execute_sql_if_needed(
 
             # 🔥 时间聚合强制修正：年度/按月趋势查询必须按月分组
             try:
-                from src.app.services.agent.tools import validate_time_aggregation_sql
+                from src.app.domains.query.agent_tools import validate_time_aggregation_sql
 
                 is_valid, corrected_sql, error_msg = validate_time_aggregation_sql(
                     current_sql,
@@ -2339,7 +2339,7 @@ async def _stream_general_chat_generator(
         original_question: 用户原始问题
         has_data_source: 是否有可用的数据源
     """
-    from src.app.services.processing_steps import (
+    from src.app.domains.query.processing_steps import (
         ProcessingStepBuilder,
         classify_question,
         QuestionType
@@ -2500,7 +2500,7 @@ async def _stream_response_generator(
     """
     try:
         # 🔧 导入QuestionType用于判断是否需要图表
-        from src.app.services.processing_steps import QuestionType
+        from src.app.domains.query.processing_steps import QuestionType
 
         # 🔧 判断是否需要生成图表（只有VISUALIZATION类型需要图表）
         # DATA_QUERY: 5步，不生成图表
@@ -3985,7 +3985,7 @@ async def _stream_response_generator(
                                                 # 🔧 检测是否为简化格式（包含 x_data 和 y_data）
                                                 if "x_data" in parsed_data and "y_data" in parsed_data:
                                                     # 转换简化格式为完整 ECharts 配置
-                                                    from src.app.services.agent.data_transformer import convert_simple_chart_to_echarts
+                                                    from src.app.domains.query.agent_transformer import convert_simple_chart_to_echarts
                                                     echarts_option = convert_simple_chart_to_echarts(parsed_data)
                                                     if echarts_option:
                                                         logger.info(f"✅ 成功转换简化格式图表{chart_idx}")
@@ -4095,7 +4095,7 @@ async def _stream_response_generator(
                 # 🔧 检测是否为简化格式（包含 x_data 和 y_data）
                 if "x_data" in parsed_data and "y_data" in parsed_data:
                     # 转换简化格式为完整 ECharts 配置
-                    from src.app.services.agent.data_transformer import convert_simple_chart_to_echarts
+                    from src.app.domains.query.agent_transformer import convert_simple_chart_to_echarts
                     echarts_option = convert_simple_chart_to_echarts(parsed_data)
                     if not echarts_option:
                         logger.warning("⚠️ 简化格式转换失败，跳过图表显示")
@@ -4165,7 +4165,7 @@ async def _stream_response_generator(
             # 🔧 新增：尝试从 markdown 代码块中提取简化格式的图表
             # AI 可能没有使用 [CHART_START]...[CHART_END] 标记
             logger.info("🔧 未找到 [CHART_START] 标记，尝试从 markdown 代码块提取简化格式图表...")
-            from src.app.services.agent.data_transformer import extract_simple_charts_from_text
+            from src.app.domains.query.agent_transformer import extract_simple_charts_from_text
             simple_charts = extract_simple_charts_from_text(full_content)
 
             if simple_charts:
@@ -4440,7 +4440,7 @@ async def chat_completion(
 
             # ========== 🔧 修复：先分类问题，再决定使用哪个生成器 ==========
             # 导入问题分类器
-            from src.app.services.processing_steps import classify_question, QuestionType
+            from src.app.domains.query.processing_steps import classify_question, QuestionType
 
             # 判断是否为Agent模式（有数据源）
             is_agent_mode = request.data_source_ids and len(request.data_source_ids) > 0
@@ -4708,7 +4708,7 @@ async def test_stream_thinking(
     测试流式输出和思考模式
     """
     try:
-        from src.app.services.llm_service import LLMMessage
+        from src.app.domains.llm.service import LLMMessage
 
         messages = [
             LLMMessage(
@@ -4756,7 +4756,7 @@ async def test_intelligent_params(
     测试智能参数调整功能
     """
     try:
-        from src.app.services.llm_service import LLMMessage
+        from src.app.domains.llm.service import LLMMessage
 
         # 测试不同复杂度的问题
         test_cases = [
@@ -4819,8 +4819,8 @@ async def test_multimodal_upload(
     测试多模态内容处理和MinIO上传
     """
     try:
-        from src.app.services.llm_service import LLMMessage
-        from src.app.services.multimodal_processor import multimodal_processor
+        from src.app.domains.llm.service import LLMMessage
+        from src.app.domains.llm.multimodal import multimodal_processor
 
         # 构建包含图片URL的测试消息
         test_image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
@@ -4878,7 +4878,7 @@ async def test_tenant_isolation(
     测试租户隔离功能
     """
     try:
-        from src.app.services.tenant_config_manager import tenant_config_manager, ProviderType
+        from src.app.domains.tenants.config_manager import tenant_config_manager, ProviderType
 
         # 测试租户配置获取
         test_tenant_id = current_user.id
@@ -4938,7 +4938,7 @@ async def test_all_features(
     综合功能测试端点
     """
     try:
-        from src.app.services.llm_service import LLMMessage
+        from src.app.domains.llm.service import LLMMessage
 
         # 构建复杂的测试场景
         messages = [

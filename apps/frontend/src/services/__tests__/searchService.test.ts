@@ -3,7 +3,7 @@
  */
 
 import { searchSessions, getSearchSuggestions, getPopularKeywords, groupResultsBySession, SearchResult, SearchOptions } from '../searchService'
-import { ChatSession, ChatMessage } from '@/store/chatStore'
+import type { ChatSession, ChatMessage } from '@/types/store/chat'
 
 // 模拟测试数据
 const mockSessions: ChatSession[] = [

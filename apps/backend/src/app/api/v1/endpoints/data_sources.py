@@ -81,9 +81,9 @@ import json
 
 from src.app.data.database import get_db
 from src.app.data.models import DataSourceConnection, Tenant, DataSourceConnectionStatus, TenantStatus
-from src.app.services.data_source_service import data_source_service
-from src.app.services.connection_test_service import connection_test_service
-from src.app.services.minio_client import minio_service
+from src.app.domains.data_sources.service import data_source_service
+from src.app.domains.data_sources.tools import connection_test_service
+from src.app.integrations.storage_minio.client import minio_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -750,7 +750,7 @@ async def create_data_source(
         if request.db_type in ["xlsx", "xls"]:
             logger.info(f"📊 检测到 Excel 文件，开始自动转换为 SQLite...")
 
-            from src.app.services.excel_to_sqlite_service import get_excel_to_sqlite_service
+            from src.app.domains.data_sources.tools import get_excel_to_sqlite_service
 
             excel_service = get_excel_to_sqlite_service()
 
@@ -1028,7 +1028,7 @@ async def delete_data_source(
             # 特征：db_type 为 sqlite，连接字符串包含我们的存储路径
             if connection.db_type == "sqlite":
                 from pathlib import Path
-                from src.app.services.excel_to_sqlite_service import get_excel_to_sqlite_service
+                from src.app.domains.data_sources.tools import get_excel_to_sqlite_service
 
                 try:
                     # 获取解密后的连接字符串

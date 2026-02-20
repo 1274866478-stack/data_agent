@@ -4,9 +4,12 @@
  * 提供与后端 FastAPI 的通信接口
  */
 
+import type { ChatCompletionRequest, ChatQueryRequest, ChatQueryResponse, V2StreamCallbacks } from '@/types/api/chat'
+import type { StreamCallbacks } from '@/types/chat'
+
 const rawApiBase = process.env.NEXT_PUBLIC_API_URL
 
-const resolveApiBases = (base?: string) => {
+export const resolveApiBases = (base?: string) => {
   const fallbackV1 = 'http://localhost:8004/api/v1'
   const fallbackV2 = 'http://localhost:8004/api/v2'
 
@@ -27,71 +30,12 @@ const resolveApiBases = (base?: string) => {
   return { v1: `${normalized}/api/v1`, v2: `${normalized}/api/v2` }
 }
 
-const { v1: API_BASE_URL, v2: API_V2_BASE_URL } = resolveApiBases(rawApiBase)
+export const { v1: API_BASE_URL, v2: API_V2_BASE_URL } = resolveApiBases(rawApiBase)
 
 // ============================================
 // 类型定义
 // ============================================
 
-export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system'
-  content: string
-}
-
-export interface ChatQueryRequest {
-  query: string
-  session_id?: string
-  history?: ChatMessage[]
-  context?: {
-    data_sources?: string[]
-  }
-  connection_id?: string
-}
-
-export interface ChatCompletionRequest {
-  messages: ChatMessage[]
-  session_id?: string
-  stream?: boolean
-}
-
-export interface ChatQueryResultTable {
-  columns: string[]
-  rows: any[][]
-  row_count: number
-}
-
-export interface ChatQueryChart {
-  type: string
-  title: string
-  data: Record<string, any>
-}
-
-export interface ChatQueryResponse {
-  answer: string
-  table?: ChatQueryResultTable
-  chart?: ChatQueryChart
-  sources?: string[]
-  reasoning?: string
-  confidence?: number
-}
-
-export interface StreamCallbacks {
-  onContent?: (content: string) => void
-  onTable?: (table: ChatQueryResultTable) => void
-  onChart?: (chart: ChatQueryChart) => void
-  onComplete?: () => void
-  onError?: (error: string) => void
-}
-
-export interface V2StreamCallbacks {
-  onProgress?: (progress: number) => void
-  onStep?: (step: string, data: any) => void
-  onContent?: (content: string) => void
-  onTable?: (table: ChatQueryResultTable) => void
-  onChart?: (chart: ChatQueryChart) => void
-  onComplete?: () => void
-  onError?: (error: string) => void
-}
 
 // ============================================
 // API 客户端类
@@ -242,7 +186,6 @@ class APIClient {
       }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        console.log('请求已取消')
       } else {
         callbacks.onError?.(error instanceof Error ? error.message : '未知错误')
       }
@@ -336,7 +279,6 @@ class APIClient {
       }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        console.log('请求已取消')
       } else {
         callbacks.onError?.(error instanceof Error ? error.message : '未知错误')
       }

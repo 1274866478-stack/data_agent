@@ -46,8 +46,8 @@ import io
 
 from src.app.data.database import get_db
 from src.app.middleware.tenant_context import get_current_tenant_id
-from src.app.services.document_service import DocumentService
-from src.app.services.chunked_upload_service import chunked_upload_service
+from src.app.domains.documents.service import document_service
+from src.app.domains.documents.upload import chunked_upload_service
 from src.app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -73,28 +73,18 @@ async def initialize_upload(
         file_data = await file.read()
         file_size = len(file_data)
 
-        # 文件大小检查（最大100MB）
-        max_size = 100 * 1024 * 1024
-        if file_size > max_size:
+        # ?????? documents/upload ?????
+        validation_result = document_service._validate_file(
+            file_name=file.filename,
+            file_size=file_size,
+            mime_type=file.content_type or "application/octet-stream"
+        )
+        if not validation_result.get("valid"):
             raise HTTPException(
                 status_code=400,
-                detail=f"文件大小超出限制，最大允许 {max_size // (1024*1024)}MB"
+                detail=validation_result.get("message", "??????")
             )
 
-        # 文件类型检查
-        allowed_types = {
-            "application/pdf": [".pdf"],
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
-            "application/msword": [".doc"]
-        }
-
-        if file.content_type not in allowed_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"不支持的文件类型: {file.content_type}"
-            )
-
-        # 初始化上传会话
         result = await chunked_upload_service.initialize_upload_session(
             tenant_id=tenant_id,
             file_name=file.filename,
@@ -223,9 +213,6 @@ async def complete_upload(
 
         if session.tenant_id != tenant_id:
             raise HTTPException(status_code=403, detail="无权访问此上传会话")
-
-        # 创建DocumentService实例
-        document_service = DocumentService()
 
         # 完成上传
         result = await chunked_upload_service.complete_upload(

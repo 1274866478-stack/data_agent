@@ -1,8 +1,8 @@
 'use client'
 
-import { ReportStatCard } from '@/components/reports/ReportStatCard'
-import { ReportListCard, type Report } from '@/components/reports/ReportListCard'
-import { ReportPagination } from '@/components/reports/ReportPagination'
+import { ReportStatCard } from '@/components/features/reports/ReportStatCard'
+import { ReportListCard, type Report } from '@/components/features/reports/ReportListCard'
+import { ReportPagination } from '@/components/features/reports/ReportPagination'
 import { MaterialIcon } from '@/components/icons/MaterialIcon'
 import { useEffect, useState } from 'react'
 
@@ -58,7 +58,6 @@ export default function ReportsPage() {
   }
 
   const handleDownload = (id: string) => {
-    console.log('下载报告:', id)
   }
 
   if (loading) {

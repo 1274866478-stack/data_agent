@@ -55,7 +55,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import PlainTextResponse
 
 from src.app.core.auth import get_current_user_with_tenant
-from src.app.services.query_performance_monitor import query_perf_monitor
+from src.app.domains.monitoring.query_performance import query_perf_monitor
 
 logger = logging.getLogger(__name__)
 

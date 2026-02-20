@@ -1,14 +1,2 @@
-export { AuthProvider } from './AuthContext'
-export { ClerkProviderWrapper } from './ClerkProvider'
-export { ProtectedRoute } from './ProtectedRoute'
-export { SignInForm } from './SignInForm'
-export { SignUpForm } from './SignUpForm'
-export { ChatGPTSignInForm } from './ChatGPTSignInForm'
-export { ChatGPTSignUpForm } from './ChatGPTSignUpForm'
-export { OAuthButton } from './OAuthButton'
-export type { OAuthButtonProps } from './OAuthButton'
-// 能量脉冲实验室风格组件
-export { EnergyLabSignIn } from './EnergyLabSignIn'
-export { EnergyLabSignUpForm } from './EnergyLabSignUpForm'
-export { BackgroundGrid } from './BackgroundGrid'
-export { ThemeToggle } from './ThemeToggle'
+﻿export * from '../features/auth'
+

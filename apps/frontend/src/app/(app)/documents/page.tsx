@@ -24,10 +24,10 @@
 
 'use client'
 
-import DocumentPreview from '@/components/documents/DocumentPreview'
-import DocumentUpload from '@/components/documents/DocumentUpload'
+import DocumentPreview from '@/components/features/documents/DocumentPreview'
+import DocumentUpload from '@/components/features/documents/DocumentUpload'
 import { Alert } from '@/components/ui/alert'
-import { useDocumentStore } from '@/store/documentStore'
+import { useDocuments } from '@/hooks/useDocuments'
 import { useEffect, useState } from 'react'
 
 export default function DocumentsPage() {
@@ -44,7 +44,7 @@ export default function DocumentsPage() {
     closeUploadModal,
     closePreviewModal,
     clearError
-  } = useDocumentStore()
+  } = useDocuments()
 
   // 搜索和筛选状态
   const [searchQuery, setSearchQuery] = useState('')

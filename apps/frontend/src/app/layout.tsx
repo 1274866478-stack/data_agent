@@ -19,8 +19,8 @@
  *   - 配置错误: 显示错误提示页面
  *
  * **上游依赖**:
- * - [../components/auth/ClerkProvider.tsx](../components/auth/ClerkProvider.tsx) - Clerk认证Provider
- * - [../components/auth/AuthContext.tsx](../components/auth/AuthContext.tsx) - 开发模式认证Provider
+ * - [../components/features/auth/ClerkProvider.tsx](../components/features/auth/ClerkProvider.tsx) - Clerk认证Provider
+ * - [../components/features/auth/AuthContext.tsx](../components/features/auth/AuthContext.tsx) - 开发模式认证Provider
  * - [globals.css](./globals.css) - 全局样式
  * - next/font/google - Google字体 (Inter)
  *
@@ -41,8 +41,8 @@
  * - Clerk SDK初始化 (通过ClerkProviderWrapper)
  */
 
-import { AuthProvider } from '@/components/auth/AuthContext'
-import { ClerkProviderWrapper } from '@/components/auth/ClerkProvider'
+import { AuthProvider } from '@/components/features/auth/AuthContext'
+import { ClerkProviderWrapper } from '@/components/features/auth/ClerkProvider'
 import { ThemeProvider } from '@/components/theme'
 import { Fira_Code, Fira_Sans } from 'next/font/google'
 import './globals.css'

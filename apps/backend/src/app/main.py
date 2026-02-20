@@ -65,10 +65,10 @@ from .core.config_validator import config_validator
 from .core.config_audit import generate_audit_report
 from .core.key_rotation import setup_key_rotation, get_rotation_status
 from .data.database import check_database_connection, create_tables, log_pool_health
-from .services.minio_client import minio_service
-from .services.chromadb_client import chromadb_service
-from .services.zhipu_client import zhipu_service
-from .services.query_performance_monitor import query_perf_monitor
+from .integrations.storage_minio.client import minio_service
+from .integrations.vectordb_chroma.client import chromadb_service
+from .integrations.llm_providers.zhipu_client import zhipu_service
+from .domains.monitoring.query_performance import query_perf_monitor
 from .api.v1 import api_router
 from .api.v2 import api_router_v2
 
@@ -432,7 +432,7 @@ async def request_logging_middleware(request: Request, call_next):
         # 记录到性能监控服务（仅对API请求）
         if path.startswith("/api/"):
             try:
-                from .services.query_performance_monitor import QueryMetrics
+                from .domains.monitoring.query_performance import QueryMetrics
 
                 process_time = time.time() - start_time
                 end_memory = psutil.Process().memory_info().rss / 1024 / 1024

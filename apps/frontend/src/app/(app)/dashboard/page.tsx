@@ -22,7 +22,7 @@
  */
 'use client'
 
-import { DataSourceOverview } from '@/components/data-sources/DataSourceOverview'
+import { DataSourceOverview } from '@/components/features/data-sources/DataSourceOverview'
 import { Button } from '@/components/ui/button'
 import { useDashboardStore } from '@/store/dashboardStore'
 import { RefreshCw } from 'lucide-react'

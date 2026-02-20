@@ -46,7 +46,7 @@
  */
 
 // 流式响应解析器 - 处理 SSE 格式的流式数据
-import { StreamEvent, StreamCallbacks } from '../types/chat';
+import type { StreamEvent, StreamCallbacks } from '../types/chat'
 
 /**
  * 解析 SSE 流式响应的核心函数
@@ -112,7 +112,6 @@ export async function parseStreamResponse(
             // 4. 解析 JSON 数据
             const event: StreamEvent = JSON.parse(dataStr);
             // 添加调试日志
-            console.log('[StreamParser] 收到事件:', event.type, event);
             dispatchStreamEvent(event, callbacks);
           } catch (e) {
             console.warn('[StreamParser] Failed to parse stream event JSON:', dataStr, e);
@@ -123,7 +122,6 @@ export async function parseStreamResponse(
     }
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      console.log('[StreamParser] Stream aborted by user');
     } else {
       console.error('[StreamParser] Stream reading error:', error);
       callbacks.onError(error.message || 'Stream reading failed');
@@ -203,7 +201,6 @@ function dispatchStreamEvent(event: StreamEvent, callbacks: StreamCallbacks) {
     case 'chart_config':
       // 处理 ECharts 图表配置
       if (event.data?.echarts_option) {
-        console.log('[StreamParser] Received chart config:', event.data.echarts_option);
         callbacks.onChartConfig(event.data.echarts_option);
       }
       break;
@@ -211,7 +208,6 @@ function dispatchStreamEvent(event: StreamEvent, callbacks: StreamCallbacks) {
     case 'processing_step':
       // 处理AI推理步骤事件
       if (event.step) {
-        console.log('[StreamParser] Received processing step:', event.step);
         // step 可能是 number 或 ProcessingStep，只传递 ProcessingStep 类型
         if (typeof event.step !== 'number') {
           callbacks.onProcessingStep(event.step);
@@ -244,7 +240,6 @@ function dispatchStreamEvent(event: StreamEvent, callbacks: StreamCallbacks) {
 
     case 'connection_init':
       // 连接初始化事件，仅用于确保 SSE 连接建立，不需要处理
-      console.log('[StreamParser] Connection initialized');
       break;
 
     default:

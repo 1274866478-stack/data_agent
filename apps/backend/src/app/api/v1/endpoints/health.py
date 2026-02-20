@@ -51,9 +51,9 @@ import asyncio
 from datetime import datetime
 
 from src.app.data.database import get_db, check_database_connection
-from src.app.services.minio_client import minio_service
-from src.app.services.chromadb_client import chromadb_service
-from src.app.services.zhipu_client import zhipu_service
+from src.app.integrations.storage_minio.client import minio_service
+from src.app.integrations.vectordb_chroma.client import chromadb_service
+from src.app.integrations.llm_providers.zhipu_client import zhipu_service
 
 router = APIRouter()
 

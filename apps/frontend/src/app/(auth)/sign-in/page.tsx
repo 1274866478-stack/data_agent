@@ -18,12 +18,12 @@
  * ## [LINK]
  * **上游依赖**:
  * - [next/navigation](https://nextjs.org/docs/app/navigation) - Next.js导航
- * - [@/components/auth/EnergyLabSignIn](../../../components/auth/EnergyLabSignIn.tsx) - 能量脉冲风格登录组件
+ * - [@/components/features/auth/EnergyLabSignIn](../../../components/features/auth/EnergyLabSignIn.tsx) - 能量脉冲风格登录组件
  *
  * **下游依赖**: 无
  */
 
-import { EnergyLabSignIn } from '@/components/auth/EnergyLabSignIn'
+import { EnergyLabSignIn } from '@/components/features/auth/EnergyLabSignIn'
 
 export default function SignInPage() {
   return <EnergyLabSignIn />

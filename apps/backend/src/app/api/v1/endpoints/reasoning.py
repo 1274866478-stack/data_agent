@@ -60,18 +60,14 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from src.app.services.reasoning_service import (
+from src.app.domains.reasoning.service import (
     reasoning_engine,
     QueryType,
     ReasoningMode,
     QueryAnalysis,
-    ReasoningResult
-)
-from src.app.services.conversation_service import (
+    ReasoningResult,
     conversation_manager,
-    ConversationState
-)
-from src.app.services.usage_monitoring_service import (
+    ConversationState,
     usage_monitoring_service,
     ProviderType,
     UsageType

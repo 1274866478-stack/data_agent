@@ -105,7 +105,7 @@
 
 import { Button } from '@/components/ui/button'
 import { useState, useEffect } from 'react'
-import { useAuth } from '@/components/auth/AuthContext'
+import { useAuth } from '@/components/features/auth/AuthContext'
 import { useRouter } from 'next/navigation'
 
 interface User {

@@ -82,7 +82,7 @@
  * - **便捷函数**: searchSessions, getSearchSuggestions, getPopularKeywords, groupResultsBySession
  */
 
-import { ChatSession, ChatMessage } from '@/store/chatStore'
+import type { ChatSession, ChatMessage } from '@/types/store/chat'
 
 export interface SearchResult {
   type: 'session' | 'message'

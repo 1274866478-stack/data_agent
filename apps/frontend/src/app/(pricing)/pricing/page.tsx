@@ -18,14 +18,14 @@
  * ## [LINK]
  * **上游依赖**:
  * - [next/navigation](https://nextjs.org/docs/app/navigation) - Next.js导航
- * - [@/components/pricing/PricingPageV2](../../../components/pricing/PricingPageV2.tsx) - 定价页面组件 V2
- * - [@/components/auth/AuthContext](../../../components/auth/AuthContext.tsx) - 认证上下文
+ * - [@/components/features/pricing/PricingPageV2](../../../components/features/pricing/PricingPageV2.tsx) - 定价页面组件 V2
+ * - [@/components/features/auth/AuthContext](../../../components/features/auth/AuthContext.tsx) - 认证上下文
  *
  * **下游依赖**: 无
  */
 
-import { PricingPageV2 } from '@/components/pricing/PricingPageV2'
-import { useAuth } from '@/components/auth/AuthContext'
+import { PricingPageV2 } from '@/components/features/pricing/PricingPageV2'
+import { useAuth } from '@/components/features/auth/AuthContext'
 import { useRouter } from 'next/navigation'
 
 export default function PricingPageRoute() {
@@ -48,7 +48,6 @@ export default function PricingPageRoute() {
     // 2. 跳转到支付页面 (Stripe Checkout)
     // 3. 支付完成后回调处理
 
-    console.log('Subscribe to:', planType, billingPeriod)
 
     // 计算价格
     const prices = {

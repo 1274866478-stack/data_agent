@@ -52,12 +52,12 @@
  */
 'use client'
 
-import { BulkOperations } from '@/components/data-sources/BulkOperations'
-import { DataSourceList } from '@/components/data-sources/DataSourceList'
-import { DataSourceTabs } from '@/components/data-sources/DataSourceTabs'
-import { SearchAndFilter } from '@/components/data-sources/SearchAndFilter'
-import { DocumentList } from '@/components/documents/DocumentList'
-import DocumentUpload from '@/components/documents/DocumentUpload'
+import { BulkOperations } from '@/components/features/data-sources/BulkOperations'
+import { DataSourceList } from '@/components/features/data-sources/DataSourceList'
+import { DataSourceTabs } from '@/components/features/data-sources/DataSourceTabs'
+import { SearchAndFilter } from '@/components/features/data-sources/SearchAndFilter'
+import { DocumentList } from '@/components/features/documents/DocumentList'
+import DocumentUpload from '@/components/features/documents/DocumentUpload'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { GradientCard, GradientCardContent, GradientCardHeader, GradientCardTitle } from '@/components/ui/gradient-card'

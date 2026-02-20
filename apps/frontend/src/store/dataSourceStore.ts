@@ -60,78 +60,9 @@
 
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
-
-// 类型定义
-export interface DataSourceConnection {
-  id: string
-  tenant_id: string
-  name: string
-  db_type: string
-  status: 'active' | 'inactive' | 'error' | 'testing'
-  host?: string
-  port?: number
-  database_name?: string
-  last_tested_at?: string
-  test_result?: TestResult
-  created_at: string
-  updated_at: string
-}
-
-export interface TestResult {
-  success: boolean
-  message: string
-  response_time_ms: number
-  details?: {
-    database_type?: string
-    server_version?: string
-    database_name?: string
-    current_user?: string
-    connection_info?: {
-      host?: string
-      port?: number
-      database?: string
-    }
-  }
-  error_code?: string
-  timestamp: string
-}
-
-export interface CreateDataSourceRequest {
-  name: string
-  connection_string: string
-  db_type?: string
-  file?: File  // 用于文件上传
-  create_db_if_not_exists?: boolean  // 如果数据库不存在则自动创建
-}
-
-export interface UpdateDataSourceRequest {
-  name?: string
-  connection_string?: string
-  db_type?: string
-  is_active?: boolean
-}
-
-export interface ConnectionTestRequest {
-  connection_string: string
-  db_type?: string
-}
-
-// API响应类型
-export interface ApiResponse<T> {
-  data?: T
-  error?: string
-  message?: string
-}
-
-export interface BulkOperationResult {
-  success_count: number
-  error_count: number
-  errors: Array<{
-    item_id: string
-    error: string
-  }>
-}
-
+import { dataSourceService } from '@/services/api'
+import type { CreateDataSourceRequest, DataSourceListParams, UpdateDataSourceRequest } from '@/types/api/dataSource'
+import type { BulkOperationResult, DataSourceConnection, TestResult } from '@/types/store/dataSource'
 // Store状态接口
 interface DataSourceState {
   // 状态
@@ -142,12 +73,7 @@ interface DataSourceState {
   testResults: Record<string, TestResult>
 
   // Actions
-  fetchDataSources: (tenantId: string, filters?: {
-    db_type?: string
-    active_only?: boolean
-    skip?: number
-    limit?: number
-  }) => Promise<void>
+  fetchDataSources: (tenantId: string, filters?: Omit<DataSourceListParams, 'tenant_id'>) => Promise<void>
 
   getDataSourceById: (id: string, tenantId: string) => Promise<DataSourceConnection | null>
 
@@ -163,189 +89,12 @@ interface DataSourceState {
 
   testDataSourceConnection: (id: string, tenantId: string) => Promise<TestResult>
 
-  getSupportedDatabaseTypes: () => Promise<any>
+  getSupportedDatabaseTypes: () => Promise<unknown>
 
   clearError: () => void
   setCurrentDataSource: (dataSource: DataSourceConnection | null) => void
 }
 
-// API客户端
-class ApiClient {
-  private baseURL: string
-
-  constructor() {
-    this.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'
-  }
-
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
-    const url = `${this.baseURL}${endpoint}`
-    const token = this.getAuthToken()
-
-    const headers = {
-      'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
-      ...options.headers,
-    }
-
-    try {
-      const response = await fetch(url, {
-        ...options,
-        headers,
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`)
-      }
-
-      return await response.json()
-    } catch (error) {
-      if (error instanceof Error) {
-        throw error
-      }
-      throw new Error('Network error occurred')
-    }
-  }
-
-  private getAuthToken(): string | null {
-    // TODO: 从Clerk或认证store获取token
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('auth_token')
-    }
-    return null
-  }
-
-  // 数据源相关API
-  async getDataSources(params: {
-    tenant_id: string
-    db_type?: string
-    active_only?: boolean
-    skip?: number
-    limit?: number
-  }): Promise<DataSourceConnection[]> {
-    const searchParams = new URLSearchParams()
-
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined) {
-        searchParams.append(key, String(value))
-      }
-    })
-
-    return this.request<DataSourceConnection[]>(`/data-sources?${searchParams}`)
-  }
-
-  async getDataSource(id: string, tenantId: string): Promise<DataSourceConnection> {
-    return this.request<DataSourceConnection>(`/data-sources/${id}?tenant_id=${tenantId}`)
-  }
-
-  async createDataSource(tenantId: string, data: CreateDataSourceRequest): Promise<DataSourceConnection> {
-    console.log('ApiClient.createDataSource 调用:', { tenantId, data })
-
-    // 如果包含文件，使用 FormData 进行上传
-    if (data.file) {
-      console.log('使用文件上传模式')
-      const formData = new FormData()
-      formData.append('file', data.file)
-      formData.append('name', data.name)
-      if (data.db_type) {
-        formData.append('db_type', data.db_type)
-      }
-
-      const url = `${this.baseURL}/data-sources/upload?tenant_id=${tenantId}`
-      const token = this.getAuthToken()
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          ...(token && { Authorization: `Bearer ${token}` }),
-        },
-        body: formData,
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`)
-      }
-
-      return await response.json()
-    }
-
-    // 传统的连接字符串方式
-    console.log('使用连接字符串模式')
-
-    // 清理数据,移除file字段
-    const cleanData = {
-      name: data.name,
-      connection_string: data.connection_string,
-      db_type: data.db_type || 'postgresql',
-      create_db_if_not_exists: data.create_db_if_not_exists || false,
-    }
-
-    console.log('发送到API的数据:', cleanData)
-
-    return this.request<DataSourceConnection>(`/data-sources?tenant_id=${tenantId}`, {
-      method: 'POST',
-      body: JSON.stringify(cleanData),
-    })
-  }
-
-  async updateDataSource(id: string, tenantId: string, data: UpdateDataSourceRequest): Promise<DataSourceConnection> {
-    return this.request<DataSourceConnection>(`/data-sources/${id}?tenant_id=${tenantId}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    })
-  }
-
-  async deleteDataSource(id: string, tenantId: string): Promise<void> {
-    await this.request(`/data-sources/${id}?tenant_id=${tenantId}`, {
-      method: 'DELETE',
-    })
-  }
-
-  async bulkDeleteDataSources(tenantId: string, userId: string | undefined, ids: string[]): Promise<BulkOperationResult> {
-    const params = new URLSearchParams()
-    params.append('tenant_id', tenantId)
-    if (userId) {
-      params.append('user_id', userId)
-    }
-
-    const token = this.getAuthToken()
-    return this.request<BulkOperationResult>(`/data-sources/bulk-delete?${params}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token && { Authorization: `Bearer ${token}` }),
-      },
-      body: JSON.stringify({
-        item_ids: ids,
-        item_type: 'database',
-      }),
-    })
-  }
-
-  async testConnection(data: ConnectionTestRequest): Promise<TestResult> {
-    return this.request<TestResult>('/data-sources/test', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    })
-  }
-
-  async testDataSourceConnection(id: string, tenantId: string): Promise<TestResult> {
-    return this.request<TestResult>(`/data-sources/${id}/test?tenant_id=${tenantId}`, {
-      method: 'POST',
-    })
-  }
-
-  async getSupportedDatabaseTypes(): Promise<any> {
-    return this.request<any>('/data-sources/types/supported')
-  }
-}
-
-// 创建API客户端实例
-const apiClient = new ApiClient()
 
 // 创建store
 export const useDataSourceStore = create<DataSourceState>()(
@@ -363,7 +112,7 @@ export const useDataSourceStore = create<DataSourceState>()(
         set({ isLoading: true, error: null })
 
         try {
-          const dataSources = await apiClient.getDataSources({
+          const dataSources = await dataSourceService.list({
             tenant_id: tenantId,
             ...filters,
           })
@@ -382,7 +131,7 @@ export const useDataSourceStore = create<DataSourceState>()(
 
       getDataSourceById: async (id, tenantId) => {
         try {
-          const dataSource = await apiClient.getDataSource(id, tenantId)
+          const dataSource = await dataSourceService.get(id, tenantId)
           set({ currentDataSource: dataSource })
           return dataSource
         } catch (error) {
@@ -397,7 +146,7 @@ export const useDataSourceStore = create<DataSourceState>()(
         set({ isLoading: true, error: null })
 
         try {
-          const newDataSource = await apiClient.createDataSource(tenantId, data)
+          const newDataSource = await dataSourceService.create(tenantId, data)
 
           set(state => ({
             dataSources: [newDataSource, ...state.dataSources],
@@ -418,7 +167,7 @@ export const useDataSourceStore = create<DataSourceState>()(
         set({ isLoading: true, error: null })
 
         try {
-          const updatedDataSource = await apiClient.updateDataSource(id, tenantId, data)
+          const updatedDataSource = await dataSourceService.update(id, tenantId, data)
 
           set(state => ({
             dataSources: state.dataSources.map(ds =>
@@ -444,7 +193,7 @@ export const useDataSourceStore = create<DataSourceState>()(
         set({ isLoading: true, error: null })
 
         try {
-          await apiClient.deleteDataSource(id, tenantId)
+          await dataSourceService.remove(id, tenantId)
 
           set(state => ({
             dataSources: state.dataSources.filter(ds => ds.id !== id),
@@ -470,7 +219,7 @@ export const useDataSourceStore = create<DataSourceState>()(
         set({ isLoading: true, error: null })
 
         try {
-          const result = await apiClient.bulkDeleteDataSources(tenantId, userId, ids)
+          const result = await dataSourceService.bulkDelete(tenantId, userId, ids)
 
           set(state => ({
             dataSources: state.dataSources.filter(ds => !ids.includes(ds.id)),
@@ -492,7 +241,7 @@ export const useDataSourceStore = create<DataSourceState>()(
 
       testConnection: async (connectionString, dbType = 'postgresql') => {
         try {
-          const testResult = await apiClient.testConnection({
+          const testResult = await dataSourceService.testConnection({
             connection_string: connectionString,
             db_type: dbType,
           })
@@ -522,7 +271,7 @@ export const useDataSourceStore = create<DataSourceState>()(
 
       testDataSourceConnection: async (id, tenantId) => {
         try {
-          const testResult = await apiClient.testDataSourceConnection(id, tenantId)
+          const testResult = await dataSourceService.testExisting(id, tenantId)
 
           // 更新对应数据源的测试结果
           set(state => ({
@@ -552,7 +301,7 @@ export const useDataSourceStore = create<DataSourceState>()(
 
       getSupportedDatabaseTypes: async () => {
         try {
-          return await apiClient.getSupportedDatabaseTypes()
+          return await dataSourceService.supportedTypes()
         } catch (error) {
           set({
             error: error instanceof Error ? error.message : 'Failed to fetch supported database types'

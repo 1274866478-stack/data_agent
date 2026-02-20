@@ -1,3 +1,2 @@
-export { DataSourceForm } from './DataSourceForm'
-export { DataSourceList } from './DataSourceList'
-export { ConnectionTest } from './ConnectionTest'
+﻿export * from '../features/data-sources'
+

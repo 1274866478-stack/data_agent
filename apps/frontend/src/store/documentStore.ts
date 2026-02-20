@@ -108,39 +108,11 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { immer } from 'zustand/middleware/immer'
-
-// 文档状态枚举 - 与后端一致（小写值）
-export enum DocumentStatus {
-  PENDING = 'pending',
-  INDEXING = 'indexing',
-  READY = 'ready',
-  ERROR = 'error'
-}
-
-// 文档类型定义 - Story 2.4规范
-export interface KnowledgeDocument {
-  id: string
-  tenant_id: string
-  file_name: string
-  storage_path: string
-  file_type: 'pdf' | 'docx' | 'unknown'
-  file_size: number
-  mime_type: string
-  status: DocumentStatus
-  processing_error?: string
-  indexed_at?: string
-  created_at: string
-  updated_at: string
-}
-
-// 文档统计信息
-export interface DocumentStats {
-  by_status: Record<string, number>
-  by_file_type: Record<string, number>
-  total_documents: number
-  total_size_bytes: number
-  total_size_mb: number
-}
+import { uploadFile } from '@/services/fileUploadService'
+import { documentService } from '@/services/api'
+import type { DocumentStats, KnowledgeDocument } from '@/types/store/document'
+import { DocumentStatus } from '@/types/store/document'
+import { getDocumentUploadKey } from '@/utils/documentKeys'
 
 // 上传进度信息
 export interface UploadProgress {
@@ -203,7 +175,6 @@ interface DocumentState {
 }
 
 // API基础URL
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'
 
 // 创建文档状态管理器
 export const useDocumentStore = create<DocumentState>()(
@@ -250,13 +221,7 @@ export const useDocumentStore = create<DocumentState>()(
             params.append('file_type', fileTypeFilter)
           }
 
-          const response = await fetch(`${API_BASE_URL}/documents?${params}`)
-
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`)
-          }
-
-          const data = await response.json()
+          const data = await documentService.list(params)
 
           set((state) => {
             state.documents = data.documents || []
@@ -277,11 +242,8 @@ export const useDocumentStore = create<DocumentState>()(
       // 上传单个文档
       uploadDocument: async (file: File) => {
         try {
-          const formData = new FormData()
-          formData.append('file', file)
-
-          // 创建进度跟踪
-          const uploadId = `${file.name}_${Date.now()}`
+          // ??????
+          const uploadId = getDocumentUploadKey(file)
 
           set((state) => {
             state.uploadProgress[uploadId] = {
@@ -290,33 +252,45 @@ export const useDocumentStore = create<DocumentState>()(
             }
           })
 
-          const response = await fetch(`${API_BASE_URL}/documents/upload`, {
-            method: 'POST',
-            body: formData,
-          })
+          const result = await uploadFile(
+            file,
+            (progress) => {
+              set((state) => {
+                const mappedStatus = progress.status === 'processing'
+                  ? 'processing'
+                  : progress.status === 'completed'
+                    ? 'completed'
+                    : progress.status === 'error'
+                      ? 'error'
+                      : 'uploading'
 
-          if (!response.ok) {
-            const errorData = await response.json()
-            throw new Error(errorData.detail || '上传失败')
+                state.uploadProgress[uploadId] = {
+                  progress: progress.percentage,
+                  status: mappedStatus
+                }
+              })
+            }
+          )
+
+          if (!result.success || !result.document) {
+            throw new Error(result.error || '????')
           }
 
-          const document = await response.json()
-
-          // 更新进度
+          // ????
           set((state) => {
             state.uploadProgress[uploadId] = {
               progress: 100,
               status: 'completed'
             }
-            // 添加到文档列表
-            state.documents.unshift(document)
+            // ???????
+            state.documents.unshift(result.document)
             state.total += 1
           })
 
-          // 刷新统计信息
+          // ??????
           await get().fetchDocuments()
 
-          // 清理进度信息（延迟清理）
+          // ????????????
           setTimeout(() => {
             set((state) => {
               delete state.uploadProgress[uploadId]
@@ -325,14 +299,14 @@ export const useDocumentStore = create<DocumentState>()(
 
         } catch (error) {
           console.error('Upload failed:', error)
+          const errorMessage = error instanceof Error ? error.message : '??????'
           set((state) => {
-            state.error = error instanceof Error ? error.message : '文档上传失败'
-            // 标记上传失败
-            const uploadId = `${file.name}_${Date.now()}`
+            state.error = errorMessage
+            const uploadId = getDocumentUploadKey(file)
             state.uploadProgress[uploadId] = {
               progress: 0,
               status: 'error',
-              error: error instanceof Error ? error.message : '上传失败'
+              error: errorMessage
             }
           })
           throw error
@@ -364,14 +338,7 @@ export const useDocumentStore = create<DocumentState>()(
       // 删除文档
       deleteDocument: async (id: string) => {
         try {
-          const response = await fetch(`${API_BASE_URL}/documents/${id}`, {
-            method: 'DELETE',
-          })
-
-          if (!response.ok) {
-            const errorData = await response.json()
-            throw new Error(errorData.detail || '删除失败')
-          }
+          await documentService.remove(id)
 
           set((state) => {
             state.documents = state.documents.filter(doc => doc.id !== id)
@@ -416,17 +383,7 @@ export const useDocumentStore = create<DocumentState>()(
       // 获取文档预览URL
       getDocumentPreviewUrl: async (id: string, expiresHours = 1) => {
         try {
-          const response = await fetch(
-            `${API_BASE_URL}/documents/${id}/preview?expires_in_hours=${expiresHours}`
-          )
-
-          if (!response.ok) {
-            const errorData = await response.json()
-            throw new Error(errorData.detail || '获取预览链接失败')
-          }
-
-          const data = await response.json()
-          return data.preview_url
+          return await documentService.previewUrl(id, expiresHours)
 
         } catch (error) {
           console.error('Get preview URL failed:', error)
@@ -437,13 +394,7 @@ export const useDocumentStore = create<DocumentState>()(
       // 获取文档下载URL
       getDocumentDownloadUrl: async (id: string) => {
         try {
-          const response = await fetch(`${API_BASE_URL}/documents/${id}/download`)
-
-          if (!response.ok) {
-            throw new Error('获取下载链接失败')
-          }
-
-          return URL.createObjectURL(await response.blob())
+          return await documentService.downloadUrl(id)
 
         } catch (error) {
           console.error('Get download URL failed:', error)
@@ -454,14 +405,7 @@ export const useDocumentStore = create<DocumentState>()(
       // 手动触发文档处理
       processDocument: async (id: string) => {
         try {
-          const response = await fetch(`${API_BASE_URL}/documents/${id}/process`, {
-            method: 'POST',
-          })
-
-          if (!response.ok) {
-            const errorData = await response.json()
-            throw new Error(errorData.detail || '触发处理失败')
-          }
+          await documentService.process(id)
 
           // 刷新文档列表以获取最新状态
           await get().fetchDocuments()

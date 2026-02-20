@@ -1,6 +1,6 @@
 'use client'
 
-import { ProcessingSteps } from '@/components/chat/ProcessingSteps'
+import { ProcessingSteps } from '@/components/features/chat/ProcessingSteps'
 import { ThemeToggle } from '@/components/theme/ThemeToggle'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -21,7 +21,7 @@ import { PlainText } from '@/components/ui/plain-text'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { fileUploadService, uploadFile, UploadProgress } from '@/services/fileUploadService'
-import { useChatStore } from '@/store/chatStore'
+import { useChatAssistant } from '@/hooks/useChatAssistant'
 import { useDataSourceStore } from '@/store/dataSourceStore'
 import { removeChartMarkers } from '@/utils/chartParser'
 import { AlertCircle, AlertTriangle, Bot, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, Database, FileText, History, Loader2, MessageSquare, Paperclip, Plus, Search, Send, Sparkles, Square, Trash2, User, X } from 'lucide-react'
@@ -61,7 +61,7 @@ export default function AIAssistantPage() {
     streamingStatus,
     outputFormat,
     setOutputFormat
-  } = useChatStore()
+  } = useChatAssistant()
 
   // 数据源相关
   const {

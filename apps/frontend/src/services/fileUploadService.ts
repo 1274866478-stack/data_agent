@@ -101,6 +101,8 @@
  * - **便捷函数**: uploadFile, getUploadStatus, abortUpload
  */
 
+import { API_BASE_URL } from '@/lib/api-client'
+
 export interface UploadProgress {
   loaded: number
   total: number
@@ -130,7 +132,7 @@ class FileUploadService {
   private apiBase: string
 
   constructor() {
-    this.apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'
+    this.apiBase = API_BASE_URL
   }
 
   /**
@@ -156,11 +158,10 @@ class FileUploadService {
   isFileTypeSupported(file: File): boolean {
     const supportedTypes = [
       'application/pdf',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'application/msword'
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     ]
 
-    const supportedExtensions = ['.pdf', '.docx', '.doc']
+    const supportedExtensions = ['.pdf', '.docx']
     const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'))
 
     return supportedTypes.includes(file.type) || supportedExtensions.includes(fileExtension)
@@ -170,7 +171,8 @@ class FileUploadService {
    * 检查文件大小是否在限制范围内
    */
   isFileSizeValid(file: File): boolean {
-    const maxSize = 100 * 1024 * 1024 // 100MB
+    const extension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'))
+    const maxSize = extension === '.docx' ? 25 * 1024 * 1024 : 50 * 1024 * 1024
     return file.size <= maxSize
   }
 
@@ -577,14 +579,14 @@ class FileUploadService {
    * 获取支持的文件类型列表
    */
   getSupportedFileTypes(): string[] {
-    return ['.pdf', '.doc', '.docx']
+    return ['.pdf', '.docx']
   }
 
   /**
    * 获取最大文件大小(字节)
    */
   getMaxFileSize(): number {
-    return 100 * 1024 * 1024 // 100MB
+    return 50 * 1024 * 1024 // PDF 50MB (DOCX 25MB)
   }
 
   /**

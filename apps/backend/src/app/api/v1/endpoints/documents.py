@@ -85,14 +85,14 @@
 import uuid
 import io
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
-from src.app.data.database import get_db
+from src.app.data.database import get_db, SessionLocal
 from src.app.data.models import DocumentStatus
-from src.app.services.document_service import document_service
-from src.app.services.document_processor import document_processor
+from src.app.domains.documents.service import document_service
+from src.app.domains.documents.service import document_processor
 
 router = APIRouter()
 
@@ -148,6 +148,18 @@ def get_tenant_id_from_request() -> str:
     # TODO: 实现从JWT token或其他认证方式获取tenant_id
     # 当前为了测试使用默认值
     return "default_tenant"
+
+def _process_document_background(tenant_id: str, document_id: str) -> None:
+    db = SessionLocal()
+    try:
+        document_processor.process_document_async(
+            db=db,
+            tenant_id=tenant_id,
+            document_id=uuid.UUID(document_id)
+        )
+    finally:
+        db.close()
+
 
 
 @router.get("/", response_model=DocumentListResponse, summary="获取文档列表")
@@ -230,13 +242,13 @@ async def get_document(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=result.get("message", "获取文档详情失败")
             )
-
     return DocumentResponse(**result["document"])
 
 
 @router.post("/upload", response_model=DocumentResponse, summary="上传文档", status_code=status.HTTP_201_CREATED)
 async def upload_document(
-    file: UploadFile = File(..., description="要上传的文档文件（PDF或Word）"),
+    file: UploadFile = File(..., description="??????????????DF??ord??"),
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ) -> DocumentResponse:
     """
@@ -297,6 +309,12 @@ async def upload_document(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=message
             )
+
+    background_tasks.add_task(
+        _process_document_background,
+        tenant_id,
+        result["document"]["id"]
+    )
 
     return DocumentResponse(**result["document"])
 
@@ -385,7 +403,7 @@ async def download_document(
     document = result["document"]
 
     # 从MinIO下载文件
-    from src.app.services.minio_client import minio_service
+    from src.app.integrations.storage_minio.client import minio_service
     file_data = minio_service.download_file(
         bucket_name="knowledge-documents",
         object_name=document["storage_path"]
@@ -573,7 +591,7 @@ async def get_documents_service_health() -> dict:
     """
     文档服务健康检查端点
     """
-    from src.app.services.minio_client import minio_service
+    from src.app.integrations.storage_minio.client import minio_service
 
     minio_healthy = minio_service.check_connection()
 

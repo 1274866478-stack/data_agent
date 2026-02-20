@@ -18,14 +18,14 @@
  * ## [LINK]
  * **上游依赖**:
  * - [next/navigation](https://nextjs.org/docs/app/navigation) - Next.js导航
- * - [@/components/auth/EnergyLabSignUpForm](../../../components/auth/EnergyLabSignUpForm.tsx) - EnergyLab 注册表单
- * - [@/components/auth/BackgroundGrid](../../../components/auth/BackgroundGrid.tsx) - 网格背景组件
+ * - [@/components/features/auth/EnergyLabSignUpForm](../../../components/features/auth/EnergyLabSignUpForm.tsx) - EnergyLab 注册表单
+ * - [@/components/features/auth/BackgroundGrid](../../../components/features/auth/BackgroundGrid.tsx) - 网格背景组件
  *
  * **下游依赖**: 无
  */
 
-import { EnergyLabSignUpForm } from '@/components/auth/EnergyLabSignUpForm'
-import { BackgroundGrid } from '@/components/auth/BackgroundGrid'
+import { EnergyLabSignUpForm } from '@/components/features/auth/EnergyLabSignUpForm'
+import { BackgroundGrid } from '@/components/features/auth/BackgroundGrid'
 
 export default function SignUpPage() {
   return (

@@ -28,9 +28,9 @@
  *
  * [LINK]
  * - 依赖组件:
- *   - @/components/analytics/DonutChart - 环形图
- *   - @/components/analytics/ActivityLogTable - 活动日志表格
- *   - @/components/analytics/EmptyDocumentState - 空状态
+ *   - @/components/features/analytics/DonutChart - 环形图
+ *   - @/components/features/analytics/ActivityLogTable - 活动日志表格
+ *   - @/components/features/analytics/EmptyDocumentState - 空状态
  *   - @/components/icons/MaterialIcon - Material 图标
  * - 依赖状态管理:
  *   - @/store/authStore - useTenantId
@@ -72,14 +72,14 @@
 
 'use client'
 
-import { EmptyDocumentState } from '@/components/analytics/EmptyDocumentState'
-import { ActivityLogTable, type ActivityLog } from '@/components/analytics/ActivityLogTable'
-import { DonutChart } from '@/components/analytics/DonutChart'
+import { EmptyDocumentState } from '@/components/features/analytics/EmptyDocumentState'
+import { ActivityLogTable, type ActivityLog } from '@/components/features/analytics/ActivityLogTable'
+import { DonutChart } from '@/components/features/analytics/DonutChart'
 import { MaterialIcon } from '@/components/icons/MaterialIcon'
 import { useTenantId } from '@/store/authStore'
 import { useDashboardStore } from '@/store/dashboardStore'
 import { useDataSourceStore } from '@/store/dataSourceStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { useDocuments } from '@/hooks/useDocuments'
 import { useEffect, useMemo, useState } from 'react'
 
 /**
@@ -90,7 +90,7 @@ import { useEffect, useMemo, useState } from 'react'
 export default function AnalyticsPage() {
   const { overview, fetchOverview } = useDashboardStore()
   const { dataSources, fetchDataSources } = useDataSourceStore()
-  const { documents, fetchDocuments } = useDocumentStore()
+  const { documents, fetchDocuments } = useDocuments()
   const tenantId = useTenantId()
 
   const [isRefreshing, setIsRefreshing] = useState(false)

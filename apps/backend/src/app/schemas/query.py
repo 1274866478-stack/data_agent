@@ -152,6 +152,34 @@ class QueryHistoryResponse(BaseModel):
     page_size: int = 20
 
 
+class SOTAQueryRequest(BaseModel):
+    """SOTA 鏌ヨ璇锋眰"""
+    query: str
+    cube_name: Optional[str] = None
+    session_id: Optional[str] = None
+    enable_few_shot: bool = True
+    enable_self_healing: bool = True
+    enable_disambiguation: bool = True
+    max_repair_attempts: int = 3
+
+
+class SOTAQueryResponse(BaseModel):
+    """SOTA 鏌ヨ鍝嶅簲"""
+    query_id: str
+    tenant_id: str
+    original_query: str
+    refined_query: Optional[str] = None
+    needs_clarification: bool = False
+    clarification_questions: Optional[List[Dict[str, Any]]] = None
+    dsl_json: Optional[Dict[str, Any]] = None
+    results: Optional[List[Dict[str, Any]]] = None
+    row_count: int = 0
+    processing_time_ms: int = 0
+    processing_steps: List[Dict[str, Any]] = []
+    error_message: Optional[str] = None
+    metadata: Dict[str, Any] = {}
+
+
 class ErrorResponse(BaseModel):
     """错误响应模型"""
     error: str
