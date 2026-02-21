@@ -57,9 +57,7 @@
 | DeepSeek | - | 主 LLM 提供商 |
 | ZhipuAI | 2.0.1 | 备用 LLM 提供商 |
 | ChromaDB | 0.5.0+ | 向量数据库 |
-| Qdrant | latest | 向量数据库（SOTA 版本） |
 | MinIO | 7.2.0 | 对象存储 |
-| Cube.js | latest | 语义层 |
 | Sentry | 2.14.0 | 错误监控 |
 | Structlog | 24.4.0 | 结构化日志 |
 
@@ -84,7 +82,6 @@
 | Docker | 容器化部署 |
 | Docker Compose | 多容器编排 |
 | Nginx | 反向代理 |
-| Redis | 缓存（可选） |
 
 ---
 
@@ -316,11 +313,6 @@ insight-agent/
 │       ├── package.json          # Node 依赖
 │       ├── Dockerfile           # 前端 Docker 镜像
 │       └── playwright.config.ts # E2E 测试配置
-├── cube_schema/                  # Cube.js 语义层定义
-│   ├── Products.yaml             # 商品语义层
-│   ├── Orders.yaml               # 订单语义层
-│   ├── Customers.yaml            # 客户语义层
-│   └── ...                      # 其他语义层定义
 ├── config/                      # 配置文件
 │   └── .env.example             # 环境变量模板
 ├── docs/                        # 项目文档
@@ -484,24 +476,6 @@ def document_rag(query: str) -> RAGResult
 ```
 
 #### 4. Cube.js 语义层
-
-**`cube_schema/` 模块**
-
-| 文件 | 功能描述 |
-|------|----------|
-| `Products.yaml` | 商品语义层（度量、维度） |
-| `Orders.yaml` | 订单语义层 |
-| `Customers.yaml` | 客户语义层 |
-| `Categories.yaml` | 分类语义层 |
-| `Inventory.yaml` | 库存语义层 |
-| `OrderItems.yaml` | 订单项目语义层 |
-| `Regions.yaml` | 地区语义层 |
-| `SalesOrders.yaml` | 销售订单语义层 |
-
-每个语义层定义包含：
-- **Measures（度量）**：可聚合的数值字段
-- **Dimensions（维度）**：用于分组和过滤的字段
-- **Pre-aggregations（预聚合）**：性能优化配置
 
 ---
 
@@ -1011,40 +985,6 @@ python -m agent.core.agent
 | Token 过期时间 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `43200` | Token 过期时间（分钟） |
 | CORS 源 | `CORS_ORIGINS` | `[]` | 允许的跨域源 |
 | 日志级别 | `LOG_LEVEL` | `INFO` | 日志级别：DEBUG, INFO, WARNING, ERROR |
-| Sentry DSN | `SENTRY_DSN` | - | Sentry 错误追踪 DSN |
-| Redis URL | `REDIS_URL` | `redis://localhost:6379` | Redis 连接字符串 |
-| 缓存类型 | `CACHE_TYPE` | `memory` | 缓存类型：memory, redis |
-| SOTA Agent | `USE_SOTA_AGENT` | `false` | 是否启用 SOTA Agent |
-| Cube.js URL | `CUBE_API_URL` | `http://cube:4000` | Cube.js API 地址 |
-
-#### 前端配置
-
-| 配置项 | 环境变量 | 默认值 | 说明 |
-|--------|-----------|--------|------|
-| API 地址 | `NEXT_PUBLIC_API_URL` | `http://localhost:8004` | 后端 API 地址 |
-| MinIO 端点 | `NEXT_PUBLIC_MINIO_ENDPOINT` | `http://localhost:9000` | MinIO 服务地址 |
-| MinIO 存储桶 | `NEXT_PUBLIC_MINIO_BUCKET` | `dataagent-files` | MinIO 存储桶名称 |
-| Sentry DSN | `NEXT_PUBLIC_SENTRY_DSN` | - | Sentry 错误追踪 DSN |
-
-#### Cube.js 配置
-
-Cube.js 配置通过 `cube_schema/` 目录中的 YAML 文件定义。每个文件定义一个 Cube（语义层），包含：
-
-1. **Measures（度量）**：可聚合的数值字段
-   - `count`：计数
-   - `sum`：求和
-   - `avg`：平均值
-   - `min/max`：最小值/最大值
-
-2. **Dimensions（维度）**：用于分组和过滤的字段
-   - `time`：时间维度
-   - `string`：字符串维度
-   - `number`：数值维度
-   - `boolean`：布尔维度
-
-3. **Pre-aggregations（预聚合）**：性能优化配置
-   - 定义预聚合规则，减少实时查询负担
-
 ---
 
 ## 测试与 CI/CD

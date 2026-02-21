@@ -944,7 +944,6 @@ class SuccessfulQuery(Base):
     execution_time_ms = Column(Integer, nullable=True)
     row_count = Column(Integer, nullable=True)
     user_rating = Column(Integer, nullable=True)
-    qdrant_point_id = Column(String(255), nullable=True)  # Qdrant 向量 ID
 
     # 元数据
     query_complexity = Column(String(50), nullable=True)  # simple, medium, complex
@@ -967,7 +966,6 @@ class SuccessfulQuery(Base):
             "execution_time_ms": self.execution_time_ms,
             "row_count": self.row_count,
             "user_rating": self.user_rating,
-            "qdrant_point_id": self.qdrant_point_id,
             "query_complexity": self.query_complexity,
             "success": self.success,
             "error_message": self.error_message,

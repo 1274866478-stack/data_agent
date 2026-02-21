@@ -4,7 +4,7 @@ API v1 版本路由包
 
 from fastapi import APIRouter
 from .endpoints import health, tenants, documents, data_sources, config, llm, auth, upload, reasoning, file_upload
-from .endpoints import performance_monitoring
+# from .endpoints import performance_monitoring  # 已删除 - 性能监控已禁用
 from .endpoints import sql_error_memories
 from .endpoints import logs
 # 暂时禁用security端点，因为编码问题
@@ -45,8 +45,8 @@ api_router.include_router(reasoning.router, tags=["Reasoning"])
 # 新增查询端点 - Story 3.1 - Agent集成已完成，已启用
 api_router.include_router(query.router, tags=["Query"])
 
-# 新增性能监控端点 - Story 3.2 Enhancement
-api_router.include_router(performance_monitoring.router, prefix="/performance", tags=["Performance Monitoring"])
+# 新增性能监控端点 - Story 3.2 Enhancement (已删除 - 性能监控已禁用)
+# api_router.include_router(performance_monitoring.router, prefix="/performance", tags=["Performance Monitoring"])
 
 # 新增SQL错误记忆端点 - SQL Error Learning System
 api_router.include_router(sql_error_memories.router, prefix="/sql-error-memories", tags=["SQL Error Memories"])

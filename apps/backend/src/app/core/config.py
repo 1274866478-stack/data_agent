@@ -129,29 +129,23 @@ class Settings(BaseSettings):
     sentry_traces_sample_rate: float = 0.1  # 性能追踪采样率 (0.0-1.0)
 
     # ========== SOTA 重构配置 ==========
-    # Phase 1: 语义层配置
-    cube_api_url: str = "http://localhost:4000"  # Cube.js API 地址
-    cube_api_secret: Optional[str] = None  # Cube.js API 密钥
-    enable_semantic_layer: bool = False  # 启用语义层
+    # Phase 1: 语义层配置 (已废弃)
+    # cube_api_url: str = "http://localhost:4000"  # Cube.js API 地址 (已删除)
+    # cube_api_secret: Optional[str] = None  # Cube.js API 密钥 (已删除)
+    # enable_semantic_layer: bool = False  # 启用语义层 (已删除)
 
-    # Phase 1: Qdrant 向量数据库配置
-    qdrant_host: str = "localhost"  # Qdrant 主机
-    qdrant_port: int = 6333  # Qdrant 端口
-    qdrant_collection_prefix: str = "dataagent"  # Collection 名称前缀
-    use_qdrant: bool = False  # 使用 Qdrant (否则使用 ChromaDB)
+    # Phase 3: 少样本 RAG 配置 (已废弃 - 使用 Qdrant，已移除)
+    # enable_few_shot_rag: bool = False  # 启用少样本 RAG (已删除)
+    # embedding_model: str = "text-embedding-3-small"  # OpenAI Embedding 模型 (已删除)
+    # embedding_dimension: int = 1536  # 向量维度 (已删除)
+    # openai_api_key: Optional[str] = None  # OpenAI API Key (已删除)
 
-    # Phase 3: 少样本 RAG 配置
-    enable_few_shot_rag: bool = False  # 启用少样本 RAG
-    embedding_model: str = "text-embedding-3-small"  # OpenAI Embedding 模型
-    embedding_dimension: int = 1536  # 向量维度
-    openai_api_key: Optional[str] = None  # OpenAI API Key (用于 Embedding)
+    # Phase 4: 自愈机制配置 (通过请求参数控制，不再需要全局配置)
+    # enable_self_healing: bool = False  # 启用自愈机制 (已移除)
+    # max_repair_attempts: int = 3  # 最大修复尝试次数 (已移除)
 
-    # Phase 4: 自愈机制配置
-    enable_self_healing: bool = False  # 启用自愈机制
-    max_repair_attempts: int = 3  # 最大修复尝试次数
-
-    # Phase 5: 主动消歧配置
-    enable_disambiguation: bool = False  # 启用主动消歧
+    # Phase 5: 主动消歧配置 (通过请求参数控制，不再需要全局配置)
+    # enable_disambiguation: bool = False  # 启用主动消歧 (已移除)
 
     # 多智能体配置
     use_sota_agent: bool = False  # 启用 SOTA 多智能体架构
