@@ -26,7 +26,6 @@ from langgraph.graph import MessagesState
 from ..knowledge.knowledge_base import (
     KnowledgeBaseService,
     create_knowledge_base,
-    KnowledgeType,
     ErrorCategory
 )
 
@@ -699,9 +698,9 @@ class LearningNode:
             AI 消息
         """
         if result.outcome == LearningOutcome.SUCCESS_TEMPLATE_SAVED:
-            content = f"**学习完成**\n\n查询模板已保存到知识库，供后续相似查询参考。"
+            content = "**学习完成**\n\n查询模板已保存到知识库，供后续相似查询参考。"
         elif result.outcome == LearningOutcome.ERROR_LEARNING_SAVED:
-            content = f"**学习完成**\n\n错误修复方案已保存到学习库。"
+            content = "**学习完成**\n\n错误修复方案已保存到学习库。"
         elif result.outcome == LearningOutcome.NO_LEARNING_NEEDED:
             content = f"**无需学习**\n\n{result.message}"
         else:
@@ -747,8 +746,6 @@ def create_learning_node(
 # ============================================================================
 
 if __name__ == "__main__":
-    import asyncio
-
     logging.basicConfig(level=logging.INFO)
 
     # 模拟测试

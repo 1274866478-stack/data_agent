@@ -46,10 +46,8 @@
 import jwt
 import httpx
 import logging
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
-from urllib.parse import urljoin
-import json
 from functools import lru_cache
 
 from src.app.core.config import settings

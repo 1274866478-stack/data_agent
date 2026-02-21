@@ -100,23 +100,20 @@
 import asyncio
 import logging
 import re
-import os
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Any
 from urllib.parse import urlparse
 import psycopg2
 from psycopg2 import OperationalError
 
 # 条件导入依赖
 try:
-    from minio import Minio, S3Error
+    from minio import Minio
     MINIO_AVAILABLE = True
 except ImportError:
     MINIO_AVAILABLE = False
 
 try:
     import chromadb
-    from chromadb.config import Settings as ChromaSettings
     CHROMADB_AVAILABLE = True
 except ImportError:
     CHROMADB_AVAILABLE = False
@@ -495,7 +492,7 @@ class ConfigValidator:
             # 测试创建临时集合
             test_collection_name = "test_collection_validation"
             try:
-                test_collection = client.create_collection(name=test_collection_name)
+                client.create_collection(name=test_collection_name)
                 client.delete_collection(name=test_collection_name)
                 test_result = True
             except Exception as test_e:

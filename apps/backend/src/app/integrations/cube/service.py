@@ -9,7 +9,6 @@ Cube.js 语义层服务
 
 from typing import Dict, Any, List, Optional
 import httpx
-from datetime import datetime
 import json
 import asyncio
 
@@ -211,7 +210,6 @@ class CubeService:
             True 如果服务可用
         """
         try:
-            import asyncio
             asyncio.run(self.get_cube_schema())
             return True
         except Exception:

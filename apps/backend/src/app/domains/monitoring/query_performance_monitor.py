@@ -159,6 +159,24 @@ class AlertType(Enum):
     CONNECTION_POOL = "connection_pool"
 
 
+DEFAULT_ALERT_THRESHOLDS = {
+    AlertType.SLOW_QUERY: 5.0,
+    AlertType.HIGH_ERROR_RATE: 10.0,
+    AlertType.HIGH_MEMORY: 85.0,
+    AlertType.HIGH_CPU: 90.0,
+    AlertType.LOW_CACHE_HIT: 30.0,
+    AlertType.CONNECTION_POOL: 80.0,
+}
+BACKGROUND_CHECK_INTERVAL_SECONDS = 30
+BACKGROUND_ERROR_SLEEP_SECONDS = 60
+SYSTEM_CPU_INTERVAL_SECONDS = 0.1
+DEFAULT_MAX_HISTORY = 10000
+DEFAULT_SLOW_QUERY_THRESHOLD = 5.0
+HEALTH_ERROR_RATE_THRESHOLD = 5
+HEALTH_EXECUTION_TIME_THRESHOLD = 2
+HEALTH_RESOURCE_THRESHOLD = 80
+
+
 @dataclass
 class PerformanceAlert:
     """性能告警数据类"""
@@ -259,19 +277,26 @@ class AlertManager:
         self._lock = threading.Lock()
 
         # 告警阈值配置
-        self.thresholds = {
-            AlertType.SLOW_QUERY: 5.0,  # 秒
-            AlertType.HIGH_ERROR_RATE: 10.0,  # 百分比
-            AlertType.HIGH_MEMORY: 85.0,  # 百分比
-            AlertType.HIGH_CPU: 90.0,  # 百分比
-            AlertType.LOW_CACHE_HIT: 30.0,  # 百分比
-            AlertType.CONNECTION_POOL: 80.0  # 百分比
-        }
+        self.thresholds = DEFAULT_ALERT_THRESHOLDS.copy()
 
     def _generate_alert_id(self) -> str:
         """生成告警ID"""
         self._alert_counter += 1
         return f"alert_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{self._alert_counter}"
+
+    @staticmethod
+    def _build_alert_key(alert_type: AlertType, tenant_id: Optional[str]) -> str:
+        """Build unique key for active alerts."""
+        return f"{alert_type.value}_{tenant_id or 'system'}"
+
+    @staticmethod
+    def _get_alert_level(metric_value: float, threshold: float) -> AlertLevel:
+        """Derive alert level by threshold."""
+        if metric_value >= threshold * 1.5:
+            return AlertLevel.CRITICAL
+        if metric_value >= threshold:
+            return AlertLevel.WARNING
+        return AlertLevel.INFO
 
     def create_alert(
         self,
@@ -283,14 +308,7 @@ class AlertManager:
         """创建告警"""
         with self._lock:
             threshold = self.thresholds.get(alert_type, 0)
-
-            # 确定告警级别
-            if metric_value >= threshold * 1.5:
-                level = AlertLevel.CRITICAL
-            elif metric_value >= threshold:
-                level = AlertLevel.WARNING
-            else:
-                level = AlertLevel.INFO
+            level = self._get_alert_level(metric_value, threshold)
 
             alert = PerformanceAlert(
                 alert_id=self._generate_alert_id(),
@@ -305,7 +323,7 @@ class AlertManager:
             self.alerts.append(alert)
 
             # 添加到活跃告警
-            alert_key = f"{alert_type.value}_{tenant_id or 'system'}"
+            alert_key = self._build_alert_key(alert_type, tenant_id)
             self.active_alerts[alert_key] = alert
 
             logger.warning(f"性能告警: [{level.value}] {message}")
@@ -315,7 +333,7 @@ class AlertManager:
     def resolve_alert(self, alert_type: AlertType, tenant_id: Optional[str] = None) -> bool:
         """解决告警"""
         with self._lock:
-            alert_key = f"{alert_type.value}_{tenant_id or 'system'}"
+            alert_key = self._build_alert_key(alert_type, tenant_id)
             if alert_key in self.active_alerts:
                 alert = self.active_alerts[alert_key]
                 alert.resolved = True
@@ -359,6 +377,44 @@ class SystemResourceMonitor:
         self._monitor_task = None
         self._lock = threading.Lock()
 
+    @staticmethod
+    def _to_mb(value: float) -> float:
+        return value / 1024 / 1024
+
+    @staticmethod
+    def _safe_attr_len(obj: Any, attr_name: str) -> int:
+        attr = getattr(obj, attr_name, None)
+        if not callable(attr):
+            return 0
+        try:
+            return len(attr())
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _empty_metrics() -> SystemMetrics:
+        return SystemMetrics(
+            cpu_percent=0,
+            memory_percent=0,
+            memory_used_mb=0,
+            memory_available_mb=0,
+            disk_usage_percent=0,
+            open_files=0,
+            thread_count=0,
+            connection_count=0,
+        )
+
+    @staticmethod
+    def _summary_stats(values: List[float]) -> Dict[str, float]:
+        if not values:
+            return {"current": 0, "average": 0, "max": 0, "min": 0}
+        return {
+            "current": values[-1],
+            "average": statistics.mean(values),
+            "max": max(values),
+            "min": min(values),
+        }
+
     def collect_metrics(self) -> SystemMetrics:
         """收集系统指标"""
         try:
@@ -366,14 +422,14 @@ class SystemResourceMonitor:
             disk = psutil.disk_usage('/')
 
             metrics = SystemMetrics(
-                cpu_percent=psutil.cpu_percent(interval=0.1),
+                cpu_percent=psutil.cpu_percent(interval=SYSTEM_CPU_INTERVAL_SECONDS),
                 memory_percent=memory.percent,
-                memory_used_mb=memory.used / 1024 / 1024,
-                memory_available_mb=memory.available / 1024 / 1024,
+                memory_used_mb=self._to_mb(memory.used),
+                memory_available_mb=self._to_mb(memory.available),
                 disk_usage_percent=disk.percent,
-                open_files=len(self.process.open_files()) if hasattr(self.process, 'open_files') else 0,
+                open_files=self._safe_attr_len(self.process, "open_files"),
                 thread_count=self.process.num_threads(),
-                connection_count=len(self.process.connections()) if hasattr(self.process, 'connections') else 0
+                connection_count=self._safe_attr_len(self.process, "connections"),
             )
 
             with self._lock:
@@ -382,11 +438,7 @@ class SystemResourceMonitor:
             return metrics
         except Exception as e:
             logger.error(f"收集系统指标失败: {e}")
-            return SystemMetrics(
-                cpu_percent=0, memory_percent=0, memory_used_mb=0,
-                memory_available_mb=0, disk_usage_percent=0,
-                open_files=0, thread_count=0, connection_count=0
-            )
+            return self._empty_metrics()
 
     def get_current_metrics(self) -> Dict[str, Any]:
         """获取当前系统指标"""
@@ -412,22 +464,12 @@ class SystemResourceMonitor:
 
             return {
                 "sample_count": len(recent),
-                "cpu": {
-                    "current": cpu_values[-1] if cpu_values else 0,
-                    "average": statistics.mean(cpu_values) if cpu_values else 0,
-                    "max": max(cpu_values) if cpu_values else 0,
-                    "min": min(cpu_values) if cpu_values else 0
-                },
-                "memory": {
-                    "current": memory_values[-1] if memory_values else 0,
-                    "average": statistics.mean(memory_values) if memory_values else 0,
-                    "max": max(memory_values) if memory_values else 0,
-                    "min": min(memory_values) if memory_values else 0
-                },
-                "timestamp": datetime.utcnow().isoformat()
+                "cpu": self._summary_stats(cpu_values),
+                "memory": self._summary_stats(memory_values),
+                "timestamp": datetime.utcnow().isoformat(),
             }
 
-    async def start_background_monitoring(self, interval_seconds: int = 30):
+    async def start_background_monitoring(self, interval_seconds: int = BACKGROUND_CHECK_INTERVAL_SECONDS):
         """启动后台监控"""
         if self._running:
             return
@@ -460,7 +502,11 @@ class SystemResourceMonitor:
 class QueryPerformanceMonitor:
     """查询性能监控器 - 核心类"""
 
-    def __init__(self, max_history: int = 10000, slow_query_threshold: float = 5.0):
+    def __init__(
+        self,
+        max_history: int = DEFAULT_MAX_HISTORY,
+        slow_query_threshold: float = DEFAULT_SLOW_QUERY_THRESHOLD,
+    ):
         self.max_history = max_history
         self.slow_query_threshold = slow_query_threshold
 
@@ -470,13 +516,7 @@ class QueryPerformanceMonitor:
         self.query_type_stats: Dict[str, List[float]] = defaultdict(list)
 
         # 实时统计
-        self.stats = {
-            'total_queries': 0,
-            'cache_hits': 0,
-            'errors': 0,
-            'slow_queries': 0,
-            'start_time': datetime.utcnow()
-        }
+        self.stats = self._new_stats()
 
         # 组件
         self.alert_manager = AlertManager()
@@ -486,6 +526,46 @@ class QueryPerformanceMonitor:
         self._lock = threading.Lock()
         self._running = False
         self._monitor_task = None
+
+    @staticmethod
+    def _new_stats() -> Dict[str, Any]:
+        """Create initial stats structure."""
+        return {
+            "total_queries": 0,
+            "cache_hits": 0,
+            "errors": 0,
+            "slow_queries": 0,
+            "start_time": datetime.utcnow(),
+        }
+
+    @staticmethod
+    def _percentage(numerator: int, denominator: int) -> float:
+        """Calculate percentage safely."""
+        if denominator <= 0:
+            return 0.0
+        return (numerator / denominator) * 100
+
+    def _check_threshold_alert(
+        self,
+        alert_type: AlertType,
+        metric_value: float,
+        message: str,
+        tenant_id: Optional[str] = None,
+    ) -> None:
+        """Create or resolve alert by threshold."""
+        threshold = self.alert_manager.thresholds[alert_type]
+        if metric_value > threshold:
+            self.alert_manager.create_alert(alert_type, message, metric_value, tenant_id)
+        else:
+            self.alert_manager.resolve_alert(alert_type, tenant_id)
+
+    @staticmethod
+    def _status_by_health_score(health_score: int) -> str:
+        if health_score >= 80:
+            return "healthy"
+        if health_score >= 60:
+            return "degraded"
+        return "unhealthy"
 
     def start_monitoring(self):
         """启动监控"""
@@ -510,49 +590,36 @@ class QueryPerformanceMonitor:
                 # 收集系统指标
                 metrics = self.resource_monitor.collect_metrics()
 
-                # 检查资源告警
-                if metrics.memory_percent > self.alert_manager.thresholds[AlertType.HIGH_MEMORY]:
-                    self.alert_manager.create_alert(
-                        AlertType.HIGH_MEMORY,
-                        f"内存使用率过高: {metrics.memory_percent:.1f}%",
-                        metrics.memory_percent
-                    )
-                else:
-                    self.alert_manager.resolve_alert(AlertType.HIGH_MEMORY)
-
-                if metrics.cpu_percent > self.alert_manager.thresholds[AlertType.HIGH_CPU]:
-                    self.alert_manager.create_alert(
-                        AlertType.HIGH_CPU,
-                        f"CPU使用率过高: {metrics.cpu_percent:.1f}%",
-                        metrics.cpu_percent
-                    )
-                else:
-                    self.alert_manager.resolve_alert(AlertType.HIGH_CPU)
+                self._check_threshold_alert(
+                    AlertType.HIGH_MEMORY,
+                    metrics.memory_percent,
+                    f"内存使用率过高: {metrics.memory_percent:.1f}%",
+                )
+                self._check_threshold_alert(
+                    AlertType.HIGH_CPU,
+                    metrics.cpu_percent,
+                    f"CPU使用率过高: {metrics.cpu_percent:.1f}%",
+                )
 
                 # 检查错误率
                 error_rate = self._calculate_error_rate()
-                if error_rate > self.alert_manager.thresholds[AlertType.HIGH_ERROR_RATE]:
-                    self.alert_manager.create_alert(
-                        AlertType.HIGH_ERROR_RATE,
-                        f"查询错误率过高: {error_rate:.1f}%",
-                        error_rate
-                    )
-                else:
-                    self.alert_manager.resolve_alert(AlertType.HIGH_ERROR_RATE)
+                self._check_threshold_alert(
+                    AlertType.HIGH_ERROR_RATE,
+                    error_rate,
+                    f"查询错误率过高: {error_rate:.1f}%",
+                )
 
-                await asyncio.sleep(30)
+                await asyncio.sleep(BACKGROUND_CHECK_INTERVAL_SECONDS)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"后台检查错误: {e}")
-                await asyncio.sleep(60)
+                await asyncio.sleep(BACKGROUND_ERROR_SLEEP_SECONDS)
 
     def _calculate_error_rate(self) -> float:
         """计算错误率"""
         with self._lock:
-            if self.stats['total_queries'] == 0:
-                return 0.0
-            return (self.stats['errors'] / self.stats['total_queries']) * 100
+            return self._percentage(self.stats['errors'], self.stats['total_queries'])
 
     @asynccontextmanager
     async def monitor_query(self, query_id: str, tenant_id: str, query_type: str):
@@ -623,8 +690,8 @@ class QueryPerformanceMonitor:
             total = self.stats['total_queries']
 
             qps = total / uptime if uptime > 0 else 0
-            cache_rate = (self.stats['cache_hits'] / total * 100) if total > 0 else 0
-            error_rate = (self.stats['errors'] / total * 100) if total > 0 else 0
+            cache_rate = self._percentage(self.stats['cache_hits'], total)
+            error_rate = self._percentage(self.stats['errors'], total)
 
             recent_times = [m.total_time for m in list(self.query_history)[-100:]]
             avg_time = statistics.mean(recent_times) if recent_times else 0
@@ -665,18 +732,21 @@ class QueryPerformanceMonitor:
             times = [m.total_time for m in tenant_queries]
             errors = sum(1 for m in tenant_queries if m.error)
             cache_hits = sum(1 for m in tenant_queries if m.cache_hit)
+            total_queries = len(tenant_queries)
+            p95_idx = int(total_queries * 0.95)
+            p95_time = sorted(times)[p95_idx] if times else 0
 
             return {
                 'tenant_id': tenant_id,
                 'time_range_hours': hours,
-                'total_queries': len(tenant_queries),
+                'total_queries': total_queries,
                 'avg_execution_time': round(statistics.mean(times), 3),
                 'max_execution_time': round(max(times), 3),
                 'min_execution_time': round(min(times), 3),
-                'p95_execution_time': round(sorted(times)[int(len(times) * 0.95)] if times else 0, 3),
+                'p95_execution_time': round(p95_time, 3),
                 'error_count': errors,
-                'error_rate': round(errors / len(tenant_queries) * 100, 2),
-                'cache_hit_rate': round(cache_hits / len(tenant_queries) * 100, 2),
+                'error_rate': round(self._percentage(errors, total_queries), 2),
+                'cache_hit_rate': round(self._percentage(cache_hits, total_queries), 2),
                 'slow_query_count': sum(1 for t in times if t > self.slow_query_threshold)
             }
 
@@ -715,6 +785,14 @@ class QueryPerformanceMonitor:
         alerts = self.alert_manager.get_active_alerts(tenant_id)
         return [a.to_dict() for a in alerts]
 
+    @staticmethod
+    def _export_stats_as_csv(stats: Dict[str, Any]) -> str:
+        """Serialize stats dict to simple CSV format."""
+        lines = ["metric,value"]
+        for key, value in stats.items():
+            lines.append(f"{key},{value}")
+        return "\n".join(lines)
+
     def export_metrics(self, format: str = "json") -> str:
         """导出性能指标"""
         data = {
@@ -725,15 +803,11 @@ class QueryPerformanceMonitor:
             'recent_slow_queries': self.get_slow_queries(hours=1, limit=20)
         }
 
-        if format.lower() == "json":
+        export_format = format.lower()
+        if export_format == "json":
             return json.dumps(data, indent=2, ensure_ascii=False)
-        elif format.lower() == "csv":
-            # 简单CSV导出
-            lines = ["metric,value"]
-            stats = data['stats']
-            for key, value in stats.items():
-                lines.append(f"{key},{value}")
-            return "\n".join(lines)
+        elif export_format == "csv":
+            return self._export_stats_as_csv(data['stats'])
         else:
             raise ValueError(f"不支持的导出格式: {format}")
 
@@ -744,13 +818,7 @@ class QueryPerformanceMonitor:
                 self.query_history.clear()
                 self.tenant_history.clear()
                 self.query_type_stats.clear()
-                self.stats = {
-                    'total_queries': 0,
-                    'cache_hits': 0,
-                    'errors': 0,
-                    'slow_queries': 0,
-                    'start_time': datetime.utcnow()
-                }
+                self.stats = self._new_stats()
             else:
                 cutoff_time = datetime.utcnow() - timedelta(hours=hours)
                 self.query_history = deque(
@@ -766,21 +834,21 @@ class QueryPerformanceMonitor:
 
         # 计算健康评分
         health_score = 100
-        issues = []
+        issues: List[str] = []
 
-        if stats['error_rate'] > 5:
+        if stats['error_rate'] > HEALTH_ERROR_RATE_THRESHOLD:
             health_score -= 20
             issues.append(f"错误率过高: {stats['error_rate']}%")
 
-        if stats['avg_execution_time'] > 2:
+        if stats['avg_execution_time'] > HEALTH_EXECUTION_TIME_THRESHOLD:
             health_score -= 15
             issues.append(f"平均响应时间过长: {stats['avg_execution_time']}s")
 
-        if system_metrics.get('memory_percent', 0) > 80:
+        if system_metrics.get('memory_percent', 0) > HEALTH_RESOURCE_THRESHOLD:
             health_score -= 15
             issues.append(f"内存使用率过高: {system_metrics['memory_percent']}%")
 
-        if system_metrics.get('cpu_percent', 0) > 80:
+        if system_metrics.get('cpu_percent', 0) > HEALTH_RESOURCE_THRESHOLD:
             health_score -= 15
             issues.append(f"CPU使用率过高: {system_metrics['cpu_percent']}%")
 
@@ -790,13 +858,7 @@ class QueryPerformanceMonitor:
             issues.append(f"存在 {active_alerts} 个活跃告警")
 
         health_score = max(0, health_score)
-
-        if health_score >= 80:
-            status = "healthy"
-        elif health_score >= 60:
-            status = "degraded"
-        else:
-            status = "unhealthy"
+        status = self._status_by_health_score(health_score)
 
         return {
             'status': status,
@@ -811,8 +873,8 @@ class QueryPerformanceMonitor:
 
 # 全局性能监控器实例
 query_perf_monitor = QueryPerformanceMonitor(
-    max_history=10000,
-    slow_query_threshold=5.0
+    max_history=DEFAULT_MAX_HISTORY,
+    slow_query_threshold=DEFAULT_SLOW_QUERY_THRESHOLD
 )
 
 

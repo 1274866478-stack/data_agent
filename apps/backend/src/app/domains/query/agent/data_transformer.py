@@ -37,10 +37,77 @@
 **依赖深度**: 2 层
 """
 from typing import List, Dict, Any, Tuple, Optional
+import logging
+import json
 import re
 
 from .models import ChartConfig, ChartType
 
+logger = logging.getLogger(__name__)
+
+
+PROPORTION_KEYWORDS = ["占比", "比例", "分布", "多少"]
+VALUE_COLUMN_HINTS = ["count", "num", "amount", "值", "数", "量", "percent", "%"]
+TIME_FILL_DISABLE_KEYWORDS = ["按天", "每日", "每天", "按周", "每周", "周度", "日度", "最近一周", "近7天", "7天"]
+YEAR_KEYWORDS = ["年", "年度", "今年", "去年", "前年"]
+MONTH_TREND_KEYWORDS = ["趋势", "按月", "月度", "每月", "月份"]
+TIME_COLUMN_KEYWORDS = ["date", "time", "month", "year", "day", "week", "quarter", "created", "updated"]
+QUESTION_LINE_KEYWORDS = ["趋势", "变化", "时间", "月份", "年度", "季度", "增长", "下降"]
+QUESTION_BAR_KEYWORDS = ["对比", "比较", "排名", "最高", "最低"]
+QUESTION_PIE_KEYWORDS = ["占比", "分布", "比例", "份额"]
+CODE_BLOCK_PATTERN = r"```(?:json)?\\s*\\n(\\{[\\s\\S]*?\\})\\s*```"
+
+
+def _resolve_xy_fields(
+    columns: List[str],
+    x_field: Optional[str] = None,
+    y_field: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Resolve x/y fields from requested names and available columns."""
+    if not columns:
+        return "", ""
+    actual_x = x_field if x_field and x_field in columns else columns[0]
+    if y_field and y_field in columns:
+        actual_y = y_field
+    else:
+        remaining = [column for column in columns if column != actual_x]
+        actual_y = remaining[0] if remaining else (columns[1] if len(columns) > 1 else "")
+    return actual_x, actual_y
+
+
+def _to_float(value: Any, default: float = 0.0) -> float:
+    """Best-effort numeric conversion for chart y-values."""
+    try:
+        return float(value) if value is not None else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _is_numeric_like(value: Any) -> bool:
+    """Return True for numeric / numeric-like values."""
+    if isinstance(value, (int, float)):
+        return True
+    if not isinstance(value, str):
+        return False
+    normalized = value.replace(".", "").replace("-", "")
+    return normalized.isdigit()
+
+
+def _validate_requested_field(
+    field_name: Optional[str],
+    available_columns: List[str],
+    axis_label: str,
+) -> Optional[str]:
+    """Validate requested axis field and fallback when absent."""
+    if not field_name or field_name in available_columns:
+        return field_name
+    logger.warning(
+        "⚠️ [字段验证] %s 轴字段 '%s' 不存在于查询结果中。实际字段: %s。将使用智能映射。",
+        axis_label,
+        field_name,
+        available_columns,
+    )
+    return None
 
 def supplement_proportion_data(
     sql_result: List[Dict[str, Any]],
@@ -69,9 +136,8 @@ def supplement_proportion_data(
         return sql_result
 
     # 检测是否为占比类查询
-    proportion_keywords = ['占比', '比例', '分布', '多少']
     combined_text = (sql + " " + user_query).lower()
-    if not any(kw in combined_text for kw in proportion_keywords):
+    if not any(keyword in combined_text for keyword in PROPORTION_KEYWORDS):
         return sql_result
 
     row = sql_result[0]
@@ -94,7 +160,7 @@ def supplement_proportion_data(
         # 尝试按列名推断
         for col in columns:
             col_lower = col.lower()
-            if any(kw in col_lower for kw in ['count', 'num', 'amount', '值', '数', '量', 'percent', '%']):
+            if any(keyword in col_lower for keyword in VALUE_COLUMN_HINTS):
                 value_col = col
             else:
                 category_col = col
@@ -114,7 +180,10 @@ def supplement_proportion_data(
     if current_value > 0:
         # 判断是否可能是百分比
         # 1. 检查列名是否包含百分比关键词
-        col_has_percent_hint = any(kw in value_col.lower() for kw in ['percent', 'ratio', 'proportion', '%', '率', '占比'])
+        col_has_percent_hint = any(
+            keyword in value_col.lower()
+            for keyword in ["percent", "ratio", "proportion", "%", "率", "占比"]
+        )
 
         # 2. 检查值是否在合理百分比范围内 (0-100 且不太接近整数计数)
         # 小于1000可能是百分比或小计数，大于1000通常是计数
@@ -142,13 +211,13 @@ def supplement_proportion_data(
 def _should_fill_missing_months(user_query: str) -> bool:
     if not user_query:
         return False
-    if any(kw in user_query for kw in ["按天", "每日", "每天", "按周", "每周", "周度", "日度", "最近一周", "近7天", "7天"]):
+    if any(keyword in user_query for keyword in TIME_FILL_DISABLE_KEYWORDS):
         return False
     has_year = bool(re.search(r"\b20\d{2}\b", user_query)) or any(
-        kw in user_query for kw in ["年", "年度", "今年", "去年", "前年"]
+        keyword in user_query for keyword in YEAR_KEYWORDS
     )
     has_month_trend = any(
-        kw in user_query for kw in ["趋势", "按月", "月度", "每月", "月份"]
+        keyword in user_query for keyword in MONTH_TREND_KEYWORDS
     )
     return has_year and has_month_trend
 
@@ -240,31 +309,13 @@ def sql_result_to_echarts_data(
         # 只有一列，无法生成图表
         return [], columns[0] if columns else "", ""
     
-    # 确定 X 和 Y 字段
-    if x_field and x_field in columns:
-        actual_x = x_field
-    else:
-        actual_x = columns[0]  # 默认第一列
-    
-    if y_field and y_field in columns:
-        actual_y = y_field
-    else:
-        # 默认第二列，但如果第一列已被用作 X，则取第二列
-        remaining = [c for c in columns if c != actual_x]
-        actual_y = remaining[0] if remaining else columns[1]
+    actual_x, actual_y = _resolve_xy_fields(columns, x_field, y_field)
     
     # 转换数据
     data = []
     for row in sql_result:
         x_val = row.get(actual_x, "")
-        y_val = row.get(actual_y, 0)
-        
-        # 确保 Y 值是数值类型
-        try:
-            y_val = float(y_val) if y_val is not None else 0
-        except (ValueError, TypeError):
-            y_val = 0
-        
+        y_val = _to_float(row.get(actual_y, 0))
         data.append([x_val, y_val])
     
     return data, actual_x, actual_y
@@ -313,17 +364,7 @@ def sql_result_to_mcp_echarts_data(
     if len(columns) < 2:
         return [], columns[0] if columns else "", ""
 
-    # 确定分类字段和数值字段
-    if x_field and x_field in columns:
-        actual_x = x_field
-    else:
-        actual_x = columns[0]
-
-    if y_field and y_field in columns:
-        actual_y = y_field
-    else:
-        remaining = [c for c in columns if c != actual_x]
-        actual_y = remaining[0] if remaining else columns[1]
+    actual_x, actual_y = _resolve_xy_fields(columns, x_field, y_field)
 
     if chart_type == "line":
         sql_result = fill_missing_months(sql_result, actual_x, actual_y, user_query)
@@ -332,13 +373,7 @@ def sql_result_to_mcp_echarts_data(
     data = []
     for row in sql_result:
         x_val = row.get(actual_x, "")
-        y_val = row.get(actual_y, 0)
-
-        # 确保数值类型
-        try:
-            y_val = float(y_val) if y_val is not None else 0
-        except (ValueError, TypeError):
-            y_val = 0
+        y_val = _to_float(row.get(actual_y, 0))
 
         if chart_type == "line":
             # 折线图使用 time/value 格式
@@ -368,24 +403,27 @@ def infer_chart_type(sql: str, data: List[Dict[str, Any]], question: str = "") -
     # 优先从用户问题中推断（更准确）
     if question:
         # 趋势类关键词 -> 折线图
-        if any(kw in question_lower for kw in ["趋势", "变化", "时间", "月份", "年度", "季度", "增长", "下降"]):
+        if any(keyword in question_lower for keyword in QUESTION_LINE_KEYWORDS):
             return "line"
         # 对比类关键词 -> 柱状图
-        if any(kw in question_lower for kw in ["对比", "比较", "排名", "最高", "最低"]):
+        if any(keyword in question_lower for keyword in QUESTION_BAR_KEYWORDS):
             return "bar"
         # 占比类关键词 -> 饼图
-        if any(kw in question_lower for kw in ["占比", "分布", "比例", "份额"]):
+        if any(keyword in question_lower for keyword in QUESTION_PIE_KEYWORDS):
             return "pie"
-    
+
     # 1. 检查是否有时间相关字段 -> 折线图
-    time_keywords = ["date", "time", "month", "year", "day", "week", "quarter", "created", "updated"]
-    if any(kw in sql_lower for kw in time_keywords):
+    if any(keyword in sql_lower for keyword in TIME_COLUMN_KEYWORDS):
         if "group by" in sql_lower or "extract" in sql_lower:
             return "line"
         # 检查数据中的列名
         if data and len(data) > 0:
             columns = list(data[0].keys())
-            time_cols = [col for col in columns if any(kw in col.lower() for kw in time_keywords)]
+            time_cols = [
+                col
+                for col in columns
+                if any(keyword in col.lower() for keyword in TIME_COLUMN_KEYWORDS)
+            ]
             if time_cols:
                 return "line"
     
@@ -408,14 +446,11 @@ def infer_chart_type(sql: str, data: List[Dict[str, Any]], question: str = "") -
         time_cols = []
         for col in columns:
             # 检查是否是数值列
-            try:
-                first_val = data[0].get(col)
-                if isinstance(first_val, (int, float)) or (isinstance(first_val, str) and first_val.replace('.', '').replace('-', '').isdigit()):
-                    numeric_cols.append(col)
-            except:
-                pass
+            first_val = data[0].get(col)
+            if _is_numeric_like(first_val):
+                numeric_cols.append(col)
             # 检查是否是时间列
-            if any(kw in col.lower() for kw in time_keywords):
+            if any(keyword in col.lower() for keyword in TIME_COLUMN_KEYWORDS):
                 time_cols.append(col)
         
         # 如果有时间列和数值列，且数据点较多，推断为折线图
@@ -464,25 +499,8 @@ def prepare_mcp_chart_request(
     if sql_result and len(sql_result) > 0:
         actual_columns = list(sql_result[0].keys())
 
-    # 验证 x_field 是否存在
-    if x_field and x_field not in actual_columns:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.warning(
-            f"⚠️ [字段验证] X轴字段 '{x_field}' 不存在于查询结果中。"
-            f"实际字段: {actual_columns}。将使用智能映射。"
-        )
-        x_field = None  # 清除无效字段，让 sql_result_to_mcp_echarts_data 自动选择
-
-    # 验证 y_field 是否存在
-    if y_field and y_field not in actual_columns:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.warning(
-            f"⚠️ [字段验证] Y轴字段 '{y_field}' 不存在于查询结果中。"
-            f"实际字段: {actual_columns}。将使用智能映射。"
-        )
-        y_field = None  # 清除无效字段，让 sql_result_to_mcp_echarts_data 自动选择
+    x_field = _validate_requested_field(x_field, actual_columns, "X")
+    y_field = _validate_requested_field(y_field, actual_columns, "Y")
 
     # 推断图表类型（如果未指定）
     if not chart_type or chart_type in ("table", "none"):
@@ -513,9 +531,8 @@ def prepare_mcp_chart_request(
             # 尝试生成基础的表格展示配置
             try:
                 # 如果有时间相关的字段，尝试推断为折线图
-                time_indicators = ['date', 'time', 'month', 'year', 'day', 'created', 'updated']
                 has_time_field = any(
-                    any(indicator in str(col).lower() for indicator in time_indicators)
+                    any(indicator in str(col).lower() for indicator in TIME_COLUMN_KEYWORDS)
                     for col in (actual_x, actual_y)
                 )
                 
@@ -673,9 +690,6 @@ def extract_simple_charts_from_text(text: str) -> List[Dict[str, Any]]:
     Returns:
         提取到的图表配置列表（已转换为完整的 ECharts 格式）
     """
-    import re
-    import json
-
     charts = []
 
     if not text:
@@ -683,8 +697,7 @@ def extract_simple_charts_from_text(text: str) -> List[Dict[str, Any]]:
 
     # 尝试匹配 markdown 代码块中的 JSON
     # 格式：```json ... ``` 或 ``` ... ```
-    code_block_pattern = r'```(?:json)?\s*\n(\{[\s\S]*?\})\s*```'
-    matches = re.findall(code_block_pattern, text)
+    matches = re.findall(CODE_BLOCK_PATTERN, text)
 
     for json_str in matches:
         try:

@@ -17,7 +17,7 @@ Time Aggregation Middleware - 月度聚合修正中间件
 
 import re
 import logging
-from typing import Any, Optional, Callable
+from typing import Optional, Callable
 
 # LangChain/LangGraph imports for deepagents compatibility
 from langgraph.prebuilt.tool_node import ToolCallRequest

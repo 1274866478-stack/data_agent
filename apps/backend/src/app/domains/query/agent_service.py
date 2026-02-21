@@ -1,129 +1,20 @@
 """
-# [AGENT_SERVICE] Agent集成服务
+Agent query response adapter service.
 
-## [HEADER]
-**文件名**: agent_service.py
-**职责**: 集成LangGraph SQL Agent到后端API，提供Agent响应转换、图表处理、文件/数据库智能路由和幻觉检测功能
-**作者**: Data Agent Team
-**版本**: 1.0.0
-**变更记录**:
-- v1.0.0 (2026-01-01): 初始版本 - Agent集成服务
-
-## [INPUT]
-- **question: str** - 用户自然语言问题
-- **thread_id: str** - 会话线程ID
-- **database_url: Optional[str]** - 数据库连接URL或文件路径（xlsx, csv, /uploads/, /data/等）
-- **verbose: bool** - 是否显示详细输出（默认False）
-- **enable_echarts: bool** - 是否启用ECharts图表生成（默认True）
-- **agent_response: VisualizationResponse** - Agent返回的响应对象
-- **query_id: str** - 查询ID
-- **tenant_id: str** - 租户ID
-- **original_query: str** - 原始查询文本
-- **processing_time_ms: int** - 处理时间（毫秒）
-- **execution_time: float** - 执行时间（秒）
-- **chart_path: str** - 图表文件路径
-- **answer: str** - Agent返回的answer文本
-
-## [OUTPUT]
-- **VisualizationResponse**: run_agent_query返回Agent响应对象
-  - success: bool - 查询是否成功
-  - sql: str - 生成的SQL语句
-  - answer: str - 自然语言解释
-  - data: QueryResult - 查询结果数据
-  - chart: ChartConfig - 图表配置
-  - echarts_option: Dict - ECharts配置选项
-  - metadata: Dict - 元数据（幻觉检测标志等）
-- **Dict[str, Any]**: convert_agent_response_to_query_response返回QueryResponseV3格式
-  - query_id, tenant_id, original_query
-  - generated_sql, results, row_count
-  - execution_result: {success, data_columns, chart_type, chart_title, chart_data, echarts_option}
-  - explanation, processing_steps, validation_result
-  - metadata: {hallucination_detected, hallucination_reason}
-- **Dict[str, Any]**: convert_agent_response_to_chat_response返回ChatQueryResponse格式
-  - answer, sources, reasoning, confidence, execution_time
-  - sql, data: {columns, rows, row_count}
-  - chart: {chart_type, title, x_field, y_field, chart_image, chart_data}
-  - echarts_option: Dict
-- **Optional[str]**: extract_chart_path_from_answer返回提取的图表路径或URL
-- **Optional[str]**: load_chart_as_base64返回Base64编码的图片数据（data URI格式）
-- **bool**: is_agent_available返回Agent是否可用
-
-**上游依赖** (已读取源码):
-- [Agent/models.py](../../Agent/models.py) - Agent数据模型（VisualizationResponse）
-- [Agent/sql_agent.py](../../Agent/sql_agent.py) - 旧版Agent（run_agent）
-- [Agent/app/services/agent_service.py](../../Agent/app/services/agent_service.py) - 新版Agent（支持enable_echarts）
-- [Agent/config.py](../../Agent/config.py) - Agent配置
-
-**下游依赖** (需要反向索引分析):
-- [../api/v1/endpoints/query.py](../api/v1/endpoints/query.py) - 查询API端点
-- [../api/v1/endpoints/llm.py](../api/v1/endpoints/llm.py) - LLM API端点
-- [llm_service.py](./llm_service.py) - LLM服务（Agent查询集成）
-
-**调用方**:
-- 自然语言查询API
-- 聊天对话中的查询功能
-- Agent查询健康检查
-
-## [STATE]
-- **Agent路径管理**: 动态添加Agent目录到sys.path
-- **版本兼容**: 支持新旧两个版本Agent（_use_new_agent标志）
-  - 新版本: 支持enable_echarts参数，返回{response: VisualizationResponse}
-  - 旧版本: 不支持enable_echarts，直接返回VisualizationResponse
-- **降级机制**: Agent导入失败时设置_agent_available=False，不阻塞应用启动
-- **文件/数据库路由**: 早期检测database_url类型（文件扩展名、本地路径、数据库协议）
-- **幻觉检测**: 三道防线
-  1. metadata.hallucination_detected标志
-  2. answer字段假数据模式二次检查（正则匹配测试名）
-  3. safe_get安全属性访问（防止Pydantic/字典访问错误）
-- **Prompt注入**: 根据路由模式注入不同的系统指令（文件模式禁用SQL工具）
-- **配置临时覆盖**: 运行时临时覆盖Agent的database_url配置（查询后恢复）
-
-## [SIDE-EFFECTS]
-- **路径操作**: 修改sys.path插入Agent目录
-- **模块导入**: 动态导入Agent模块（sql_agent, models, config, agent_service）
-- **文件I/O**: load_chart_as_base64读取图表文件
-- **Base64编码**: 图表文件转换为Base64 data URI
-- **正则匹配**: 提取图表路径、检测假数据模式、提取SQL表名
-- **配置修改**: 临时覆盖Agent config.database_url（查询后恢复原值）
-- **Prompt工程**: 注入系统指令到用户问题（enhanced_question）
-- **异常处理**: 大量try-except保护Agent调用和属性访问
-- **日志记录**: 详细的路由、配置、查询执行日志
-- **类型转换**: Pydantic模型转字典（metadata, chart等对象的.dict()或.model_dump()）
-- **URL清理**: 文件模式下清理database_url防止Postgres工具崩溃
-
-## [POS]
-**路径**: backend/src/app/domains/agent_service.py
-**模块层级**: Level 1 (服务层)
-**依赖深度**: 跨模块依赖Agent目录（外部依赖）
+This module keeps legacy response-conversion behavior for V1/V2 API callers,
+while all agent execution is routed through `agentv2_gateway` (AgentV2-only).
 """
 import os
 import base64
 import re
 from pathlib import Path
 from typing import Dict, Any, Optional
-import asyncio
 import logging
 from src.app.integrations.agentv2_gateway import agentv2_gateway
 
 logger = logging.getLogger(__name__)
 
-# 导入统计分析服务
-try:
-    from src.app.domains.query.stats_analysis_service import get_stats_service
-    _stats_analysis_available = True
-    logger.info("✅ 统计分析服务已加载")
-except ImportError as e:
-    _stats_analysis_available = False
-    get_stats_service = None
-    logger.warning(f"⚠️ 统计分析服务导入失败: {e}，统计功能将不可用")
-
 _agent_path = Path(__file__).parent.parent.parent.parent.parent / "agent"
-_agent_available = agentv2_gateway.is_available()
-_error_tracking_available = False
-error_tracker = None
-log_agent_error = None
-ErrorCategory = None
-_use_new_agent = True
 VisualizationResponse = Any
 
 
@@ -632,7 +523,7 @@ def convert_agent_response_to_query_response(
         explanation = error_message
         # 清除可能包含假数据的结果
         results = []
-        logger.error(f"🚫 [响应转换] 检测到metadata中的幻觉标志，已拦截并替换explanation")
+        logger.error("🚫 [响应转换] 检测到metadata中的幻觉标志，已拦截并替换explanation")
     
     # 🔥 优先级4：二次检查 - 即使metadata中没有标志，也要检查answer字段是否包含假数据
     if not hallucination_detected_in_metadata and explanation:
@@ -666,7 +557,7 @@ def convert_agent_response_to_query_response(
             )
             explanation = error_message
             results = []
-            logger.error(f"🚫 [响应转换] 二次检查检测到假数据模式，已拦截并替换explanation")
+            logger.error("🚫 [响应转换] 二次检查检测到假数据模式，已拦截并替换explanation")
 
     # 🛡️🛡️🛡️ 安全优先级0：危险 SQL 检查（最高优先级，在假数据检查之前）
     # 检查 explanation 中是否包含危险的 DML/DDL 操作
@@ -718,22 +609,24 @@ def convert_agent_response_to_query_response(
     # 尝试从 response 对象的 _stats_analysis 属性获取统计结果
     stats_analysis = getattr(agent_response, '_stats_analysis', None)
 
-    # 调试日志
-    logger.info(f"🔍 [调试] 检查统计结果: stats_analysis 是否存在 = {stats_analysis is not None}")
+    logger.debug("[stats] stats_analysis exists=%s", stats_analysis is not None)
     if stats_analysis:
-        logger.info(f"🔍 [调试] 统计结果类型: {type(stats_analysis)}, 键: {list(stats_analysis.keys()) if isinstance(stats_analysis, dict) else 'N/A'}")
+        logger.debug(
+            "[stats] stats_analysis type=%s keys=%s",
+            type(stats_analysis),
+            list(stats_analysis.keys()) if isinstance(stats_analysis, dict) else "N/A",
+        )
 
     if not stats_analysis and metadata and isinstance(metadata, dict):
         # 兼容旧方式：从 metadata 中获取
         stats_analysis = metadata.get('stats_analysis')
-        logger.info(f"🔍 [调试] 从 metadata 获取统计结果: {stats_analysis is not None}")
+        logger.debug("[stats] stats_analysis from metadata exists=%s", stats_analysis is not None)
 
     if stats_analysis and isinstance(stats_analysis, dict) and 'error' not in stats_analysis:
         # 生成统计结果的可读文本
         stats_text = _format_stats_analysis(stats_analysis)
 
-        # 调试日志
-        logger.info(f"🔍 [调试] 格式化后统计文本长度: {len(stats_text)}, 前100字符: {stats_text[:100]}")
+        logger.debug("[stats] formatted stats text length=%s", len(stats_text))
 
         # 如果 stats_text 不为空，追加到 explanation
         if stats_text and explanation:
@@ -741,12 +634,15 @@ def convert_agent_response_to_query_response(
             if not explanation.endswith('\n'):
                 explanation += '\n\n'
             explanation += stats_text
-            logger.info("✅ [统计分析] 已将统计结果追加到 explanation 中")
+            logger.debug("[stats] appended stats analysis into explanation")
     else:
         if stats_analysis:
-            logger.warning(f"⚠️ [统计分析] 统计结果包含错误: {stats_analysis.get('error', 'Unknown error')}")
+            logger.warning(
+                "[stats] stats_analysis contains error: %s",
+                stats_analysis.get("error", "Unknown error"),
+            )
         else:
-            logger.info("ℹ️ [统计分析] 没有可用的统计结果需要追加")
+            logger.debug("[stats] no stats_analysis to append")
 
     # 🛡️ 安全访问所有属性
     sql = safe_get(agent_response, 'sql', '')

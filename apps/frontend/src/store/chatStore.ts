@@ -62,8 +62,12 @@ export interface ChatState {
   searchSessions: (keyword: string) => ChatSession[]
 
   sendMessage: (content: string, dataSourceIds?: string | string[], useStream?: boolean) => Promise<void>
-  addMessage: (message: Omit<ChatMessage, 'id'>) => void
-  updateMessage: (messageId: string, updates: Partial<ChatMessage>) => void
+  addMessage: (message: Omit<ChatMessage, 'id'> & { id?: string }) => string
+  updateMessage: (
+    messageId: string,
+    updates: Partial<ChatMessage>,
+    options?: { persist?: boolean; touchSession?: boolean }
+  ) => void
   deleteMessage: (messageId: string) => void
   clearHistory: (sessionId: string) => void
 
@@ -315,10 +319,12 @@ const baseChatStore = create<ChatState>()(
         )
       },
 
-      addMessage: (message: Omit<ChatMessage, 'id'>) => {
+      addMessage: (message: Omit<ChatMessage, 'id'> & { id?: string }) => {
         const state = get()
-        if (!state.currentSession) return
-        const msg: ChatMessage = { ...message, id: generateId() }
+        if (!state.currentSession) return ''
+        const { id, ...messageWithoutId } = message
+        const msgId = id || generateId()
+        const msg: ChatMessage = { ...messageWithoutId, id: msgId }
         const sessions = state.sessions.map((s) => {
           if (s.id !== state.currentSession!.id) return s
 
@@ -341,19 +347,45 @@ const baseChatStore = create<ChatState>()(
         const stats = recalcStats(sessions, state.stats)
         set({ sessions, currentSession, stats })
         persist(get())
+        return msg.id
       },
 
-      updateMessage: (messageId: string, updates: Partial<ChatMessage>) => {
+      updateMessage: (
+        messageId: string,
+        updates: Partial<ChatMessage>,
+        options?: { persist?: boolean; touchSession?: boolean }
+      ) => {
         const state = get()
         if (!state.currentSession) return
-        const sessions = state.sessions.map((s) => {
-          if (s.id !== state.currentSession!.id) return s
-          const messages = s.messages.map((m) => (m.id === messageId ? { ...m, ...updates } : m))
-          return { ...s, messages, updatedAt: new Date() }
+        const updateKeys = Object.keys(updates) as Array<keyof ChatMessage>
+        const sessionId = state.currentSession.id
+        const sessionIndex = state.sessions.findIndex((s) => s.id === sessionId)
+        if (sessionIndex < 0) return
+
+        const shouldTouchSession = options?.touchSession ?? true
+        const current = state.sessions[sessionIndex]
+        let didUpdate = false
+        const messages = current.messages.map((m) => {
+          if (m.id !== messageId) return m
+          const hasDiff = updateKeys.some((key) => m[key] !== updates[key])
+          if (!hasDiff) return m
+          didUpdate = true
+          return { ...m, ...updates }
         })
-        const currentSession = sessions.find((s) => s.id === state.currentSession!.id) || null
+        if (!didUpdate) return
+
+        const updatedSession: ChatSession = {
+          ...current,
+          messages,
+          updatedAt: shouldTouchSession ? new Date() : current.updatedAt,
+        }
+        const sessions = [...state.sessions]
+        sessions[sessionIndex] = updatedSession
+        const currentSession = updatedSession
         set({ sessions, currentSession })
-        persist(get())
+        if (options?.persist ?? true) {
+          persist(get())
+        }
       },
 
       deleteMessage: (messageId: string) => {
@@ -384,7 +416,7 @@ const baseChatStore = create<ChatState>()(
         const state = get()
         if (!state.currentSession || state.isLoading) return
 
-        set({ isLoading: true, isTyping: true, error: null })
+        set({ isLoading: true, isTyping: true, error: null, currentAbortController: null })
         const sessionId = state.currentSession.id
 
         // 记录用户消息
@@ -434,38 +466,38 @@ const baseChatStore = create<ChatState>()(
         }
 
         const start = Date.now()
-        try {
-          const resp: any = await chatService.query(payload)
-          const isSuccess =
-            typeof resp?.success === 'boolean'
-              ? resp.success
-              : resp?.status === 'success'
 
-          if (!resp || !isSuccess) {
-            throw new Error(resp?.error || resp?.message || '发送消息失败')
-          }
+        const updateAverageResponseTime = () => {
+          const elapsed = Date.now() - start
+          const stats = get().stats
+          const totalMessages = stats.totalMessages
+          const newAvg =
+            totalMessages > 0
+              ? (stats.averageResponseTime * totalMessages + elapsed) / (totalMessages + 1)
+              : elapsed
+          set({
+            stats: { ...get().stats, averageResponseTime: newAvg },
+          })
+        }
 
+        const resolveAssistantData = (resp: any) => {
           const data: any = resp?.data ?? resp ?? {}
           let answer: string | undefined = data.answer || data?.data?.answer || data.explanation
           const sources = data.sources || data?.data?.sources || data.data_sources || []
           const confidence = data.confidence ?? data.confidence_score ?? data?.data?.confidence
 
-          // 兼容 QueryV3 旧格式
           if (!answer && data.explanation) {
             answer = data.explanation
           }
+
           const nestedRowCount = data?.data?.data?.row_count
           if (answer && (data.row_count || data?.data?.row_count || nestedRowCount || data.results?.length)) {
             const rows = data.row_count ?? data?.data?.row_count ?? nestedRowCount ?? data.results?.length
             answer += `\n\n查询结果（${rows} 行）`
           }
-          if (!answer) answer = '已收到请求，后台正在处理。'
 
-          const assistantMessage: Omit<ChatMessage, 'id'> = {
-            role: 'assistant',
-            content: answer,
-            timestamp: new Date(),
-            status: 'sent',
+          return {
+            answer: answer || '已收到请求，后台正在处理。',
             metadata: {
               sources,
               reasoning: data.reasoning,
@@ -477,29 +509,174 @@ const baseChatStore = create<ChatState>()(
               context_info: data.context_info,
             },
           }
+        }
 
-          get().addMessage(assistantMessage)
+        let streamAssistantMessageId: string | null = null
 
-          // 更新平均响应时间
-          const elapsed = Date.now() - start
-          const stats = get().stats
-          const totalMessages = stats.totalMessages
-          const newAvg =
-            totalMessages > 0
-              ? (stats.averageResponseTime * totalMessages + elapsed) / (totalMessages + 1)
-              : elapsed
-          set({
-            stats: { ...get().stats, averageResponseTime: newAvg },
-          })
+        try {
+          if (useStream) {
+            let streamError: string | null = null
+            let hasContent = false
+            const streamAbortController = new AbortController()
+            const pendingChunks: string[] = []
+            let flushTimer: ReturnType<typeof setTimeout> | null = null
+            let lastFlushAt = 0
+            const assistantMessageId = get().addMessage({
+              role: 'assistant',
+              content: '',
+              timestamp: new Date(),
+              status: 'sent',
+              metadata: {},
+            })
+            streamAssistantMessageId = assistantMessageId || null
+
+            const flushPendingChunks = () => {
+              if (!assistantMessageId || pendingChunks.length === 0) return
+              const message = get().currentSession?.messages.find((m) => m.id === assistantMessageId)
+              let nextContent = message?.content || ''
+              for (const chunk of pendingChunks) {
+                nextContent = chunk.startsWith(nextContent) ? chunk : `${nextContent}${chunk}`
+              }
+              pendingChunks.length = 0
+              get().updateMessage(
+                assistantMessageId,
+                { content: nextContent },
+                { persist: false, touchSession: false }
+              )
+            }
+
+            const scheduleChunkFlush = () => {
+              const now = Date.now()
+              const elapsed = now - lastFlushAt
+              if (elapsed >= 48) {
+                if (flushTimer) {
+                  clearTimeout(flushTimer)
+                  flushTimer = null
+                }
+                flushPendingChunks()
+                lastFlushAt = Date.now()
+                return
+              }
+              if (flushTimer) return
+              flushTimer = setTimeout(() => {
+                flushTimer = null
+                flushPendingChunks()
+                lastFlushAt = Date.now()
+              }, Math.max(0, 48 - elapsed))
+            }
+
+            const mergeMetadata = (incoming: Partial<NonNullable<ChatMessage['metadata']>>) => {
+              if (!assistantMessageId || Object.keys(incoming).length === 0) return
+              const message = get().currentSession?.messages.find((m) => m.id === assistantMessageId)
+              get().updateMessage(assistantMessageId, {
+                metadata: {
+                  ...(message?.metadata || {}),
+                  ...incoming,
+                },
+              }, { persist: false, touchSession: false })
+            }
+
+            set({
+              streamingStatus: 'streaming',
+              streamingMessageId: assistantMessageId || null,
+              currentAbortController: streamAbortController,
+            })
+
+            await chatService.stream(payload, {
+              onContent: (chunk: string) => {
+                if (!assistantMessageId || !chunk) return
+                hasContent = true
+                pendingChunks.push(chunk)
+                scheduleChunkFlush()
+              },
+              onTable: (table) => mergeMetadata({ table }),
+              onChart: (chart) => mergeMetadata({ chart }),
+              onProgress: (progress) => mergeMetadata({ progress }),
+              onError: (error) => {
+                streamError = error || '流式响应失败'
+              },
+              onComplete: () => {
+                if (flushTimer) {
+                  clearTimeout(flushTimer)
+                  flushTimer = null
+                }
+                flushPendingChunks()
+                if (!streamError) {
+                  set({ streamingStatus: 'completed' })
+                }
+              },
+            }, streamAbortController.signal)
+
+            if (flushTimer) {
+              clearTimeout(flushTimer)
+              flushTimer = null
+            }
+            flushPendingChunks()
+
+            if (streamAbortController.signal.aborted) {
+              return
+            }
+
+            if (streamError) {
+              throw new Error(streamError)
+            }
+
+            if (!assistantMessageId) {
+              throw new Error('流式消息初始化失败')
+            }
+
+            if (!hasContent) {
+              get().updateMessage(assistantMessageId, {
+                content: '已收到请求，后台正在处理。',
+              }, { persist: false, touchSession: false })
+            }
+
+            updateAverageResponseTime()
+          } else {
+            const resp: any = await chatService.query(payload)
+            const isSuccess =
+              typeof resp?.success === 'boolean'
+                ? resp.success
+                : resp?.status === 'success' || !!(resp?.answer || resp?.data?.answer || resp?.explanation)
+
+            if (!resp || !isSuccess) {
+              throw new Error(resp?.error || resp?.message || '发送消息失败')
+            }
+
+            const assistantData = resolveAssistantData(resp)
+
+            get().addMessage({
+              role: 'assistant',
+              content: assistantData.answer,
+              timestamp: new Date(),
+              status: 'sent',
+              metadata: assistantData.metadata,
+            })
+
+            updateAverageResponseTime()
+          }
         } catch (error) {
           const msg = `发送消息失败：${error instanceof Error ? error.message : '未知错误'}`
-          const systemMessage: Omit<ChatMessage, 'id'> = {
-            role: 'system',
-            content: msg,
-            timestamp: new Date(),
-            status: 'error',
+          let renderedOnAssistantMessage = false
+          if (streamAssistantMessageId) {
+            const assistantMessage = get().currentSession?.messages.find((m) => m.id === streamAssistantMessageId)
+            if (assistantMessage && !assistantMessage.content.trim()) {
+              get().updateMessage(streamAssistantMessageId, {
+                content: msg,
+                status: 'error',
+              }, { persist: false, touchSession: false })
+              renderedOnAssistantMessage = true
+            }
           }
-          get().addMessage(systemMessage)
+          if (!renderedOnAssistantMessage) {
+            const systemMessage: Omit<ChatMessage, 'id'> = {
+              role: 'system',
+              content: msg,
+              timestamp: new Date(),
+              status: 'error',
+            }
+            get().addMessage(systemMessage)
+          }
           set({ error: '发送消息失败' })
           logger.error('ChatStore', 'sendMessage failed', { error })
         } finally {

@@ -47,7 +47,7 @@ import json
 import os
 import threading
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from pathlib import Path
 import logging
 

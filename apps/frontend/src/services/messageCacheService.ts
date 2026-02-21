@@ -111,6 +111,8 @@
  * - **便捷函数**: cacheSession, cacheMessage, getCachedSessions, getCachedSession, getCachedMessages, syncMessages, clearCache, getCacheStats, addSyncEventListener, removeSyncEventListener, retryFailedMessages
  */
 
+import logger from '@/lib/logger'
+
 export interface CachedMessage {
   id: string
   sessionId: string
@@ -174,6 +176,11 @@ const DB_VERSION = 1
 const SESSIONS_STORE = 'sessions'
 const MESSAGES_STORE = 'messages'
 const SYNC_QUEUE_STORE = 'syncQueue'
+const CACHE_LOG_CONTEXT = 'MessageCacheService'
+
+const logCacheError = (message: string, error?: unknown, extra?: unknown) => {
+  logger.error(CACHE_LOG_CONTEXT, message, error, extra)
+}
 
 /**
  * IndexedDB 工具类
@@ -199,7 +206,7 @@ class IndexedDBHelper {
       const request = indexedDB.open(DB_NAME, DB_VERSION)
 
       request.onerror = () => {
-        console.error('IndexedDB open error:', request.error)
+        logCacheError('IndexedDB open error', request.error)
         reject(request.error)
       }
 
@@ -260,7 +267,7 @@ class IndexedDBHelper {
         request.onerror = () => reject(request.error)
       })
     } catch (error) {
-      console.error('IndexedDB getAllSessions error:', error)
+      logCacheError('IndexedDB getAllSessions error', error)
       return []
     }
   }
@@ -288,7 +295,7 @@ class IndexedDBHelper {
         request.onerror = () => reject(request.error)
       })
     } catch (error) {
-      console.error('IndexedDB saveSession error:', error)
+      logCacheError('IndexedDB saveSession error', error)
     }
   }
 
@@ -320,7 +327,7 @@ class IndexedDBHelper {
         request.onerror = () => reject(request.error)
       })
     } catch (error) {
-      console.error('IndexedDB getMessagesBySession error:', error)
+      logCacheError('IndexedDB getMessagesBySession error', error)
       return []
     }
   }
@@ -346,7 +353,7 @@ class IndexedDBHelper {
         request.onerror = () => reject(request.error)
       })
     } catch (error) {
-      console.error('IndexedDB saveMessage error:', error)
+      logCacheError('IndexedDB saveMessage error', error)
     }
   }
 
@@ -374,7 +381,7 @@ class IndexedDBHelper {
         request.onerror = () => reject(request.error)
       })
     } catch (error) {
-      console.error('IndexedDB getPendingMessages error:', error)
+      logCacheError('IndexedDB getPendingMessages error', error)
       return []
     }
   }
@@ -394,7 +401,7 @@ class IndexedDBHelper {
         request.onerror = () => reject(request.error)
       })
     } catch (error) {
-      console.error('IndexedDB addToSyncQueue error:', error)
+      logCacheError('IndexedDB addToSyncQueue error', error)
     }
   }
 
@@ -413,7 +420,7 @@ class IndexedDBHelper {
         request.onerror = () => reject(request.error)
       })
     } catch (error) {
-      console.error('IndexedDB removeFromSyncQueue error:', error)
+      logCacheError('IndexedDB removeFromSyncQueue error', error)
     }
   }
 
@@ -435,7 +442,7 @@ class IndexedDBHelper {
         request.onerror = () => reject(request.error)
       })
     } catch (error) {
-      console.error('IndexedDB getSyncQueue error:', error)
+      logCacheError('IndexedDB getSyncQueue error', error)
       return []
     }
   }
@@ -473,7 +480,7 @@ class IndexedDBHelper {
         transaction.onerror = () => reject(transaction.error)
       })
     } catch (error) {
-      console.error('IndexedDB deleteSession error:', error)
+      logCacheError('IndexedDB deleteSession error', error)
     }
   }
 
@@ -497,7 +504,7 @@ class IndexedDBHelper {
         transaction.onerror = () => reject(transaction.error)
       })
     } catch (error) {
-      console.error('IndexedDB clearAll error:', error)
+      logCacheError('IndexedDB clearAll error', error)
     }
   }
 
@@ -563,7 +570,7 @@ class MessageCacheService {
       try {
         listener(event)
       } catch (error) {
-        console.error('Sync event listener error:', error)
+        logCacheError('Sync event listener error', error)
       }
     })
   }
@@ -598,7 +605,7 @@ class MessageCacheService {
 
       return { sessions: processedSessions, syncQueue }
     } catch (error) {
-      console.error('Failed to load cached data:', error)
+      logCacheError('Failed to load cached data', error)
       return { sessions: [], syncQueue: [] }
     }
   }
@@ -615,7 +622,7 @@ class MessageCacheService {
       localStorage.setItem(this.cacheKey, JSON.stringify(sessions))
       localStorage.setItem(this.syncQueueKey, JSON.stringify(syncQueue))
     } catch (error) {
-      console.error('Failed to save cached data:', error)
+      logCacheError('Failed to save cached data', error)
     }
   }
 
@@ -632,7 +639,9 @@ class MessageCacheService {
 
     // 使用 IndexedDB 存储
     if (this.useIndexedDB) {
-      indexedDBHelper.saveSession(sessionWithVersion).catch(console.error)
+      indexedDBHelper.saveSession(sessionWithVersion).catch((error) => {
+        logCacheError('IndexedDB saveSession async error', error)
+      })
     }
 
     // 同时保存到 localStorage 作为备份
@@ -661,11 +670,15 @@ class MessageCacheService {
 
     // 使用 IndexedDB 存储
     if (this.useIndexedDB) {
-      indexedDBHelper.saveMessage(fullMessage).catch(console.error)
+      indexedDBHelper.saveMessage(fullMessage).catch((error) => {
+        logCacheError('IndexedDB saveMessage async error', error)
+      })
 
       // 如果是待发送消息，加入同步队列
       if (message.status === 'pending') {
-        indexedDBHelper.addToSyncQueue(fullMessage.id).catch(console.error)
+        indexedDBHelper.addToSyncQueue(fullMessage.id).catch((error) => {
+          logCacheError('IndexedDB addToSyncQueue async error', error, { messageId: fullMessage.id })
+        })
       }
     }
 
@@ -674,7 +687,7 @@ class MessageCacheService {
     const sessionIndex = sessions.findIndex(s => s.id === sessionId)
 
     if (sessionIndex < 0) {
-      console.warn('Session not found for caching message:', sessionId)
+      logger.warn('Session not found for caching message', { sessionId })
       return
     }
 
@@ -895,11 +908,13 @@ class MessageCacheService {
 
         // 同时更新 IndexedDB
         if (this.useIndexedDB) {
-          indexedDBHelper.removeFromSyncQueue(message.id).catch(console.error)
+          indexedDBHelper.removeFromSyncQueue(message.id).catch((error) => {
+            logCacheError('IndexedDB removeFromSyncQueue async error', error, { messageId: message.id })
+          })
         }
 
       } catch (error) {
-        console.error(`Failed to sync message ${message.id}:`, error)
+        logCacheError(`Failed to sync message ${message.id}`, error)
 
         // 更新重试次数
         const sessionIndex = updatedSessions.findIndex(s => s.id === sessionId)
@@ -1054,7 +1069,9 @@ class MessageCacheService {
 
     // 同时清空 IndexedDB
     if (this.useIndexedDB) {
-      indexedDBHelper.clearAll().catch(console.error)
+      indexedDBHelper.clearAll().catch((error) => {
+        logCacheError('IndexedDB clearAll async error', error)
+      })
     }
   }
 
@@ -1091,7 +1108,7 @@ class MessageCacheService {
         const syncQueueData = localStorage.getItem(this.syncQueueKey)
         cacheSize = (cacheData?.length || 0) + (syncQueueData?.length || 0)
       } catch (error) {
-        console.error('Failed to calculate cache size:', error)
+        logCacheError('Failed to calculate cache size', error)
       }
     }
 

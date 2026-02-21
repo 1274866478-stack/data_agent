@@ -40,7 +40,7 @@
 **依赖深度**: 2层
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
@@ -52,8 +52,7 @@ from src.app.core.config_validator import (
     validate_key_strength
 )
 from src.app.core.config_audit import (
-    generate_audit_report,
-    get_audit_history
+    generate_audit_report
 )
 from src.app.core.key_rotation import (
     key_rotation_manager,

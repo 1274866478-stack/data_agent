@@ -87,7 +87,7 @@ import io
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, BackgroundTasks
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from src.app.data.database import get_db, SessionLocal
 from src.app.data.models import DocumentStatus
@@ -247,8 +247,8 @@ async def get_document(
 
 @router.post("/upload", response_model=DocumentResponse, summary="上传文档", status_code=status.HTTP_201_CREATED)
 async def upload_document(
-    file: UploadFile = File(..., description="??????????????DF??ord??"),
     background_tasks: BackgroundTasks,
+    file: UploadFile = File(..., description="??????????????DF??ord??"),
     db: Session = Depends(get_db)
 ) -> DocumentResponse:
     """

@@ -1,4 +1,6 @@
 import { API_BASE_URL } from '@/lib/api-client'
+import { responseErrorMessage } from '@/lib/api-error'
+import { getStoredAuthToken } from '@/lib/auth-token'
 import type {
   ConnectionTestRequest,
   CreateDataSourceRequest,
@@ -7,27 +9,19 @@ import type {
 } from '@/types/api/dataSource'
 import type { BulkOperationResult, DataSourceConnection, TestResult } from '@/types/store/dataSource'
 
-const getAuthToken = (): string | null => {
-  if (typeof window !== 'undefined') {
-    return localStorage.getItem('auth_token')
-  }
-  return null
-}
-
 const requestJson = async <T>(endpoint: string, options: RequestInit = {}): Promise<T> => {
-  const token = getAuthToken()
+  const token = getStoredAuthToken()
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
   })
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`)
+    throw new Error(await responseErrorMessage(response, `HTTP ${response.status}: ${response.statusText}`))
   }
 
   return response.json()
@@ -55,18 +49,17 @@ export const dataSourceService = {
         formData.append('db_type', data.db_type)
       }
 
-      const token = getAuthToken()
+      const token = getStoredAuthToken()
       const response = await fetch(`${API_BASE_URL}/data-sources/upload?tenant_id=${tenantId}`, {
         method: 'POST',
         headers: {
-          ...(token && { Authorization: `Bearer ${token}` }),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: formData,
       })
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`)
+        throw new Error(await responseErrorMessage(response, `HTTP ${response.status}: ${response.statusText}`))
       }
 
       return response.json()

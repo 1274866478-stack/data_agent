@@ -64,9 +64,8 @@
 from minio import Minio
 from minio.error import S3Error
 from typing import Optional, BinaryIO
-import io
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from src.app.core.config import settings
 
@@ -94,7 +93,7 @@ class MinIOService:
         try:
             # 尝试列出存储桶来验证连接
             self.client.list_buckets()
-            logger.info("MinIO connection: OK")
+            logger.debug("MinIO connection: OK")
             return True
         except Exception as e:
             logger.error(f"MinIO connection failed: {e}")
@@ -129,7 +128,7 @@ class MinIOService:
             self.create_bucket(bucket_name)
 
             # 上传文件
-            result = self.client.put_object(
+            self.client.put_object(
                 bucket_name=bucket_name,
                 object_name=object_name,
                 data=file_data,

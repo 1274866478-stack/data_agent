@@ -47,11 +47,11 @@
 **依赖深度**: 直接依赖 database.py；被所有服务层和API层依赖
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Enum, BigInteger, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, timezone
 import uuid
 import enum

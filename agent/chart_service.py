@@ -74,7 +74,7 @@
 **依赖深度**: 直接依赖 2 层（pyecharts, snapshot-selenium）
 """
 import os
-from typing import List, Tuple, Optional, Any
+from typing import List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 

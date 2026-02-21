@@ -1,107 +1,16 @@
 /**
- * # [FILE_UPLOAD_SERVICE] 文件上传服务
+ * 文件上传服务（文档域）
  *
- * ## [MODULE]
- * **文件名**: fileUploadService.ts
- * **职责**: Story 2.4性能优化 - 支持分块上传和常规上传，与后端API集成，进度跟踪
- * **作者**: Data Agent Team
- * **版本**: 1.0.0
- * **变更记录**:
- * - v1.0.0 (2026-01-01): 初始版本 - 文件上传服务
- *
- * ## [INPUT]
- * - **file: File** - 要上传的文件
- * - **onProgress?: (progress: UploadProgress) => void** - 进度回调函数
- * - **preferChunked?: boolean** - 是否优先使用分块上传（默认false）
- * - **sessionId: string** - 上传会话ID
- *
- * ## [OUTPUT]
- * - **UploadResult**: 上传结果
- *   - success: boolean - 是否成功
- *   - document?: any - 文档信息
- *   - message?: string - 成功消息
- *   - error?: string - 错误信息
- * - **UploadProgress**: 上传进度
- *   - loaded: number - 已上传字节数
- *   - total: number - 总字节数
- *   - percentage: number - 百分比（0-100）
- *   - status: 'pending' | 'uploading' | 'processing' | 'completed' | 'error'
- *   - message?: string - 状态消息
- *
- * **上游依赖**:
- * - 无（独立服务）
- *
- * **下游依赖**:
- * - 无（Service是叶子服务模块）
- *
- * **调用方**:
- * - [../components/documents/DocumentUpload.tsx](../components/documents/DocumentUpload.tsx) - 文档上传组件
- * - [../store/documentStore](../store/documentStore.ts) - 文档Store调用uploadFile
- *
- * ## [STATE]
- * - **上传方式选择**:
- *   - 常规上传（XMLHttpRequest）: 文件≤10MB或preferChunked=false
- *   - 分块上传（fetch + FormData）: 文件>10MB或preferChunked=true
- * - **支持的文件类型**:
- *   - MIME类型: application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/msword
- *   - 扩展名: .pdf, .docx, .doc
- * - **文件大小限制**: 最大100MB
- * - **分块上传流程**:
- *   1. initializeChunkedUpload() - 初始化上传会话（POST /upload/initialize）
- *   2. uploadChunk() - 上传单个分块（POST /upload/chunk/{sessionId}/{chunkNumber}）
- *   3. completeChunkedUpload() - 完成上传（POST /upload/complete/{sessionId}）
- * - **常规上传流程**:
- *   - XMLHttpRequest上传（POST /documents/upload）
- *   - progress事件监听上传进度
- *   - load事件处理响应
- * - **进度回调**:
- *   - pending: 初始化阶段
- *   - uploading: 上传中（更新percentage）
- *   - processing: 处理中
- *   - completed: 上传完成
- *   - error: 上传失败
- * - **认证**: localStorage.getItem('token')获取Bearer token
- * - **校验和**: calculateFileChecksum()简化实现（32位hex）
- * - **分块计算**: file.slice(offset, end)切片
- *
- * ## [SIDE-EFFECTS]
- * - **HTTP请求**:
- *   - fetch()调用分块上传API
- *   - XMLHttpRequest调用常规上传API
- * - **FormData**: new FormData()包装文件和分块数据
- *   - **fetch**:
- *     - POST /upload/initialize（初始化）
- *     - POST /upload/chunk/{sessionId}/{chunkNumber}（上传分块）
- *     - POST /upload/complete/{sessionId}（完成上传）
- *     - GET /upload/status/{sessionId}（获取状态）
- *     - DELETE /upload/abort/{sessionId}（取消上传）
- *   - **XMLHttpRequest**:
- *     - POST /documents/upload（常规上传）
- *     - upload.progress事件监听进度
- *     - load/error/abort事件处理结果
- * - **localStorage**: localStorage.getItem('token')获取认证令牌
- * - **文件操作**:
- *   - file.name.lastIndexOf('.')提取扩展名
- *   - file.name.toLowerCase()转换小写
- *   - file.size检查文件大小
- *   - file.slice(offset, end)切片
- *   - file.arrayBuffer()读取文件内容
- * - **回调函数**: onProgress({loaded, total, percentage, status, message})更新进度
- * - **分块逻辑**:
- *   - for循环遍历分块（offset += chunkSize）
- *   - Math.min(offset + chunkSize, file.size)计算结束位置
- *   - chunks数组存储所有分块
- * - **进度计算**:
- *   - Math.round((loaded / file.size) * 100)计算百分比
- *   - Math.min((i + 1) * chunkSize, file.size)计算已上传字节数
- * - **try-catch**: 捕获网络错误和JSON解析错误
- * - **response.ok**: 检查HTTP状态码
- * - **异常处理**: try-catch捕获fetch和XMLHttpRequest错误，返回UploadResult（success=false）
- * - **单例模式**: fileUploadService全局实例
- * - **便捷函数**: uploadFile, getUploadStatus, abortUpload
+ * 设计点：
+ * - 自动选择普通上传 / 分块上传
+ * - 统一认证头（兼容 auth_token / token）
+ * - 统一 API 错误解析
+ * - 统一上传进度回调
  */
 
 import { API_BASE_URL } from '@/lib/api-client'
+import { responseErrorMessage, extractApiErrorMessage } from '@/lib/api-error'
+import { getStoredAuthToken } from '@/lib/auth-token'
 
 export interface UploadProgress {
   loaded: number
@@ -141,12 +50,9 @@ class FileUploadService {
   private getAuthHeaders(): Record<string, string> {
     const headers: Record<string, string> = {}
 
-    // 从 localStorage 获取 token
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('token')
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`
-      }
+    const token = getStoredAuthToken()
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
     }
 
     return headers
@@ -170,21 +76,13 @@ class FileUploadService {
   /**
    * 检查文件大小是否在限制范围内
    */
-  isFileSizeValid(file: File): boolean {
+  private getFileTypeMaxSize(file: File): number {
     const extension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'))
-    const maxSize = extension === '.docx' ? 25 * 1024 * 1024 : 50 * 1024 * 1024
-    return file.size <= maxSize
+    return extension === '.docx' ? 25 * 1024 * 1024 : 50 * 1024 * 1024
   }
 
-  /**
-   * 计算文件校验和
-   */
-  private async calculateFileChecksum(file: File): Promise<string> {
-    // 简化实现，实际应用中应该使用更强的哈希算法
-    const buffer = await file.arrayBuffer()
-    const hashArray = Array.from(new Uint8Array(buffer))
-    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-    return hashHex.substring(0, 32) // 简化为32位
+  isFileSizeValid(file: File): boolean {
+    return file.size <= this.getFileTypeMaxSize(file)
   }
 
   /**
@@ -201,8 +99,7 @@ class FileUploadService {
     })
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      throw new Error(errorData.detail || '初始化上传失败')
+      throw new Error(await responseErrorMessage(response, '初始化上传失败'))
     }
 
     const data = await response.json()
@@ -238,8 +135,7 @@ class FileUploadService {
     )
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      throw new Error(errorData.detail || `分块 ${chunkNumber} 上传失败`)
+      throw new Error(await responseErrorMessage(response, `分块 ${chunkNumber} 上传失败`))
     }
   }
 
@@ -253,10 +149,9 @@ class FileUploadService {
     })
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
       return {
         success: false,
-        error: errorData.detail || '完成上传失败',
+        error: await responseErrorMessage(response, '完成上传失败'),
       }
     }
 
@@ -286,16 +181,8 @@ class FileUploadService {
       })
 
       const session = await this.initializeChunkedUpload(file)
-
-      // 分块上传
-      const chunks: Blob[] = []
       const chunkSize = session.chunkSize
-
-      for (let offset = 0; offset < file.size; offset += chunkSize) {
-        const end = Math.min(offset + chunkSize, file.size)
-        const chunk = file.slice(offset, end)
-        chunks.push(chunk)
-      }
+      const totalChunks = session.totalChunks
 
       onProgress?.({
         loaded: 0,
@@ -305,11 +192,14 @@ class FileUploadService {
         message: '开始上传...',
       })
 
-      // 上传所有分块
-      for (let i = 0; i < chunks.length; i++) {
-        await this.uploadChunk(session.sessionId, i + 1, chunks[i])
+      // 流式切片上传，避免一次性持有全部分块
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        const offset = chunkIndex * chunkSize
+        const end = Math.min(offset + chunkSize, file.size)
+        const chunk = file.slice(offset, end)
+        await this.uploadChunk(session.sessionId, chunkIndex + 1, chunk)
 
-        const loaded = Math.min((i + 1) * chunkSize, file.size)
+        const loaded = Math.min((chunkIndex + 1) * chunkSize, file.size)
         const percentage = Math.round((loaded / file.size) * 100)
 
         onProgress?.({
@@ -431,17 +321,18 @@ class FileUploadService {
         } else {
           try {
             const errorData = JSON.parse(xhr.responseText)
+            const message = extractApiErrorMessage(errorData, '上传失败')
             onProgress?.({
               loaded: 0,
               total: file.size,
               percentage: 0,
               status: 'error',
-              message: errorData.detail || '上传失败',
+              message,
             })
 
             resolve({
               success: false,
-              error: errorData.detail || '上传失败',
+              error: message,
             })
           } catch {
             onProgress?.({
@@ -530,9 +421,10 @@ class FileUploadService {
     }
 
     if (!this.isFileSizeValid(file)) {
+      const maxSizeMb = Math.floor(this.getFileTypeMaxSize(file) / (1024 * 1024))
       return {
         success: false,
-        error: '文件大小超出限制，最大允许 100MB',
+        error: `文件大小超出限制，最大允许 ${maxSizeMb}MB`,
       }
     }
 

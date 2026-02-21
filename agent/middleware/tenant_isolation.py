@@ -18,7 +18,7 @@ import os
 import re
 import logging
 from typing import Any, Dict, Optional, Callable, Awaitable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -124,8 +124,6 @@ def has_tenant_id_filter(sql: str) -> bool:
     Returns:
         True 如果已存在有效的 tenant_id 过滤条件
     """
-    sql_upper = sql.upper()
-
     # 策略 1: 使用更精确的正则表达式
     # 匹配: WHERE/AND/OR + tenant_id + =，但要排除以下情况：
     # - 字符串字面量中的 'tenant_id'
@@ -215,7 +213,7 @@ def inject_tenant_filter(sql: str, tenant_id: str) -> str:
     if not _is_safe_tenant_id(tenant_id):
         error_msg = f"[SECURITY] Unsafe tenant_id rejected: {tenant_id[:50]}..."
         logger.error(error_msg)
-        raise ValueError(f"Unsafe tenant_id: contains invalid characters or injection patterns")
+        raise ValueError("Unsafe tenant_id: contains invalid characters or injection patterns")
 
     # 🔒 SQL 转义：转义 tenant_id 中的特殊字符
     escaped_tenant_id = _escape_sql_string(tenant_id)
@@ -341,7 +339,7 @@ class TenantIsolationMiddleware(AgentMiddleware):
 
     使用示例:
     ```python
-    from AgentV2.middleware import TenantIsolationMiddleware
+    from agent.middleware import TenantIsolationMiddleware
 
     middleware = TenantIsolationMiddleware(tenant_id="tenant_123")
     agent_input = middleware.pre_process({"messages": [...]})

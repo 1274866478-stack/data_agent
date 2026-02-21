@@ -76,8 +76,6 @@ from datetime import datetime
 import logging
 import uuid
 import os
-import tempfile
-import json
 
 from src.app.data.database import get_db
 from src.app.data.models import DataSourceConnection, Tenant, DataSourceConnectionStatus, TenantStatus
@@ -312,7 +310,6 @@ async def upload_data_source(
             )
         
         # 尝试上传到 MinIO（可选，不影响主流程）
-        minio_upload_success = False
         try:
             upload_success = minio_service.upload_file(
                 bucket_name="data-sources",
@@ -322,7 +319,6 @@ async def upload_data_source(
                 content_type=file.content_type or "application/octet-stream"
             )
             if upload_success:
-                minio_upload_success = True
                 logger.info(f"✅ 文件已同时上传到MinIO: {storage_path}")
         except Exception as e:
             logger.warning(f"⚠️ MinIO上传失败（不影响主流程）: {e}")
@@ -679,7 +675,7 @@ async def _create_database_if_not_exists(connection_string: str, db_type: str) -
     # 在 Docker 容器内，localhost 指向容器自己，需要使用 host.docker.internal 访问宿主机
     if host in ("localhost", "127.0.0.1"):
         host = "host.docker.internal"
-        logger.info(f"Docker环境: 检测到localhost，自动替换为 host.docker.internal")
+        logger.info("Docker环境: 检测到localhost，自动替换为 host.docker.internal")
 
     # 连接到 postgres 默认数据库来创建新数据库
     master_connection_string = f"postgresql://{user}:{password}@{host}:{port}/postgres"
@@ -743,12 +739,11 @@ async def create_data_source(
     # 最终使用的连接字符串和类型（可能会被修改）
     final_connection_string = request.connection_string
     final_db_type = request.db_type
-    conversion_metadata = None
 
     try:
         # 🆕 Excel 文件自动转换为 SQLite
         if request.db_type in ["xlsx", "xls"]:
-            logger.info(f"📊 检测到 Excel 文件，开始自动转换为 SQLite...")
+            logger.info("📊 检测到 Excel 文件，开始自动转换为 SQLite...")
 
             from src.app.domains.data_sources.tools import get_excel_to_sqlite_service
 
@@ -765,9 +760,8 @@ async def create_data_source(
                 # 使用 SQLite 连接字符串
                 final_connection_string = excel_service.get_sqlite_connection_string(sqlite_db_path)
                 final_db_type = "sqlite"
-                conversion_metadata = metadata
 
-                logger.info(f"✅ Excel 转换成功:")
+                logger.info("✅ Excel 转换成功:")
                 logger.info(f"  - SQLite 路径: {sqlite_db_path}")
                 logger.info(f"  - 表数量: {metadata.get('total_tables')}")
                 logger.info(f"  - 总行数: {metadata.get('total_rows')}")
@@ -1058,7 +1052,7 @@ async def delete_data_source(
                 except Exception as e:
                     # SQLite 文件删除失败不应阻止数据源删除
                     logger.warning(f"Failed to delete SQLite file for data source {connection_id}: {e}")
-                    logger.warning(f"Proceeding with data source deletion anyway...")
+                    logger.warning("Proceeding with data source deletion anyway...")
 
         # 执行数据源软删除
         success = await data_source_service.delete_data_source(
@@ -1524,7 +1518,7 @@ def _validate_and_parse_date_range(date_from: Optional[str], date_to: Optional[s
                 detail="Invalid date range: start date cannot be after end date"
             )
 
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid date format. Use ISO format."

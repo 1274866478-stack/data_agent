@@ -19,7 +19,7 @@ import json
 import logging
 import traceback
 from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from enum import Enum
@@ -93,7 +93,7 @@ class ErrorTracker:
 
     使用示例:
     ```python
-    from AgentV2.middleware import ErrorTracker
+    from agent.middleware import ErrorTracker
 
     tracker = ErrorTracker(log_file="agent_errors.jsonl")
 
@@ -308,7 +308,7 @@ class ErrorTrackerMiddleware:
 
     使用示例:
     ```python
-    from AgentV2.middleware import ErrorTrackerMiddleware
+    from agent.middleware import ErrorTrackerMiddleware
 
     middleware = ErrorTrackerMiddleware(
         tenant_id="tenant_123"

@@ -17,7 +17,7 @@ Data Validator - 数据验证层
 
 import json
 import logging
-from typing import Any, Optional, Dict, List, Tuple
+from typing import Any, Optional, Dict, Tuple
 
 logger = logging.getLogger(__name__)
 

@@ -108,7 +108,6 @@ class ChromaDBService:
     def client(self):
         """延迟初始化ChromaDB客户端"""
         # 🔥 第一步修复：检查是否启用RAG
-        from src.app.core.config import settings
         if not getattr(settings, 'enable_rag', False):
             raise RuntimeError("RAG功能已禁用，无法使用ChromaDB")
             
@@ -130,7 +129,6 @@ class ChromaDBService:
         检查ChromaDB连接状态
         """
         # 🔥 第一步修复：检查是否启用RAG
-        from src.app.core.config import settings
         if not getattr(settings, 'enable_rag', False):
             logger.debug("RAG功能已禁用，跳过ChromaDB连接检查")
             return False
@@ -144,7 +142,7 @@ class ChromaDBService:
             # 因为HttpClient通常有默认超时设置
             heartbeat = self.client.heartbeat()
             if heartbeat:
-                logger.info("ChromaDB connection: OK")
+                logger.debug("ChromaDB connection: OK")
                 return True
             else:
                 logger.warning("ChromaDB connection failed: No heartbeat")
@@ -171,7 +169,7 @@ class ChromaDBService:
                 # 集合不存在，创建新集合
                 pass
 
-            collection = self.client.create_collection(
+            self.client.create_collection(
                 name=full_collection_name,
                 embedding_function=self.embedding_function,
                 metadata={"tenant_id": tenant_id} if tenant_id else {}
@@ -223,7 +221,6 @@ class ChromaDBService:
         在集合中查询文档
         """
         # 🔥 第一步修复：检查是否启用RAG，如果未启用则直接返回空结果
-        from src.app.core.config import settings
         if not getattr(settings, 'enable_rag', False):
             logger.debug("RAG功能已禁用，返回空查询结果")
             return None

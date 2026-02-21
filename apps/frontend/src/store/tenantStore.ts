@@ -80,6 +80,9 @@
 
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
+import { API_BASE_URL } from '@/lib/api-client'
+import { responseErrorMessage } from '@/lib/api-error'
+import { getStoredAuthToken } from '@/lib/auth-token'
 
 // 租户状态类型定义
 export interface Tenant {
@@ -143,28 +146,27 @@ class TenantAPI {
   private baseURL: string
 
   constructor() {
-    this.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'
+    this.baseURL = API_BASE_URL
   }
 
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
-    const token = localStorage.getItem('auth_token')
+    const token = getStoredAuthToken()
     const url = `${this.baseURL}${endpoint}`
 
     const response = await fetch(url, {
       headers: {
         'Content-Type': 'application/json',
-        ...(token && { Authorization: `Bearer ${token}` }),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...options.headers,
       },
       ...options,
     })
 
     if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.detail || `HTTP error! status: ${response.status}`)
+      throw new Error(await responseErrorMessage(response, `HTTP error! status: ${response.status}`))
     }
 
     return response.json()

@@ -1,10 +1,13 @@
 import asyncio
+import json
+import time
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional, List
 
 import structlog
 
 from src.app.data.models import QueryStatus, QueryType
+from src.app.schemas.query import QueryRequest, QueryResponseV3
 from src.app.shared.llm import llm_service
 
 logger = structlog.get_logger(__name__)
@@ -315,46 +318,46 @@ class QueryService:
             str: 解释性日志
         """
         log_lines = [
-            f"# 查询推理路径",
-            f"",
-            f"## 1. 查询分析",
+            "# 查询推理路径",
+            "",
+            "## 1. 查询分析",
             f"- 原始问题: {question}",
             f"- 识别的查询类型: {query_type.value}",
-            f"",
-            f"## 2. 数据源评估",
+            "",
+            "## 2. 数据源评估",
             f"- 可用数据源数量: {len(data_sources)}",
             f"- 可用文档数量: {len(documents)}",
         ]
 
         if data_sources:
             log_lines.extend([
-                f"- 数据源列表:",
+                "- 数据源列表:",
             ])
             for ds in data_sources[:3]:  # 最多显示3个
                 log_lines.append(f"  * {ds.name} ({ds.connection_type})")
 
         if documents:
             log_lines.extend([
-                f"- 相关文档列表:",
+                "- 相关文档列表:",
             ])
             for doc in documents[:3]:  # 最多显示3个
                 log_lines.append(f"  * {doc.title}")
 
         log_lines.extend([
-            f"",
-            f"## 3. 处理策略",
-            f"- 基于查询类型选择处理策略",
-            f"- 整合多源数据进行综合分析",
-            f"",
-            f"## 4. 推理过程",
-            f"- 使用LLM进行语义理解和答案生成",
-            f"- 确保答案基于可用的数据和文档",
-            f"- 提供详细的推理过程和引用信息",
-            f"",
-            f"## 5. 答案生成",
-            f"- 综合所有信息生成最终答案",
-            f"- 确保答案的准确性和可解释性",
-            f"",
+            "",
+            "## 3. 处理策略",
+            "- 基于查询类型选择处理策略",
+            "- 整合多源数据进行综合分析",
+            "",
+            "## 4. 推理过程",
+            "- 使用LLM进行语义理解和答案生成",
+            "- 确保答案基于可用的数据和文档",
+            "- 提供详细的推理过程和引用信息",
+            "",
+            "## 5. 答案生成",
+            "- 综合所有信息生成最终答案",
+            "- 确保答案的准确性和可解释性",
+            "",
             f"生成时间: {datetime.utcnow().isoformat()}"
         ])
 
@@ -527,7 +530,7 @@ async def handle_chart_merge_request(
         )
 
         logger.info(
-            f"📊 [图表合并] 处理完成",
+            "📊 [图表合并] 处理完成",
             tenant_id=tenant.id,
             processing_time_ms=processing_time_ms
         )
@@ -557,15 +560,3 @@ async def handle_chart_merge_request(
             execution_result=None,
             correction_attempts=0
         )
-
-
-# 创建查询服务的依赖注入
-async def get_query_service(
-    tenant=Depends(get_current_tenant_from_request),
-    user_info: Dict[str, Any] = Depends(get_current_user_info_from_request),
-    db: Session = Depends(get_db)
-) -> QueryService:
-    """获取查询服务实例"""
-    user_id = user_info["user_id"]
-    query_context = QueryContextService.create(db, tenant.id, user_id)
-    return QueryService(query_context)

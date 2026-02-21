@@ -51,6 +51,9 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { API_BASE_URL } from '@/lib/api-client'
+import { clearStoredAuthToken, setStoredAuthToken } from '@/lib/auth-token'
+import logger from '@/lib/logger'
 
 interface User {
   id: string
@@ -95,19 +98,13 @@ export const useAuthStore = create<AuthState>()(
       setUser: (user) => set({ user, isAuthenticated: !!user }),
       setToken: (token) => {
         set({ token })
-        // 同时保存到localStorage的auth_token key，供API客户端使用
-        if (typeof window !== 'undefined') {
-          if (token) {
-            localStorage.setItem('auth_token', token)
-          } else {
-            localStorage.removeItem('auth_token')
-          }
-        }
+        setStoredAuthToken(token)
       },
       setLoading: (loading) => set({ loading }),
       setError: (error) => set({ error }),
 
       logout: () => {
+        clearStoredAuthToken()
         set({
           user: null,
           token: null,
@@ -127,7 +124,7 @@ export const useAuthStore = create<AuthState>()(
           }
 
           // 验证token有效性
-          const response = await fetch('/api/v1/auth/verify', {
+          const response = await fetch(`${API_BASE_URL}/auth/verify`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -139,7 +136,7 @@ export const useAuthStore = create<AuthState>()(
             const data = await response.json()
             if (data.valid && data.user_info) {
               // 获取完整用户信息
-              const userResponse = await fetch('/api/v1/auth/me', {
+              const userResponse = await fetch(`${API_BASE_URL}/auth/me`, {
                 headers: {
                   'Authorization': `Bearer ${token}`,
                   'Content-Type': 'application/json',
@@ -159,7 +156,7 @@ export const useAuthStore = create<AuthState>()(
             logout()
           }
         } catch (error) {
-          console.error('Auth check failed:', error)
+          logger.error('AuthStore', 'auth check failed', error)
           logout()
         } finally {
           setLoading(false)
@@ -175,7 +172,7 @@ export const useAuthStore = create<AuthState>()(
         }
 
         try {
-          const response = await fetch('/api/v1/auth/me', {
+          const response = await fetch(`${API_BASE_URL}/auth/me`, {
             headers: {
               'Authorization': `Bearer ${token}`,
               'Content-Type': 'application/json',
@@ -190,7 +187,7 @@ export const useAuthStore = create<AuthState>()(
             setError('Failed to refresh user information')
           }
         } catch (error) {
-          console.error('Failed to refresh user info:', error)
+          logger.error('AuthStore', 'refresh user info failed', error)
           setError('Network error while refreshing user information')
         }
       },

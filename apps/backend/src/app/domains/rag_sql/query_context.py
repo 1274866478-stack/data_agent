@@ -97,12 +97,11 @@
 **依赖深度**: 依赖项目模型和中间件
 """
 
-import asyncio
-from typing import Dict, Any, Optional, List, ContextManager
+from typing import Dict, Any, Optional, List
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_
 
 from src.app.data.models import (
     Tenant,
@@ -112,7 +111,7 @@ from src.app.data.models import (
     QueryLog,
     QueryStatus,
 )
-from src.app.middleware.tenant_context import get_current_tenant_id, get_current_tenant
+from src.app.middleware.tenant_context import get_current_tenant_id
 from src.app.core.config import get_settings
 import structlog
 

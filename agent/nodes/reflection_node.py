@@ -19,17 +19,13 @@ import json
 import re
 import logging
 from dataclasses import dataclass
-from typing import Dict, Any, List, Optional, Literal, TYPE_CHECKING
+from typing import Dict, Any, Optional
 from enum import Enum
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langgraph.graph import MessagesState
 
 logger = logging.getLogger(__name__)
-
-# 类型检查时导入学习模块
-if TYPE_CHECKING:
-    from ..knowledge.knowledge_base import KnowledgeBaseService, ErrorCategory
 
 
 class ErrorCategory(str, Enum):
@@ -294,7 +290,6 @@ class ReflectionNode:
         Returns:
             反思结果
         """
-        content_lower = content.lower()
         content_stripped = content.strip()
 
         # 首先检查是否是有效的JSON响应（表示工具成功执行）
@@ -639,7 +634,7 @@ class ReflectionNode:
             return ReflectionResult(
                 success=False,
                 error_category=ErrorCategory.TYPE_MISMATCH,
-                error_message=f"趋势分析查询缺少聚合，返回了原始数据而非聚合结果",
+                error_message="趋势分析查询缺少聚合，返回了原始数据而非聚合结果",
                 fix_suggestion=f"""**趋势查询需要使用聚合！**
 
 **问题**: 用户询问"{user_question[:30]}..."这类趋势分析问题，但你使用了 `SELECT *` 返回所有原始数据。

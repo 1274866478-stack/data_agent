@@ -23,7 +23,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
-from .knowledge_base import (
+from ..knowledge.knowledge_base import (
     KnowledgeBaseService,
     create_knowledge_base
 )
@@ -80,7 +80,7 @@ class KnowledgeInjectionMiddleware:
         self.persist_directory = persist_directory
 
         # 获取知识库服务
-        self.knowledge_base = create_knowledge_base(
+        self.knowledge_base: KnowledgeBaseService = create_knowledge_base(
             tenant_id=tenant_id,
             persist_directory=persist_directory
         )

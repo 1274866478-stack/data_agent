@@ -75,7 +75,11 @@
 **模块层级**: Level 1（Agent根目录）
 **依赖深度**: 无外部依赖（仅使用Python标准库）
 """
+import logging
 from typing import List, Dict, Any, Tuple, Optional
+
+
+logger = logging.getLogger(__name__)
 
 
 def supplement_proportion_data(
@@ -113,7 +117,9 @@ def supplement_proportion_data(
 
     # 🔧 修复2: 如果是COUNT(*)但没有GROUP BY，说明是总数查询，不补全
     if has_count_star and not has_group_by:
-        print(f"[DataTransformer] 检测到COUNT(*)无GROUP BY查询（总数查询），跳过补全")
+        logger.debug(
+            "[DataTransformer] skip supplement: COUNT(*) without GROUP BY",
+        )
         return sql_result
 
     # 🔧 修复3: 如果只有一个数值列且没有类别列（单值结果），不补全
@@ -132,7 +138,9 @@ def supplement_proportion_data(
 
     # 如果只有数值列没有类别列，这是纯聚合结果，不补全
     if len(non_numeric_cols) == 0:
-        print(f"[DataTransformer] 检测到纯数值结果（无类别列），跳过补全")
+        logger.debug(
+            "[DataTransformer] skip supplement: numeric-only aggregation result",
+        )
         return sql_result
 
     # 检测是否为占比类查询
@@ -199,7 +207,10 @@ def supplement_proportion_data(
                 other_value = current_value
             else:
                 # 大数值不补全，避免数据误导
-                print(f"[DataTransformer] 数值较大({current_value})，跳过补全避免误导")
+                logger.debug(
+                    "[DataTransformer] skip supplement: large value=%s",
+                    current_value,
+                )
                 return sql_result
 
         if other_value and other_value > 0:
@@ -208,7 +219,12 @@ def supplement_proportion_data(
             for col in columns:
                 if col != category_col and col != value_col:
                     other_row[col] = row.get(col)
-            print(f"[DataTransformer] 补全其他类别: {current_category}={current_value}, 其他={other_value}")
+            logger.debug(
+                "[DataTransformer] add synthetic category: %s=%s, 其他=%s",
+                current_category,
+                current_value,
+                other_value,
+            )
             return sql_result + [other_row]
 
     return sql_result

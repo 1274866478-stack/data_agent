@@ -255,26 +255,26 @@ class SQLValidator:
                 suggested_sql = None
                 if target_location:
                     suggested_sql = (
-                        f"SELECT province, COUNT(*) as count\n"
-                        f"FROM addresses\n"
-                        f"GROUP BY province\n"
-                        f"ORDER BY count DESC;"
+                        "SELECT province, COUNT(*) as count\n"
+                        "FROM addresses\n"
+                        "GROUP BY province\n"
+                        "ORDER BY count DESC;"
                     )
 
                 return False, (
                     "⚠️ 检测到省份/城市查询使用了 users 表。"
                     "addresses 表包含完整的地理信息，请使用 addresses 表。\n\n"
-                    f"原因：users 表的 province/city 字段可能为空或不完整，"
-                    f"addresses 表才是地理位置查询的正确选择。\n\n"
-                    f"建议流程：\n"
-                    f"1. 调用 get_schema('addresses') 查看表结构\n"
-                    f"2. 使用一次 GROUP BY 查询获取所有省份/城市分布"
+                    "原因：users 表的 province/city 字段可能为空或不完整，"
+                    "addresses 表才是地理位置查询的正确选择。\n\n"
+                    "建议流程：\n"
+                    "1. 调用 get_schema('addresses') 查看表结构\n"
+                    "2. 使用一次 GROUP BY 查询获取所有省份/城市分布"
                 ), suggested_sql
 
         # 检查是否正确使用了 addresses 表（给出正面反馈）
         if "addresses" in sql_lower:
             logger = __import__('logging').getLogger(__name__)
-            logger.info(f"[TABLE_SELECTION] ✅ 正确使用 addresses 表进行地理查询")
+            logger.info("[TABLE_SELECTION] ✅ 正确使用 addresses 表进行地理查询")
 
         return True, None, None
 

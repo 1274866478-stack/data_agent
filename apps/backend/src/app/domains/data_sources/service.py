@@ -76,6 +76,7 @@ import logging
 import os
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from dataclasses import dataclass
@@ -95,6 +96,16 @@ except ImportError as e:
     encryption_service = None
 
 logger = logging.getLogger(__name__)
+
+
+DB_TYPE_POSTGRESQL = "postgresql"
+DB_TYPE_MYSQL = "mysql"
+DB_TYPE_SQLITE = "sqlite"
+EXCEL_DB_TYPES = {"xlsx", "xls", "excel"}
+DATABASE_DB_TYPES = {DB_TYPE_POSTGRESQL, DB_TYPE_MYSQL, DB_TYPE_SQLITE}
+MINIO_URI_PREFIX = "minio://"
+FILE_URI_PREFIX = "file://"
+MINIO_BUCKET_NAME = "data-sources"
 
 
 # ============================================================================
@@ -136,13 +147,47 @@ class DataSourceService:
             logger.warning("Encryption service not available")
         logger.info("Data source service initialized")
 
+    @staticmethod
+    def _inactive_status():
+        """Shared inactive status marker."""
+        return DataSourceConnectionStatus.INACTIVE
+
+    def _require_tenant_exists(self, tenant_id: str, db: Session) -> None:
+        """Ensure tenant exists before mutating data source records."""
+        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+        if not tenant:
+            raise ValueError(f"Tenant '{tenant_id}' not found")
+
+    def _find_name_conflict(
+        self,
+        tenant_id: str,
+        name: str,
+        db: Session,
+        exclude_data_source_id: Optional[str] = None,
+    ) -> Optional[DataSourceConnection]:
+        """Find conflicting active data source by tenant and name."""
+        conditions = [
+            DataSourceConnection.tenant_id == tenant_id,
+            DataSourceConnection.name == name,
+            DataSourceConnection.status != self._inactive_status(),
+        ]
+        if exclude_data_source_id:
+            conditions.append(DataSourceConnection.id != exclude_data_source_id)
+        return db.query(DataSourceConnection).filter(and_(*conditions)).first()
+
+    def _encrypt_connection_string(self, connection_string: str) -> str:
+        """Encrypt connection string via configured encryption service."""
+        if not self.encryption_service:
+            raise RuntimeError("Encryption service not available")
+        return self.encryption_service.encrypt_connection_string(connection_string)
+
     async def create_data_source(
         self,
         tenant_id: str,
         name: str,
         connection_string: str,
         db: Session,
-        db_type: str = "postgresql",
+        db_type: str = DB_TYPE_POSTGRESQL,
         host: Optional[str] = None,
         port: Optional[int] = None,
         database_name: Optional[str] = None
@@ -165,25 +210,14 @@ class DataSourceService:
         """
         logger.info(f"Creating data source '{name}' for tenant '{tenant_id}'")
 
-        # 验证租户是否存在
-        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-        if not tenant:
-            raise ValueError(f"Tenant '{tenant_id}' not found")
+        self._require_tenant_exists(tenant_id, db)
 
-        # 检查名称是否已存在（在同一租户下）
-        existing_connection = db.query(DataSourceConnection).filter(
-            and_(
-                DataSourceConnection.tenant_id == tenant_id,
-                DataSourceConnection.name == name,
-                DataSourceConnection.status != DataSourceConnectionStatus.INACTIVE
-            )
-        ).first()
+        existing_connection = self._find_name_conflict(tenant_id, name, db)
 
         if existing_connection:
             raise ValueError(f"Data source name '{name}' already exists for this tenant")
 
-        # 加密连接字符串
-        encrypted_connection_string = self.encryption_service.encrypt_connection_string(connection_string)
+        encrypted_connection_string = self._encrypt_connection_string(connection_string)
 
         # 解析连接字符串获取连接信息（如果未提供）
         if not all([host, port, database_name]):
@@ -244,7 +278,7 @@ class DataSourceService:
             query = query.filter(DataSourceConnection.status == DataSourceConnectionStatus.ACTIVE)
         else:
             # 即使选择"所有状态"，也要排除已软删除的INACTIVE状态
-            query = query.filter(DataSourceConnection.status != DataSourceConnectionStatus.INACTIVE)
+            query = query.filter(DataSourceConnection.status != self._inactive_status())
 
         connections = query.order_by(
             DataSourceConnection.created_at.desc()
@@ -314,15 +348,12 @@ class DataSourceService:
 
         # 更新字段
         if "name" in update_data:
-            # 检查新名称是否已存在（在同一租户下）
-            existing_connection = db.query(DataSourceConnection).filter(
-                and_(
-                    DataSourceConnection.tenant_id == tenant_id,
-                    DataSourceConnection.name == update_data["name"],
-                    DataSourceConnection.id != data_source_id,
-                    DataSourceConnection.status != DataSourceConnectionStatus.INACTIVE
-                )
-            ).first()
+            existing_connection = self._find_name_conflict(
+                tenant_id=tenant_id,
+                name=update_data["name"],
+                db=db,
+                exclude_data_source_id=data_source_id,
+            )
 
             if existing_connection:
                 raise ValueError(f"Data source name '{update_data['name']}' already exists for this tenant")
@@ -331,9 +362,7 @@ class DataSourceService:
 
         if "connection_string" in update_data:
             # 加密新的连接字符串
-            encrypted_string = self.encryption_service.encrypt_connection_string(
-                update_data["connection_string"]
-            )
+            encrypted_string = self._encrypt_connection_string(update_data["connection_string"])
             connection.connection_string = encrypted_string
 
             # 解析新连接字符串更新连接信息
@@ -436,9 +465,10 @@ class DataSourceService:
             解析后的连接信息
         """
         try:
-            if db_type == "postgresql":
+            normalized_db_type = (db_type or "").lower()
+            if normalized_db_type == DB_TYPE_POSTGRESQL:
                 return self._parse_postgresql_connection_string(connection_string)
-            elif db_type == "mysql":
+            if normalized_db_type == DB_TYPE_MYSQL:
                 return self._parse_mysql_connection_string(connection_string)
             else:
                 logger.warning(f"Unsupported database type for parsing: {db_type}")
@@ -447,59 +477,56 @@ class DataSourceService:
             logger.warning(f"Failed to parse connection string: {e}")
             return {}
 
+    @staticmethod
+    def _build_parsed_connection_info(parsed, default_port: int) -> Dict[str, Any]:
+        """Build normalized parsed connection info."""
+        result = {
+            "username": parsed.username or "",
+            "password": parsed.password or "",
+            "host": parsed.hostname or "",
+            "port": parsed.port or default_port,
+            "database": parsed.path.lstrip('/') if parsed.path else "",
+        }
+        if not result["host"] or not result["database"]:
+            return {}
+        return result
+
+    def _parse_database_connection_string(
+        self,
+        connection_string: str,
+        valid_schemes: List[str],
+        default_port: int,
+        db_label: str,
+    ) -> Dict[str, Any]:
+        """Generic parser for URL-style database connection strings."""
+        try:
+            parsed = urlparse(connection_string)
+            if parsed.scheme not in valid_schemes:
+                return {}
+            return self._build_parsed_connection_info(parsed, default_port)
+        except Exception as e:
+            logger.warning(f"Failed to parse {db_label} connection string: {e}")
+            return {}
+
     def _parse_postgresql_connection_string(self, connection_string: str) -> Dict[str, Any]:
         """解析PostgreSQL连接字符串"""
         # 支持格式: postgresql://username:password@host:port/database 或 postgresql://username:password@host/database
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(connection_string)
-
-            if parsed.scheme not in ['postgresql', 'postgres']:
-                return {}
-
-            result = {
-                "username": parsed.username or "",
-                "password": parsed.password or "",
-                "host": parsed.hostname or "",
-                "port": parsed.port or 5432,  # PostgreSQL 默认端口
-                "database": parsed.path.lstrip('/') if parsed.path else ""
-            }
-
-            # 验证必需字段
-            if not result["host"] or not result["database"]:
-                return {}
-
-            return result
-        except Exception as e:
-            logger.warning(f"Failed to parse PostgreSQL connection string: {e}")
-            return {}
+        return self._parse_database_connection_string(
+            connection_string=connection_string,
+            valid_schemes=[DB_TYPE_POSTGRESQL, "postgres"],
+            default_port=5432,
+            db_label="PostgreSQL",
+        )
 
     def _parse_mysql_connection_string(self, connection_string: str) -> Dict[str, Any]:
         """解析MySQL连接字符串"""
         # 支持格式: mysql://username:password@host:port/database 或 mysql://username:password@host/database
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(connection_string)
-
-            if parsed.scheme != 'mysql':
-                return {}
-
-            result = {
-                "username": parsed.username or "",
-                "password": parsed.password or "",
-                "host": parsed.hostname or "",
-                "port": parsed.port or 3306,  # MySQL 默认端口
-                "database": parsed.path.lstrip('/') if parsed.path else ""
-            }
-
-            # 验证必需字段
-            if not result["host"] or not result["database"]:
-                return {}
-
-            return result
-        except Exception as e:
-            logger.warning(f"Failed to parse MySQL connection string: {e}")
-            return {}
+        return self._parse_database_connection_string(
+            connection_string=connection_string,
+            valid_schemes=[DB_TYPE_MYSQL],
+            default_port=3306,
+            db_label="MySQL",
+        )
 
     async def get_data_source_connection_info(
         self,
@@ -536,17 +563,57 @@ class DataSourceService:
         logger.info(f"Data source type: {db_type}")
 
         # 处理 Excel 文件类型
-        if db_type in ["xlsx", "xls", "excel"]:
+        if db_type in EXCEL_DB_TYPES:
             return await self._get_excel_connection_info(connection)
 
         # 处理数据库类型
-        elif db_type in ["postgresql", "mysql", "sqlite"]:
+        elif db_type in DATABASE_DB_TYPES:
             return self._get_database_connection_info(connection)
 
         else:
             # 默认按数据库处理
             logger.warning(f"Unknown data source type '{db_type}', treating as database")
             return self._get_database_connection_info(connection)
+
+    @staticmethod
+    def _is_storage_uri(file_path: str) -> bool:
+        return file_path.startswith(MINIO_URI_PREFIX) or file_path.startswith(FILE_URI_PREFIX)
+
+    @staticmethod
+    def _strip_storage_prefix(file_path: str) -> str:
+        if file_path.startswith(MINIO_URI_PREFIX):
+            return file_path[len(MINIO_URI_PREFIX):]
+        if file_path.startswith(FILE_URI_PREFIX):
+            return file_path[len(FILE_URI_PREFIX):]
+        return file_path
+
+    @staticmethod
+    def _build_temp_file_path(storage_path: str) -> str:
+        import tempfile
+
+        return os.path.join(tempfile.gettempdir(), os.path.basename(storage_path))
+
+    @staticmethod
+    def _download_file_to_local(storage_path: str, local_path: str) -> None:
+        from src.app.integrations.storage_minio.client import minio_service
+
+        file_data = minio_service.download_file(
+            bucket_name=MINIO_BUCKET_NAME,
+            object_name=storage_path,
+        )
+        if not file_data:
+            raise FileNotFoundError(f"File not found in MinIO: {storage_path}")
+        with open(local_path, "wb") as file_obj:
+            file_obj.write(file_data)
+
+    def _resolve_excel_file_path(self, file_path: str) -> str:
+        """Resolve Excel path from local or storage URI."""
+        if not self._is_storage_uri(file_path):
+            return file_path
+        storage_path = self._strip_storage_prefix(file_path)
+        local_path = self._build_temp_file_path(storage_path)
+        self._download_file_to_local(storage_path, local_path)
+        return local_path
 
     async def _get_excel_connection_info(
         self,
@@ -566,38 +633,7 @@ class DataSourceService:
 
             # 获取文件路径
             # connection_string 存储的是 MinIO 路径或本地路径
-            file_path = connection.connection_string
-
-            # 如果是 MinIO 路径，需要下载到本地
-            if file_path.startswith("minio://") or file_path.startswith("file://"):
-                # 从 MinIO 下载文件
-                from src.app.integrations.storage_minio.client import minio_service
-
-                # 去掉协议前缀
-                if file_path.startswith("minio://"):
-                    storage_path = file_path[8:]  # 去掉 "minio://"
-                else:
-                    storage_path = file_path[7:]  # 去掉 "file://"
-
-                # 下载文件到临时目录
-                import tempfile
-                temp_dir = tempfile.gettempdir()
-                local_filename = os.path.basename(storage_path)
-                local_path = os.path.join(temp_dir, local_filename)
-
-                # 从 MinIO 下载
-                bucket_name = "data-sources"
-                file_data = minio_service.download_file(
-                    bucket_name=bucket_name,
-                    object_name=storage_path
-                )
-
-                if file_data:
-                    with open(local_path, 'wb') as f:
-                        f.write(file_data)
-                    file_path = local_path
-                else:
-                    raise FileNotFoundError(f"File not found in MinIO: {storage_path}")
+            file_path = self._resolve_excel_file_path(connection.connection_string)
 
             # 验证文件存在
             if not os.path.exists(file_path):

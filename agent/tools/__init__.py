@@ -1,113 +1,89 @@
 # -*- coding: utf-8 -*-
-"""
-AgentV2 Tools Module
-===================
+"""Agent tools public exports."""
 
-LangChain tools for Data Agent V2.
-
-Includes:
-    - 数据库查询工具 (execute_query, list_tables, get_schema)
-    - MCP 工具包装器 (PostgreSQL, ECharts)
-    - 数据转换工具
-    - 图表生成工具
-    - 数据验证工具 (DataValidator)
-    - 语义层增强工具 (SemanticLayerService, resolve_business_term)
-    - 业务术语表工具 (BusinessGlossary, query_business_glossary)
-    - Python 沙箱工具 (PythonSandbox, python_analyze)
-"""
-
-from .mcp_tools import get_mcp_tools, wrap_mcp_tools
-from .database_tools import get_database_tools
-from .chart_tools import get_chart_tools, create_chart_tools
+from .chart_tools import create_chart_tools, get_chart_tools
 from .data_validator import (
     DataValidator,
+    ensure_valid_output,
     get_validator,
     validate_tool_output,
-    ensure_valid_output
 )
-
-# 语义层增强工具
-from .semantic_layer_tools import (
-    SemanticLayerService,
-    MeasureDefinition,
-    DimensionDefinition,
-    resolve_business_term,
-    get_semantic_measure,
-    list_available_cubes,
-    get_cube_measures,
-    normalize_status_value
+from .database_tools import (
+    clear_user_query_context,
+    get_database_tools,
+    list_tables,
+    set_user_query_context,
 )
-
-# Python 沙箱工具
+from .general_tools import (
+    evaluate_math_expression,
+    get_current_date,
+    get_current_time,
+    get_date_range_info,
+    get_general_tools,
+    get_relative_date,
+    get_system_info,
+)
+from .mcp_tools import get_mcp_tools, wrap_mcp_tools
 from .python_sandbox_tools import (
     PythonSandbox,
     SandboxResult,
-    python_analyze,
-    trend_analysis,
     correlation_analysis,
-    summary_statistics
+    python_analyze,
+    summary_statistics,
+    trend_analysis,
 )
-
-# 通用工具（处理不需要数据库的简单查询）
-from .general_tools import (
-    get_general_tools,
-    get_current_date,
-    get_current_time,
-    get_relative_date,
-    get_date_range_info,
-    evaluate_math_expression,
-    get_system_info
+from .semantic_layer_tools import (
+    DimensionDefinition,
+    MeasureDefinition,
+    SemanticLayerService,
+    get_cube_measures,
+    get_semantic_measure,
+    list_available_cubes,
+    normalize_status_value,
+    resolve_business_term,
 )
-
-# 表推荐工具
 from .table_recommendation_tools import (
-    get_table_recommendation_tools,
     get_recommended_tables_for_query,
     get_table_description_by_name,
-    list_high_priority_tables
+    get_table_recommendation_tools,
+    list_high_priority_tables,
 )
-
 __all__ = [
-    # MCP 工具
-    "get_mcp_tools",
-    "wrap_mcp_tools",
-    # 数据库工具
-    "get_database_tools",
-    # 图表工具
-    "get_chart_tools",
-    "create_chart_tools",
-    # 数据验证工具
-    "DataValidator",
-    "get_validator",
-    "validate_tool_output",
-    "ensure_valid_output",
-    # 语义层工具
-    "SemanticLayerService",
-    "MeasureDefinition",
-    "DimensionDefinition",
-    "resolve_business_term",
-    "get_semantic_measure",
-    "list_available_cubes",
-    "get_cube_measures",
-    "normalize_status_value",
-    # Python 沙箱工具
-    "PythonSandbox",
-    "SandboxResult",
-    "python_analyze",
-    "trend_analysis",
-    "correlation_analysis",
-    "summary_statistics",
-    # 通用工具
-    "get_general_tools",
-    "get_current_date",
-    "get_current_time",
-    "get_relative_date",
-    "get_date_range_info",
-    "evaluate_math_expression",
-    "get_system_info",
-    # 表推荐工具
-    "get_table_recommendation_tools",
-    "get_recommended_tables_for_query",
-    "get_table_description_by_name",
-    "list_high_priority_tables",
+    'get_mcp_tools',
+    'wrap_mcp_tools',
+    'get_database_tools',
+    'list_tables',
+    'set_user_query_context',
+    'clear_user_query_context',
+    'get_chart_tools',
+    'create_chart_tools',
+    'DataValidator',
+    'get_validator',
+    'validate_tool_output',
+    'ensure_valid_output',
+    'SemanticLayerService',
+    'MeasureDefinition',
+    'DimensionDefinition',
+    'resolve_business_term',
+    'get_semantic_measure',
+    'list_available_cubes',
+    'get_cube_measures',
+    'normalize_status_value',
+    'PythonSandbox',
+    'SandboxResult',
+    'python_analyze',
+    'trend_analysis',
+    'correlation_analysis',
+    'summary_statistics',
+    'get_general_tools',
+    'get_current_date',
+    'get_current_time',
+    'get_relative_date',
+    'get_date_range_info',
+    'evaluate_math_expression',
+    'get_system_info',
+    'get_table_recommendation_tools',
+    'get_recommended_tables_for_query',
+    'get_table_description_by_name',
+    'list_high_priority_tables',
 ]

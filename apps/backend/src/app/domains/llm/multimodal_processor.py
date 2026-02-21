@@ -96,9 +96,8 @@
 import os
 import uuid
 import mimetypes
-import asyncio
 import io
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import aiohttp
 
@@ -197,7 +196,7 @@ class MultimodalProcessor:
 
             # 上传到MinIO
             mime_type = self.get_content_type(original_filename)
-            result = self.minio_client.put_object(
+            self.minio_client.put_object(
                 bucket_name=self.bucket_name,
                 object_name=unique_filename,
                 data=io.BytesIO(file_data),

@@ -40,9 +40,8 @@
 """
 
 from enum import Enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
-import re
 
 
 class QueryScenario(Enum):
@@ -116,7 +115,7 @@ def classify_question(question: str, has_data_source: bool = False) -> QuestionT
     logger = logging.getLogger(__name__)
 
     if not question:
-        logger.warning(f"[classify_question] Empty question, returning GENERAL_CHAT")
+        logger.warning("[classify_question] Empty question, returning GENERAL_CHAT")
         return QuestionType.GENERAL_CHAT
 
     question_lower = question.lower()

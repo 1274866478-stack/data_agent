@@ -31,11 +31,11 @@
 
 **下游依赖**:
 - [../api/v1/endpoints/sql_error_memories.py](../api/v1/endpoints/sql_error_memories.py) - API端点
-- [../../Agent/sql_agent.py](../../../Agent/sql_agent.py) - SQL Agent集成
+- [../../integrations/agentv2_gateway/gateway.py](../../integrations/agentv2_gateway/gateway.py) - AgentV2 查询集成
 - [./llm_service.py](./llm_service.py) - LLM服务集成
 
 **调用方**:
-- SQL Agent修复SQL后记录错误
+- AgentV2 查询链路修复SQL后记录错误
 - LLM服务生成SQL时检索历史错误
 - 管理API查看和管理错误记忆
 

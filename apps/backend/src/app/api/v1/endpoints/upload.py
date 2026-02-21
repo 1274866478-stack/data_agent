@@ -40,9 +40,6 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, Dict, Any, List
-import uuid
-import io
 
 from src.app.data.database import get_db
 from src.app.middleware.tenant_context import get_current_tenant_id

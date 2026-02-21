@@ -17,15 +17,13 @@
 
 import argparse
 import asyncio
-import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import yaml
 
 from .knowledge_base import (
-    KnowledgeBaseService,
     KnowledgeType,
     create_knowledge_base
 )
@@ -378,7 +376,7 @@ async def main():
             print(f"  {key}: {count} 条")
 
         stats = loader.get_stats()
-        print(f"\n[KnowledgeLoader] 知识库统计:")
+        print("\n[KnowledgeLoader] 知识库统计:")
         print(f"  静态知识: {stats['static_knowledge_count']} 条")
         print(f"  学习记录: {stats['learning_count']} 条")
 

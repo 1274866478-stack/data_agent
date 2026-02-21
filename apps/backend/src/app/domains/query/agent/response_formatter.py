@@ -40,7 +40,7 @@
 from typing import Dict, Any, Optional
 import logging
 
-from .models import VisualizationResponse, ChartConfig
+from .models import VisualizationResponse
 
 logger = logging.getLogger(__name__)
 

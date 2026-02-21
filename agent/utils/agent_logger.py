@@ -24,6 +24,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
+try:
+    from ..core.backend_runtime import import_backend_module
+except ImportError:
+    # 兼容直接运行（非包方式）
+    from core.backend_runtime import import_backend_module
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,15 +110,8 @@ class AgentLogger:
         """获取数据库会话（延迟导入）"""
         if self._db_session is None:
             try:
-                import sys
-                from pathlib import Path
-
-                # 添加 backend/src 到路径
-                backend_src = Path(__file__).resolve().parent.parent.parent / "backend" / "src"
-                if str(backend_src) not in sys.path:
-                    sys.path.insert(0, str(backend_src))
-
-                from app.data.database import get_db
+                database_module = import_backend_module("app.data.database")
+                get_db = getattr(database_module, "get_db")
                 # 获取生成器
                 db_gen = get_db()
                 self._db_session = next(db_gen)
@@ -167,8 +166,7 @@ class AgentLogger:
             "metadata": metadata or {}
         }
 
-        # 保持原有 print 输出
-        print(f"🔹 [{node}] {raw_message}")
+        logger.debug("[%s] %s", node, raw_message)
 
         # 双通道写入
         tasks = []
@@ -218,14 +216,8 @@ class AgentLogger:
 
             # 导入模型
             try:
-                import sys
-                from pathlib import Path
-
-                backend_src = Path(__file__).resolve().parent.parent.parent / "backend" / "src"
-                if str(backend_src) not in sys.path:
-                    sys.path.insert(0, str(backend_src))
-
-                from app.data.models import AgentLog
+                models_module = import_backend_module("app.data.models")
+                AgentLog = getattr(models_module, "AgentLog")
 
                 for entry in entries:
                     log_record = AgentLog(
@@ -265,7 +257,7 @@ class AgentLogger:
                 for entry in entries:
                     f.write(json.dumps(entry, ensure_ascii=False) + '\n')
 
-            logger.info(f"[AgentLogger] 已写入 {len(entries)} 条日志到备用文件: {backup_file}")
+            logger.debug(f"[AgentLogger] 已写入 {len(entries)} 条日志到备用文件: {backup_file}")
         except Exception as e:
             logger.error(f"[AgentLogger] 写入备用文件失败: {e}")
 
@@ -375,8 +367,6 @@ def clear_logger_cache():
 # ============================================================================
 
 if __name__ == "__main__":
-    import asyncio
-
     async def test_logger():
         """测试 AgentLogger"""
         print("=" * 60)

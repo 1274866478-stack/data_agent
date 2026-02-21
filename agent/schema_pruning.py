@@ -23,7 +23,6 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
-from functools import lru_cache
 
 import numpy as np
 import yaml
@@ -800,8 +799,6 @@ def get_relevant_schema(query: str, max_results: int = 10) -> str:
 # ============================================================================
 
 if __name__ == "__main__":
-    import sys
-
     # 配置日志
     logging.basicConfig(
         level=logging.INFO,

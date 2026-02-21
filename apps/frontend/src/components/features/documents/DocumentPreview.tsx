@@ -52,6 +52,7 @@ import { useDocuments } from '@/hooks/useDocuments'
 import { KnowledgeDocument } from '@/types/store/document'
 import { Button } from '@/components/ui/button'
 import { Alert } from '@/components/ui/alert'
+import logger from '@/lib/logger'
 
 interface DocumentPreviewProps {
   document: KnowledgeDocument
@@ -73,8 +74,8 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
 
   // 加载预览
   useEffect(() => {
-    loadPreview()
-  }, [])
+    void loadPreview()
+  }, [document.id])
 
   const loadPreview = async () => {
     setIsLoading(true)
@@ -84,7 +85,7 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
       const url = await getDocumentPreviewUrl(document.id, 2) // 2小时有效期
       setPreviewUrl(url)
     } catch (error) {
-      console.error('Preview load failed:', error)
+      logger.error('DocumentPreview', 'preview load failed', error)
       setError(error instanceof Error ? error.message : '加载预览失败')
     } finally {
       setIsLoading(false)
@@ -111,8 +112,9 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
 
   // 处理下载
   const handleDownload = async () => {
+    let downloadUrl: string | null = null
     try {
-      const downloadUrl = await getDocumentDownloadUrl(document.id)
+      downloadUrl = await getDocumentDownloadUrl(document.id)
       const link = window.document.createElement('a')
       link.href = downloadUrl
       link.download = document.file_name
@@ -120,8 +122,12 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
       link.click()
       window.document.body.removeChild(link)
     } catch (error) {
-      console.error('Download failed:', error)
+      logger.error('DocumentPreview', 'download failed', error)
       setError('下载失败')
+    } finally {
+      if (downloadUrl) {
+        window.setTimeout(() => URL.revokeObjectURL(downloadUrl as string), 1000)
+      }
     }
   }
 

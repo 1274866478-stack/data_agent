@@ -29,8 +29,7 @@
 **模块层级**: Level 3 (Services - Agent Data Validator)
 **依赖深度**: 2层
 """
-import re
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Optional
 from enum import Enum
 from pydantic import BaseModel
 

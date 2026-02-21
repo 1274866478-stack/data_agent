@@ -14,7 +14,7 @@ Loop Detection Middleware - 循环检测中间件
 """
 
 import logging
-from typing import Any, Dict, Optional, Callable, Awaitable, List
+from typing import Any, Dict, Optional, Callable, Awaitable
 from collections import deque
 
 from langgraph.prebuilt.tool_node import ToolCallRequest
@@ -38,7 +38,7 @@ class LoopDetectionMiddleware(AgentMiddleware):
 
     使用示例:
     ```python
-    from AgentV2.middleware import LoopDetectionMiddleware
+    from agent.middleware import LoopDetectionMiddleware
 
     middleware = [LoopDetectionMiddleware(max_calls=10)]
     agent = create_deep_agent(model, tools, middleware)

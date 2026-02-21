@@ -51,6 +51,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { useAuth } from './AuthContext'
+import logger from '@/lib/logger'
 
 export function SignUpForm() {
   const [error, setError] = useState('')
@@ -88,30 +89,30 @@ export function SignUpForm() {
               })
 
               // 监听注册成功事件
-              clerk.addListener('sign-up.completed', async (session: any) => {
+                clerk.addListener('sign-up.completed', async (session: any) => {
                 try {
                   const token = await session.getToken()
                   await login(token)
                   router.push('/')
                 } catch (error) {
-                  console.error('Sign up completed but token handling failed:', error)
+                  logger.error('SignUpForm', 'sign up completed but token handling failed', error)
                   setError('注册成功，但会话处理失败')
                 }
               })
 
               clerk.addListener('sign-up.failed', (error: any) => {
-                console.error('Clerk sign up failed:', error)
+                logger.error('SignUpForm', 'clerk sign up failed', error)
                 setClerkError(error.message || '注册失败')
               })
 
             } catch (clerkError) {
-              console.error('Clerk initialization failed:', clerkError)
+              logger.error('SignUpForm', 'clerk initialization failed', clerkError)
               setClerkError('认证服务初始化失败，请刷新页面重试')
             }
           }
         }
       } catch (error) {
-        console.error('Failed to initialize Clerk:', error)
+        logger.error('SignUpForm', 'failed to initialize clerk', error)
         setClerkError('认证服务加载失败')
       }
     }

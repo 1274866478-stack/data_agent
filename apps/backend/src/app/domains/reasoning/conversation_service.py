@@ -101,16 +101,11 @@
 """
 
 import logging
-import json
 import time
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from enum import Enum
-import asyncio
-
-from src.app.core.config import settings
-from src.app.data.database import get_db
 # Note: ChatMessage and ConversationHistory are Pydantic models, not database models
 
 logger = logging.getLogger(__name__)

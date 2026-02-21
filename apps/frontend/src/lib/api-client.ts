@@ -6,6 +6,9 @@
 
 import type { ChatCompletionRequest, ChatQueryRequest, ChatQueryResponse, V2StreamCallbacks } from '@/types/api/chat'
 import type { StreamCallbacks } from '@/types/chat'
+import { responseErrorMessage } from '@/lib/api-error'
+import { getStoredAuthToken } from '@/lib/auth-token'
+import logger from '@/lib/logger'
 
 const rawApiBase = process.env.NEXT_PUBLIC_API_URL
 
@@ -43,9 +46,15 @@ export const { v1: API_BASE_URL, v2: API_V2_BASE_URL } = resolveApiBases(rawApiB
 
 class APIClient {
   private baseURL: string
+  private static supportsV2Stream: boolean | null = null
 
   constructor(baseURL: string = API_BASE_URL) {
     this.baseURL = baseURL
+  }
+
+  private getAuthHeaders(): Record<string, string> {
+    const token = getStoredAuthToken()
+    return token ? { Authorization: `Bearer ${token}` } : {}
   }
 
   /**
@@ -53,6 +62,34 @@ class APIClient {
    */
   static getV2Client(): APIClient {
     return new APIClient(API_V2_BASE_URL)
+  }
+
+  private async fallbackToNonStreamQuery(
+    request: ChatQueryRequest,
+    callbacks: V2StreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<AbortController> {
+    const controller = new AbortController()
+    const signal = abortSignal || controller.signal
+
+    if (signal.aborted) return controller
+
+    try {
+      const fallback = await this.query(request, signal)
+      if (signal.aborted) return controller
+
+      const answer = (fallback as any)?.answer || ''
+      if (answer) callbacks.onContent?.(answer)
+      if ((fallback as any)?.table) callbacks.onTable?.((fallback as any).table)
+      if ((fallback as any)?.chart) callbacks.onChart?.((fallback as any).chart)
+      callbacks.onComplete?.()
+    } catch (error) {
+      if (!(error instanceof Error && error.name === 'AbortError')) {
+        callbacks.onError?.(error instanceof Error ? error.message : '未知错误')
+      }
+    }
+
+    return controller
   }
 
   /**
@@ -67,14 +104,14 @@ class APIClient {
     const response = await fetch(url, {
       ...options,
       headers: {
+        ...this.getAuthHeaders(),
         'Content-Type': 'application/json',
         ...options.headers,
       },
     })
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: response.statusText }))
-      throw new Error(error.detail || '请求失败')
+      throw new Error(await responseErrorMessage(response, '请求失败'))
     }
 
     return response.json()
@@ -93,12 +130,14 @@ class APIClient {
   /**
    * V2 查询 API（非流式）
    */
-  async query(request: ChatQueryRequest): Promise<ChatQueryResponse> {
+  async query(request: ChatQueryRequest, abortSignal?: AbortSignal): Promise<ChatQueryResponse> {
     // 使用 V2 专用客户端，确保请求发送到正确的 URL
     const v2Client = APIClient.getV2Client()
-    return v2Client.request<ChatQueryResponse>('/query', {
+    // FastAPI 根路由为 '/query/'，直接命中避免浏览器预检重定向。
+    return v2Client.request<ChatQueryResponse>('/query/', {
       method: 'POST',
       body: JSON.stringify(request),
+      signal: abortSignal,
     })
   }
 
@@ -119,6 +158,7 @@ class APIClient {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
+          ...this.getAuthHeaders(),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ ...request, stream: true }),
@@ -126,7 +166,7 @@ class APIClient {
       })
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        throw new Error(await responseErrorMessage(response, `HTTP error! status: ${response.status}`))
       }
 
       const reader = response.body?.getReader()
@@ -179,7 +219,7 @@ class APIClient {
                 callbacks.onError?.(parsed.error)
               }
             } catch (e) {
-              console.error('解析 SSE 数据失败:', e)
+              logger.error('APIClient', '解析 SSE 数据失败', e)
             }
           }
         }
@@ -212,6 +252,7 @@ class APIClient {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
+          ...this.getAuthHeaders(),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(request),
@@ -219,7 +260,16 @@ class APIClient {
       })
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        // Backward-compatible fallback: some deployments only expose non-stream V2 '/query/'.
+        if (endpoint === '/query/stream' && response.status === 404) {
+          APIClient.supportsV2Stream = false
+          return this.fallbackToNonStreamQuery(request, callbacks, abortSignal)
+        }
+        throw new Error(await responseErrorMessage(response, `HTTP error! status: ${response.status}`))
+      }
+
+      if (endpoint === '/query/stream') {
+        APIClient.supportsV2Stream = true
       }
 
       const reader = response.body?.getReader()
@@ -272,7 +322,7 @@ class APIClient {
                 callbacks.onContent?.(parsed.content)
               }
             } catch (e) {
-              console.error('解析 SSE 数据失败:', e)
+              logger.error('APIClient', '解析 SSE 数据失败', e)
             }
           }
         }
@@ -297,6 +347,9 @@ class APIClient {
   ): Promise<AbortController> {
     // 使用 V2 专用客户端，确保请求发送到正确的 URL
     const v2Client = APIClient.getV2Client()
+    if (APIClient.supportsV2Stream === false) {
+      return v2Client.fallbackToNonStreamQuery(request, callbacks, abortSignal)
+    }
     return v2Client.streamQuery('/query/stream', request, callbacks, abortSignal)
   }
 }

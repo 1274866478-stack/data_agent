@@ -141,7 +141,6 @@ export function EnergyLabSignIn() {
 
         setUser(mockUser)
         setToken('dev-mode-token')
-        localStorage.setItem('auth_token', 'dev-mode-token')
 
         const redirect = searchParams?.get('redirect') || '/'
         router.push(redirect)

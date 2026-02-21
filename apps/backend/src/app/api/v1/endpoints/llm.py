@@ -77,12 +77,11 @@ import asyncio
 import logging
 import io
 import os
-import sys
 import time
 from datetime import datetime, date
 from decimal import Decimal
 from typing import Dict, Any, Optional, List, Union
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -93,23 +92,14 @@ from src.app.domains.llm.service import (
     LLMProvider,
     LLMMessage,
     LLMResponse,
-    LLMStreamChunk
 )
 from src.app.core.auth import get_current_user_with_tenant
-from src.app.data.models import Tenant, DataSourceConnection, DataSourceConnectionStatus
+from src.app.data.models import Tenant
 from src.app.data.database import get_db
 from src.app.domains.data_sources.service import data_source_service
 from src.app.integrations.storage_minio.client import minio_service
 from src.app.integrations.db_adapters.database_interface import PostgreSQLAdapter
-from src.app.integrations.llm_providers.zhipu_client import zhipu_service
 from src.app.domains.llm.sql_error_memory import SQLErrorMemoryService
-from src.app.domains.query.agent_tools import (
-    list_available_tables,
-    get_table_schema,
-    execute_sql_safe,
-    sanitize_sql,
-    validate_sql_safety
-)
 import re
 import duckdb
 
@@ -261,7 +251,7 @@ def _remove_database_name_prefix(sql: str, database_name: str) -> str:
     sql = pattern.sub('', sql)
     
     if sql != original_sql:
-        logger.info(f"[SQL预处理] 去除数据库名前缀 '{database_name}.': {original_sql[:100]}... -> {sql[:100]}...")
+        logger.debug(f"[SQL预处理] 去除数据库名前缀 '{database_name}.': {original_sql[:100]}... -> {sql[:100]}...")
     
     return sql
 
@@ -520,13 +510,13 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
         
         # 如果找到本地文件，直接使用
         if local_file_path and os.path.exists(local_file_path):
-            logger.info(f"从本地文件系统读取文件: {local_file_path}")
+            logger.debug(f"从本地文件系统读取文件: {local_file_path}")
             use_local_file = True
             file_path_for_read = local_file_path
         else:
             # 尝试从MinIO下载
             storage_path = connection_string[7:] if connection_string.startswith("file://") else connection_string
-            logger.info(f"尝试从MinIO下载文件: {storage_path}")
+            logger.debug(f"尝试从MinIO下载文件: {storage_path}")
             file_data = minio_service.download_file(
                 bucket_name="data-sources",
                 object_name=storage_path
@@ -536,7 +526,7 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
                 logger.warning(f"无法从MinIO获取文件: {storage_path}")
                 # 最后尝试本地回退
                 if local_file_path:
-                    logger.info(f"尝试使用解析的本地路径: {local_file_path}")
+                    logger.debug(f"尝试使用解析的本地路径: {local_file_path}")
                     if os.path.exists(local_file_path):
                         use_local_file = True
                         file_path_for_read = local_file_path
@@ -565,7 +555,7 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
                 return {}
             
             sheet_names = excel_file.sheet_names
-            logger.info(f"Excel文件包含 {len(sheet_names)} 个Sheet: {sheet_names}")
+            logger.debug(f"Excel文件包含 {len(sheet_names)} 个Sheet: {sheet_names}")
 
             for sheet_name in sheet_names:
                 try:
@@ -579,7 +569,7 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
                     table_schema = _build_table_schema(df, sheet_name)
                     tables.append(table_schema["table_info"])
                     sample_data[sheet_name] = table_schema["sample_data"]
-                    logger.info(f"Sheet '{sheet_name}': {len(df)}行, {len(df.columns)}列")
+                    logger.debug(f"Sheet '{sheet_name}': {len(df)}行, {len(df.columns)}列")
                 except Exception as e:
                     logger.warning(f"读取Sheet '{sheet_name}' 失败: {e}")
                     continue
@@ -620,7 +610,7 @@ async def _get_file_schema(connection_string: str, db_type: str, data_source_nam
         }
 
         total_rows = sum(t.get("row_count", 0) for t in tables)
-        logger.info(f"成功获取文件schema: {len(tables)}个表, 共{total_rows}行")
+        logger.debug(f"成功获取文件schema: {len(tables)}个表, 共{total_rows}行")
         return schema_info
 
     except Exception as e:
@@ -687,7 +677,7 @@ async def _try_get_file_schema_fallback(tenant_id: str, data_source_id: str, db_
 
         for path in possible_paths:
             try:
-                logger.info(f"尝试从MinIO获取文件: {path}")
+                logger.debug(f"尝试从MinIO获取文件: {path}")
                 file_data = minio_service.download_file(
                     bucket_name="data-sources",
                     object_name=path
@@ -710,7 +700,7 @@ async def _try_get_file_schema_fallback(tenant_id: str, data_source_id: str, db_
                             continue  # 尝试下一个路径
                         
                         sheet_names = excel_file.sheet_names
-                        logger.info(f"备选方案: Excel包含 {len(sheet_names)} 个Sheet: {sheet_names}")
+                        logger.debug(f"备选方案: Excel包含 {len(sheet_names)} 个Sheet: {sheet_names}")
 
                         for sheet_name in sheet_names:
                             try:
@@ -741,7 +731,7 @@ async def _try_get_file_schema_fallback(tenant_id: str, data_source_id: str, db_
 
                     if tables:
                         total_rows = sum(t.get("row_count", 0) for t in tables)
-                        logger.info(f"备选方案成功获取schema: {len(tables)}个表, 共{total_rows}行")
+                        logger.debug(f"备选方案成功获取schema: {len(tables)}个表, 共{total_rows}行")
                         return {
                             "tables": tables,
                             "sample_data": sample_data
@@ -781,7 +771,7 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
             active_only=True
         )
         perf_msg = f"[PERF] get_data_sources took {time.time() - t1:.2f}s, found {len(data_sources) if data_sources else 0} sources"
-        logger.info(perf_msg)
+        logger.debug(perf_msg)
 
         if not data_sources:
             return ""
@@ -790,16 +780,16 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
         if data_source_ids:
             original_count = len(data_sources)
             data_sources = [ds for ds in data_sources if ds.id in data_source_ids]
-            logger.info(f"🎯 [数据源筛选] 指定数据源: {data_source_ids}, 从 {original_count} 个中筛选出 {len(data_sources)} 个匹配的数据源")
+            logger.debug(f"🎯 [数据源筛选] 指定数据源: {data_source_ids}, 从 {original_count} 个中筛选出 {len(data_sources)} 个匹配的数据源")
             for ds in data_sources:
-                logger.info(f"  ✅ 使用数据源: {ds.name} (ID: {ds.id}, 类型: {ds.db_type})")
+                logger.debug(f"  ✅ 使用数据源: {ds.name} (ID: {ds.id}, 类型: {ds.db_type})")
             if not data_sources:
                 logger.warning(f"⚠️ [数据源筛选] 未找到匹配的数据源！请求的ID: {data_source_ids}")
                 return ""
         else:
             logger.warning(f"⚠️ [数据源筛选] 未指定 data_source_ids，将使用所有 {len(data_sources)} 个活跃数据源:")
             for ds in data_sources:
-                logger.info(f"  📦 活跃数据源: {ds.name} (ID: {ds.id}, 类型: {ds.db_type})")
+                logger.debug(f"  📦 活跃数据源: {ds.name} (ID: {ds.id}, 类型: {ds.db_type})")
 
         context_parts = []
         context_parts.append("## 可用数据源\n")
@@ -818,7 +808,7 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
                         tenant_id=tenant_id,
                         db=db
                     )
-                    logger.info(f"[PERF] get_decrypted_connection_string for {ds.name} took {time.time() - t2:.2f}s")
+                    logger.debug(f"[PERF] get_decrypted_connection_string for {ds.name} took {time.time() - t2:.2f}s")
                 except Exception as decrypt_error:
                     logger.warning(f"[PERF] 解密数据源 {ds.name} 连接字符串失败: {decrypt_error}")
                     # 对于文件类型数据源，尝试从MinIO直接搜索文件
@@ -898,7 +888,7 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
                         }
                     finally:
                         await adapter.disconnect()
-                    logger.info(f"[PERF] PostgreSQL get_schema for {ds.name} took {time.time() - t3:.2f}s")
+                    logger.debug(f"[PERF] PostgreSQL get_schema for {ds.name} took {time.time() - t3:.2f}s")
 
                 elif ds.db_type in ["xlsx", "xls", "csv"]:
                     # 🔧 修复：从connection_config或connection_string提取文件路径
@@ -914,13 +904,13 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
                         # 文件类型数据源：从文件读取并解析schema
                         t4 = time.time()
                         schema_info = await _get_file_schema(file_path, ds.db_type, ds.name)
-                        logger.info(f"[PERF] _get_file_schema for {ds.name} took {time.time() - t4:.2f}s")
+                        logger.debug(f"[PERF] _get_file_schema for {ds.name} took {time.time() - t4:.2f}s")
                     else:
                         # 连接字符串获取失败，尝试备选方案
-                        logger.info(f"[PERF] 尝试备选方案获取数据源 {ds.name} 的schema")
+                        logger.debug(f"[PERF] 尝试备选方案获取数据源 {ds.name} 的schema")
                         schema_info = await _try_get_file_schema_fallback(tenant_id, ds.id, ds.db_type, ds.name)
 
-                logger.info(f"[PERF] Total processing for data source {ds.name} took {time.time() - ds_start:.2f}s")
+                logger.debug(f"[PERF] Total processing for data source {ds.name} took {time.time() - ds_start:.2f}s")
 
                 if schema_info and schema_info.get("tables"):
                     context_parts.append(f"\n### 数据源: {ds.name}")
@@ -1001,7 +991,7 @@ async def _get_data_sources_context(tenant_id: str, db: Session, data_source_ids
                 context_parts.append(f"- 注: 无法获取schema信息 ({str(e)[:50]})")
 
         total_time = time.time() - start_time
-        logger.info(f"[PERF] _get_data_sources_context TOTAL took {total_time:.2f}s")
+        logger.debug("[PERF] _get_data_sources_context TOTAL took %.2fs", total_time)
         return "\n".join(context_parts)
 
     except Exception as e:
@@ -1023,21 +1013,6 @@ def _build_system_prompt_with_context(
     Returns:
         系统提示词
     """
-    # 导入提示词生成器（支持数据库类型感知）
-    import sys
-    from pathlib import Path
-
-    # 路径计算：优先使用 Docker 容器中的绝对路径 /agent
-    # 如果 /agent 不存在，则使用相对路径计算（本地开发环境）
-    if Path("/agent").exists():
-        agent_path = Path("/agent")
-    else:
-        # 本地开发环境：从 llm.py 向上 5 级到 backend，然后到 agent
-        agent_path = Path(__file__).parent.parent.parent.parent.parent / "agent"
-
-    if str(agent_path) not in sys.path:
-        sys.path.insert(0, str(agent_path))
-
     if data_sources_context:
         # 基础系统提示词
         base_prompt = f"""你是一个专业的数据分析师。你的任务是根据用户的问题，查询数据库并给出分析结果。
@@ -1259,7 +1234,7 @@ ORDER BY 月份;
         try:
             from src.app.domains.llm.prompts import generate_database_aware_system_prompt
             result = generate_database_aware_system_prompt(db_type, base_prompt)
-            logger.info(f"🔍 [LLM端点] 使用数据库类型感知提示词生成器，db_type={db_type}")
+            logger.debug("[LLM endpoint] using db-aware prompt generator, db_type=%s", db_type)
             return result
         except ImportError as e:
             logger.warning(f"⚠️ 无法导入 prompt_generator: {e}，使用默认提示词")
@@ -1503,7 +1478,7 @@ async def _fix_sql_with_ai(
         ]
 
         # 调用 llm_service 修复SQL（自动优先使用 DeepSeek，回退到 Zhipu）
-        logger.info(f"使用 llm_service 修复SQL (tenant_id={tenant_id})")
+        logger.debug(f"使用 llm_service 修复SQL (tenant_id={tenant_id})")
         response = await llm_service.chat_completion(
             tenant_id=tenant_id,
             messages=messages,
@@ -1531,7 +1506,7 @@ async def _fix_sql_with_ai(
                 logger.warning("修复后的SQL不是SELECT查询")
                 return None
 
-            logger.info(f"AI成功修复SQL: {fixed_sql[:100]}...")
+            logger.debug(f"AI成功修复SQL: {fixed_sql[:100]}...")
             return fixed_sql
 
         return None
@@ -1574,7 +1549,7 @@ async def _execute_sql_on_file_datasource(
         if storage_path.startswith("/app/uploads/") or storage_path.startswith("/app/data/"):
             file_path = storage_path
             if os.path.exists(file_path):
-                logger.info(f"直接使用本地文件: {file_path}")
+                logger.debug(f"直接使用本地文件: {file_path}")
                 try:
                     with open(file_path, 'rb') as f:
                         file_data = f.read()
@@ -1582,7 +1557,7 @@ async def _execute_sql_on_file_datasource(
                     logger.warning(f"读取本地文件失败: {e}，尝试从 MinIO 下载")
                     file_data = None
             else:
-                logger.info(f"本地文件不存在: {file_path}，尝试从 MinIO 下载")
+                logger.debug(f"本地文件不存在: {file_path}，尝试从 MinIO 下载")
         
         # 如果本地文件不存在或读取失败，从 MinIO 下载
         if not file_data:
@@ -1597,7 +1572,7 @@ async def _execute_sql_on_file_datasource(
                 # 如果路径不包含 /app/uploads/ 或 /app/data/，直接使用原路径
                 object_name = storage_path.lstrip("/")
             
-            logger.info(f"从MinIO下载文件用于SQL执行: bucket=data-sources, object_name={object_name}")
+            logger.debug(f"从MinIO下载文件用于SQL执行: bucket=data-sources, object_name={object_name}")
             try:
                 file_data = minio_service.download_file(
                     bucket_name="data-sources",
@@ -1645,7 +1620,7 @@ async def _execute_sql_on_file_datasource(
                 }
             
             sheet_names = excel_file.sheet_names
-            logger.info(f"Excel包含 {len(sheet_names)} 个Sheet: {sheet_names}")
+            logger.debug(f"Excel包含 {len(sheet_names)} 个Sheet: {sheet_names}")
 
             for sheet_name in sheet_names:
                 try:
@@ -1663,7 +1638,7 @@ async def _execute_sql_on_file_datasource(
 
                     conn.register(clean_table_name, df)
                     registered_tables.append(clean_table_name)
-                    logger.info(f"注册表 '{clean_table_name}' (来自Sheet '{sheet_name}'): {len(df)}行")
+                    logger.debug(f"注册表 '{clean_table_name}' (来自Sheet '{sheet_name}'): {len(df)}行")
 
                     # 同时用原始Sheet名注册（如果不同）
                     if sheet_name != clean_table_name:
@@ -1720,7 +1695,7 @@ async def _execute_sql_on_file_datasource(
                 "row_count": 0
             }
 
-        logger.info(f"成功注册 {len(registered_tables)} 个表: {registered_tables}")
+        logger.debug(f"成功注册 {len(registered_tables)} 个表: {registered_tables}")
 
         # 执行SQL查询
         try:
@@ -1744,7 +1719,7 @@ async def _execute_sql_on_file_datasource(
         columns = list(result_df.columns)
         data = result_df.to_dict('records')
 
-        logger.info(f"文件数据源SQL执行成功，返回 {len(data)} 行")
+        logger.debug(f"文件数据源SQL执行成功，返回 {len(data)} 行")
 
         return {
             "success": True,
@@ -1798,7 +1773,7 @@ async def _execute_sql_if_needed(
         for sql_block in sql_matches:
             # 拆分一个代码块中的多个SQL语句
             individual_statements = _split_multiple_sql_statements(sql_block)
-            logger.info(f"从代码块中拆分出 {len(individual_statements)} 个SQL语句")
+            logger.debug(f"从代码块中拆分出 {len(individual_statements)} 个SQL语句")
             
             for sql in individual_statements:
                 normalized_sql = sql.strip().upper()  # 标准化比较
@@ -1809,7 +1784,7 @@ async def _execute_sql_if_needed(
                     logger.warning(f"检测到重复SQL，已跳过: {sql[:50]}...")
 
         sql_matches = unique_sql_matches
-        logger.info(f"检测到 {len(sql_matches)} 个唯一SQL查询，准备执行")
+        logger.debug(f"检测到 {len(sql_matches)} 个唯一SQL查询，准备执行")
 
         # 获取租户的活跃数据源
         data_sources = await data_source_service.get_data_sources(
@@ -1827,7 +1802,7 @@ async def _execute_sql_if_needed(
             matching_sources = [ds for ds in data_sources if ds.id in data_source_ids]
             if matching_sources:
                 data_source = matching_sources[0]
-                logger.info(f"使用指定的数据源: {data_source.name} ({data_source.id})")
+                logger.debug(f"使用指定的数据源: {data_source.name} ({data_source.id})")
             else:
                 data_source = data_sources[0]
                 logger.warning(f"未找到指定的数据源，使用第一个活跃数据源: {data_source.name}")
@@ -1883,7 +1858,7 @@ async def _execute_sql_if_needed(
                     # 根据数据源类型选择执行方式
                     if data_source.db_type in ["xlsx", "xls", "csv"]:
                         # 文件类型数据源：使用duckdb执行
-                        logger.info(f"使用duckdb执行文件数据源查询: {data_source.db_type}")
+                        logger.debug(f"使用duckdb执行文件数据源查询: {data_source.db_type}")
                         result = await _execute_sql_on_file_datasource(
                             connection_string=connection_string,
                             db_type=data_source.db_type,
@@ -1953,7 +1928,7 @@ async def _execute_sql_if_needed(
                                 table_name=_extract_table_name_from_sql(sql_query),
                                 schema_context=None  # 可选：可以传递schema上下文
                             )
-                            logger.info("SQL错误已记录到错误记忆系统")
+                            logger.debug("SQL错误已记录到错误记忆系统")
                         except Exception as record_error:
                             logger.warning(f"记录SQL错误失败: {record_error}")
                     else:
@@ -1964,7 +1939,7 @@ async def _execute_sql_if_needed(
                             sql_block + result_text
                         )
 
-                    logger.info(f"SQL查询执行成功，返回 {len(result.get('data', []))} 行")
+                    logger.debug(f"SQL查询执行成功，返回 {len(result.get('data', []))} 行")
                     execution_success = True
 
                 except Exception as e:
@@ -1973,7 +1948,7 @@ async def _execute_sql_if_needed(
 
                     # 如果还有重试机会，尝试用AI修复SQL
                     if retry_count < max_retries:
-                        logger.info("尝试使用AI修复SQL...")
+                        logger.debug("尝试使用AI修复SQL...")
                         fixed_sql = await _fix_sql_with_ai(
                             original_sql=current_sql,
                             error_message=last_error,
@@ -1984,7 +1959,7 @@ async def _execute_sql_if_needed(
                         )
 
                         if fixed_sql:
-                            logger.info(f"AI修复成功，准备重试。修复后的SQL: {fixed_sql[:100]}...")
+                            logger.debug(f"AI修复成功，准备重试。修复后的SQL: {fixed_sql[:100]}...")
                             current_sql = fixed_sql
                             retry_count += 1
                         else:
@@ -2188,7 +2163,7 @@ async def _execute_tool_call(
                 y_data = tool_args.get("y_data", [])
                 series_name = tool_args.get("series_name", "数据")
                 
-                logger.info(f"生成图表: type={chart_type}, title={title}, x_data_len={len(x_data)}, y_data_len={len(y_data)}")
+                logger.debug(f"生成图表: type={chart_type}, title={title}, x_data_len={len(x_data)}, y_data_len={len(y_data)}")
                 
                 # 根据图表类型生成 ECharts 配置
                 if chart_type == "pie":
@@ -2311,9 +2286,9 @@ def _create_processing_step(
         step_data["step"]["content_data"] = content_data
 
     # 添加日志确认步骤发送
-    logger.info(f"📤 发送处理步骤 {step}: {title} [{status}]")
+    logger.debug(f"📤 发送处理步骤 {step}: {title} [{status}]")
     if content_type:
-        logger.info(f"   └─ content_type: {content_type}")
+        logger.debug(f"   └─ content_type: {content_type}")
     return f"data: {json.dumps(step_data, ensure_ascii=False)}\n\n"
 
 
@@ -2342,12 +2317,11 @@ async def _stream_general_chat_generator(
     from src.app.domains.query.processing_steps import (
         ProcessingStepBuilder,
         classify_question,
-        QuestionType
     )
 
     # 1. 分类问题类型
     question_type = classify_question(original_question, has_data_source)
-    logger.info(f"[DYNAMIC_STEPS] Question type: {question_type.value}, has_data_source: {has_data_source}")
+    logger.debug(f"[DYNAMIC_STEPS] Question type: {question_type.value}, has_data_source: {has_data_source}")
 
     # 2. 构建动态步骤
     builder = ProcessingStepBuilder()
@@ -2508,7 +2482,7 @@ async def _stream_response_generator(
         # SCHEMA_QUERY: 3步，不生成图表
         should_generate_chart = question_type == QuestionType.VISUALIZATION
 
-        logger.info(f"[_stream_response_generator] question_type={question_type.value if question_type else 'None'}, should_generate_chart={should_generate_chart}")
+        logger.debug(f"[_stream_response_generator] question_type={question_type.value if question_type else 'None'}, should_generate_chart={should_generate_chart}")
 
         # 🔧🔧🔧 检测图表拆分请求（重要！）
         # 当用户说"把图分开"、"拆分"、"分别显示"等关键词时，需要特殊处理
@@ -2538,12 +2512,12 @@ async def _stream_response_generator(
                                   '6': 6, '7': 7, '8': 8, '9': 9, '10': 10}
                         chart_count = cn_nums.get(num_str, int(num_str) if num_str.isdigit() else None)
                         if chart_count:
-                            logger.info(f"🔍 [图表数量检测] 匹配值: {num_str} → {chart_count} 个图表")
+                            logger.debug(f"🔍 [图表数量检测] 匹配值: {num_str} → {chart_count} 个图表")
                             break
 
         if is_split_request:
             count_info = f", 要求生成 {chart_count} 个图表" if chart_count else ""
-            logger.info(f"🔧🔧🔧 检测到图表拆分请求{count_info}！original_question={original_question[:50]}")
+            logger.debug(f"🔧🔧🔧 检测到图表拆分请求{count_info}！original_question={original_question[:50]}")
         else:
             logger.debug(f"未检测到拆分请求，original_question={original_question[:50]}")
 
@@ -2566,7 +2540,7 @@ async def _stream_response_generator(
         await asyncio.sleep(0.05)
         
         # ========== Step 1: 理解用户问题 ==========
-        logger.info(f"🚀 开始发送步骤1-4，original_question={original_question[:30] if original_question else 'None'}")
+        logger.debug(f"🚀 开始发送步骤1-4，original_question={original_question[:30] if original_question else 'None'}")
         step_start_time = time.time()
         yield _create_processing_step(
             step=1,
@@ -2696,7 +2670,7 @@ async def _stream_response_generator(
 
             # 如果流结束，检测并执行 SQL（方案B）
             if chunk.finished:
-                logger.info(f"流式响应完成，检测SQL查询。内容长度: {len(full_content)}")
+                logger.debug(f"流式响应完成，检测SQL查询。内容长度: {len(full_content)}")
 
                 # 检测SQL代码块（提前检测，用于步骤4的content_data）
                 sql_pattern = r'```sql\s*(.*?)\s*```'
@@ -2728,7 +2702,7 @@ async def _stream_response_generator(
                     yield _create_processing_step(
                         step=5,
                         title="提取SQL语句",
-                        description=f"正在从AI回复中提取SQL代码块...",
+                        description="正在从AI回复中提取SQL代码块...",
                         status="running",
                         tenant_id=tenant_id
                     )
@@ -2739,7 +2713,7 @@ async def _stream_response_generator(
                     for sql_block in sql_matches:
                         # 拆分一个代码块中的多个SQL语句
                         individual_statements = _split_multiple_sql_statements(sql_block)
-                        logger.info(f"流式响应：从代码块中拆分出 {len(individual_statements)} 个SQL语句")
+                        logger.debug(f"流式响应：从代码块中拆分出 {len(individual_statements)} 个SQL语句")
                         
                         for sql in individual_statements:
                             normalized_sql = sql.strip().upper()  # 标准化比较
@@ -2750,7 +2724,7 @@ async def _stream_response_generator(
                                 logger.warning(f"流式响应：检测到重复SQL，已跳过: {sql[:50]}...")
 
                     sql_matches = unique_sql_matches
-                    logger.info(f"检测到 {len(sql_matches)} 个唯一SQL查询，准备执行")
+                    logger.debug(f"检测到 {len(sql_matches)} 个唯一SQL查询，准备执行")
                     
                     # ========== Step 5完成: 提取SQL语句 ==========
                     # 格式化SQL预览
@@ -2768,7 +2742,6 @@ async def _stream_response_generator(
                     )
 
                     # ========== Step 6: 执行SQL查询（或返回结果，取决于是否需要图表）==========
-                    ds_start_time = time.time()
                     step6_title = "执行SQL查询" if should_generate_chart else "返回结果"
                     step6_desc = "正在连接数据源并执行查询..." if should_generate_chart else "正在整理查询结果..."
                     yield _create_processing_step(
@@ -2792,7 +2765,7 @@ async def _stream_response_generator(
                             matching_sources = [ds for ds in data_sources if ds.id in data_source_ids]
                             if matching_sources:
                                 data_source = matching_sources[0]
-                                logger.info(f"流式响应：使用指定的数据源: {data_source.name} ({data_source.id})")
+                                logger.debug(f"流式响应：使用指定的数据源: {data_source.name} ({data_source.id})")
                             else:
                                 data_source = data_sources[0]
                                 logger.warning(f"流式响应：未找到指定的数据源，使用第一个活跃数据源: {data_source.name}")
@@ -2858,7 +2831,7 @@ async def _stream_response_generator(
                                     # 安全检查：只允许SELECT查询（包括WITH...SELECT的CTE查询）
                                     # 使用统一的注释去除和检查函数
                                     sql_for_check, is_select, debug_msg = _strip_sql_comments_and_check_select(current_sql)
-                                    logger.info(f"[流式SQL检测] {debug_msg}")
+                                    logger.debug(f"[流式SQL检测] {debug_msg}")
 
                                     if not is_select:
                                         logger.warning(f"跳过非SELECT查询: {current_sql[:100]}")
@@ -2890,7 +2863,7 @@ async def _stream_response_generator(
                                     # 根据数据源类型选择执行方式
                                     if data_source.db_type in ["xlsx", "xls", "csv"]:
                                         # 文件类型数据源：使用duckdb执行
-                                        logger.info(f"流式响应：使用duckdb执行文件数据源查询: {data_source.db_type}")
+                                        logger.debug(f"流式响应：使用duckdb执行文件数据源查询: {data_source.db_type}")
                                         result = await _execute_sql_on_file_datasource(
                                             connection_string=connection_string,
                                             db_type=data_source.db_type,
@@ -2923,7 +2896,7 @@ async def _stream_response_generator(
                                     step6_update = {
                                         "type": "step_update",
                                         "step": 6,
-                                        "description": f"正在处理结果集...",
+                                        "description": "正在处理结果集...",
                                         "content_preview": f"已获取 {row_count_preview} 行数据，正在格式化...",
                                         "streaming": True,
                                         "tenant_id": tenant_id
@@ -2968,7 +2941,7 @@ async def _stream_response_generator(
                                         yield f"data: {json.dumps(fix_chunk, ensure_ascii=False)}\n\n"
 
                                         # 🔧 新增：记录SQL错误到错误记忆系统
-                                        logger.info(f"[SQL错误记忆] 准备记录SQL错误！retry_count={retry_count}, tenant_id={tenant_id[:20] if tenant_id else None}")
+                                        logger.debug(f"[SQL错误记忆] 准备记录SQL错误！retry_count={retry_count}, tenant_id={tenant_id[:20] if tenant_id else None}")
                                         try:
                                             error_memory_service = SQLErrorMemoryService(db)
                                             await error_memory_service.record_error(
@@ -2979,7 +2952,7 @@ async def _stream_response_generator(
                                                 table_name=_extract_table_name_from_sql(sql_query),
                                                 schema_context=None
                                             )
-                                            logger.info("[流式生成] SQL错误已记录到错误记忆系统")
+                                            logger.debug("[流式生成] SQL错误已记录到错误记忆系统")
                                         except Exception as record_error:
                                             logger.warning(f"[流式生成] 记录SQL错误失败: {record_error}")
 
@@ -2994,7 +2967,7 @@ async def _stream_response_generator(
                                     # }
                                     # yield f"data: {json.dumps(result_chunk, ensure_ascii=False)}\n\n"
 
-                                    logger.info(f"SQL查询执行成功，返回 {result.get('row_count', 0)} 行")
+                                    logger.debug(f"SQL查询执行成功，返回 {result.get('row_count', 0)} 行")
                                     total_rows += row_count
                                     execution_success = True
                                     any_sql_success = True  # 🔧 标记有SQL成功执行
@@ -3037,7 +3010,7 @@ async def _stream_response_generator(
                                     # 这里不再做任何处理，等待所有SQL执行完毕后统一生成图表
                                     # 旧代码（已废弃）：只对第一个成功的SQL生成图表
                                     if False:  # 🔧 禁用循环内的二次LLM调用
-                                        logger.info("开始二次LLM调用：分析数据并生成图表")
+                                        logger.debug("开始二次LLM调用：分析数据并生成图表")
                                         
                                         # --- 🧠 数据特征分析与决策注入 ---
                                         data_for_analysis = result['data'][:20]  # 最多取20行用于分析
@@ -3102,7 +3075,7 @@ async def _stream_response_generator(
                                                             ROUND(AVG({amount_field})::numeric, 2) as 平均值
                                                         FROM {table_name}"""
                                                     
-                                                    logger.info(f"执行补充统计查询: {stats_sql}")
+                                                    logger.debug(f"执行补充统计查询: {stats_sql}")
                                                     
                                                     # 执行统计查询
                                                     if data_source.db_type in ["xlsx", "xls", "csv"]:
@@ -3137,7 +3110,7 @@ async def _stream_response_generator(
                                                                     formatted_value = str(value)
                                                                 stats_parts.append(f"{key}: {formatted_value}")
                                                         supplementary_stats = " | ".join(stats_parts)
-                                                        logger.info(f"补充统计信息: {supplementary_stats}")
+                                                        logger.debug(f"补充统计信息: {supplementary_stats}")
                                             except Exception as stats_error:
                                                 logger.warning(f"获取补充统计信息失败: {stats_error}")
                                             
@@ -3226,7 +3199,7 @@ async def _stream_response_generator(
                                                 "- **Analysis**: Compare the magnitudes. Identify the leader and the laggard."
                                             )
                                         
-                                        logger.info(f"数据特征分析: rows={analysis_row_count}, cols={col_count}, has_time={has_time_col}, has_metric={has_metric_col}")
+                                        logger.debug(f"数据特征分析: rows={analysis_row_count}, cols={col_count}, has_time={has_time_col}, has_metric={has_metric_col}")
                                         
                                         # 构建分析提示（包含决策指令）
                                         # 将 Decimal 类型转换为 float，避免 JSON 序列化失败
@@ -3348,7 +3321,7 @@ async def _stream_response_generator(
                                                         # }
                                                         # yield f"data: {json.dumps(analysis_data, ensure_ascii=False)}\n\n"
                                                 
-                                                logger.info(f"二次LLM调用完成，分析内容长度: {len(analysis_content)}")
+                                                logger.debug(f"二次LLM调用完成，分析内容长度: {len(analysis_content)}")
                                                 
                                                 # 检测并提取图表配置
                                                 chart_pattern = r'\[CHART_START\](.*?)\[CHART_END\]'
@@ -3357,7 +3330,7 @@ async def _stream_response_generator(
                                                 if chart_match:
                                                     try:
                                                         chart_json_str = chart_match.group(1).strip()
-                                                        logger.info(f"📊 提取到的ECharts JSON (前500字符): {chart_json_str[:500]}")
+                                                        logger.debug(f"📊 提取到的ECharts JSON (前500字符): {chart_json_str[:500]}")
                                                         
                                                         # 尝试修复常见的JSON格式问题
                                                         # 1. 移除可能的markdown代码块标记
@@ -3384,7 +3357,7 @@ async def _stream_response_generator(
                                                         chart_json_str = chart_json_str.strip()
                                                         
                                                         echarts_option = json.loads(chart_json_str)
-                                                        logger.info(f"✅ 成功提取 ECharts 配置: {list(echarts_option.keys())}")
+                                                        logger.debug(f"✅ 成功提取 ECharts 配置: {list(echarts_option.keys())}")
                                                         
                                                         # 发送图表配置事件
                                                         chart_event = {
@@ -3475,7 +3448,7 @@ async def _stream_response_generator(
                                                 logger.error(f"二次LLM调用失败: {e}")
                                     elif execution_success and result.get('data') and chart_already_generated:
                                         # 🔧 修复：跳过后续SQL的图表生成，避免多个图表叠加
-                                        logger.info("🔧 跳过此SQL的图表生成，图表已通过之前的SQL结果生成")
+                                        logger.debug("🔧 跳过此SQL的图表生成，图表已通过之前的SQL结果生成")
 
                                 except Exception as e:
                                     last_error = str(e)
@@ -3506,7 +3479,7 @@ async def _stream_response_generator(
                                         }
                                         yield f"data: {json.dumps(step6_fixing, ensure_ascii=False)}\n\n"
 
-                                        logger.info("尝试使用AI修复SQL...")
+                                        logger.debug("尝试使用AI修复SQL...")
                                         fixed_sql = await _fix_sql_with_ai(
                                             original_sql=current_sql,
                                             error_message=last_error,
@@ -3517,13 +3490,13 @@ async def _stream_response_generator(
                                         )
 
                                         if fixed_sql:
-                                            logger.info(f"AI修复成功，准备重试。修复后的SQL: {fixed_sql[:100]}...")
+                                            logger.debug(f"AI修复成功，准备重试。修复后的SQL: {fixed_sql[:100]}...")
 
                                             # 🔧 流式输出：AI修复成功通知
                                             step6_fixed = {
                                                 "type": "step_update",
                                                 "step": 6,
-                                                "description": f"✅ AI修复成功，准备重试",
+                                                "description": "✅ AI修复成功，准备重试",
                                                 "content_preview": fixed_sql[:100] + ("..." if len(fixed_sql) > 100 else ""),
                                                 "streaming": True,
                                                 "tenant_id": tenant_id
@@ -3575,7 +3548,7 @@ async def _stream_response_generator(
                                     'error_details': error_details,
                                     'retry_count': retry_count
                                 })
-                                logger.info(f"🔧 收集SQL执行错误信息（暂不发送），等待其他SQL结果")
+                                logger.debug("🔧 收集SQL执行错误信息（暂不发送），等待其他SQL结果")
 
                         # 🔧 修复：for循环结束后，统一处理错误信息
                         # 只有当所有SQL都失败时才显示错误
@@ -3617,17 +3590,17 @@ async def _stream_response_generator(
                             # 有SQL成功，但也有失败的，只记录日志不显示错误
                             failed_count = len([r for r in all_sql_results if not r['success']])
                             if failed_count > 0:
-                                logger.info(f"🔧 有 {failed_count} 个SQL失败但至少1个成功，不显示错误信息")
+                                logger.debug(f"🔧 有 {failed_count} 个SQL失败但至少1个成功，不显示错误信息")
 
                         # ========== 🔧 重构：统一图表生成逻辑（循环结束后） ==========
                         # 收集所有成功的SQL结果，一次性调用LLM生成分析和图表（支持多图表）
                         # 🔧 修复：根据问题类型决定是否生成图表
                         if successful_query_results:
-                            logger.info(f"🔧 开始统一数据分析和图表生成：共有 {len(successful_query_results)} 个成功的SQL结果, should_generate_chart={should_generate_chart}")
+                            logger.debug(f"🔧 开始统一数据分析和图表生成：共有 {len(successful_query_results)} 个成功的SQL结果, should_generate_chart={should_generate_chart}")
 
                             # 🔧 如果不需要图表（如SCHEMA_QUERY），跳过图表生成，直接发送数据
                             if not should_generate_chart:
-                                logger.info("🔧 跳过图表生成，直接返回查询结果")
+                                logger.debug("🔧 跳过图表生成，直接返回查询结果")
                                 # 构建 JSON 数据摘要
                                 all_results_summary = []
                                 for idx, query_result in enumerate(successful_query_results, 1):
@@ -3703,7 +3676,6 @@ async def _stream_response_generator(
                                 analysis_hints = []
                                 for idx, query_result in enumerate(successful_query_results, 1):
                                     result_data = query_result['result']
-                                    data_preview = result_data.get('data', [])[:5]
                                     columns = query_result['columns']
                                     row_count = query_result['row_count']
 
@@ -3867,7 +3839,7 @@ async def _stream_response_generator(
                                 provider_instance = llm_service.get_provider(tenant_id, LLMProvider.DEEPSEEK)
                                 if provider_instance:
                                     try:
-                                        logger.info("🔧 开始统一LLM调用：分析数据并生成多图表")
+                                        logger.debug("🔧 开始统一LLM调用：分析数据并生成多图表")
 
                                         # 🔧 流式输出：发送 Step 7/8 的 running 状态
                                         yield _create_processing_step(
@@ -3950,13 +3922,13 @@ async def _stream_response_generator(
                                                         yield f"data: {json.dumps(step8_update_event, ensure_ascii=False)}\n\n"
                                                     last_step8_update = current_time
 
-                                        logger.info(f"🔧 统一LLM调用完成，内容长度: {len(analysis_content)}")
+                                        logger.debug(f"🔧 统一LLM调用完成，内容长度: {len(analysis_content)}")
 
                                         # 提取所有图表配置（支持多个）
                                         chart_pattern = r'\[CHART_START\](.*?)\[CHART_END\]'
                                         chart_matches = re.findall(chart_pattern, analysis_content, re.DOTALL)
 
-                                        logger.info(f"🔧 提取到 {len(chart_matches)} 个图表配置")
+                                        logger.debug(f"🔧 提取到 {len(chart_matches)} 个图表配置")
 
                                         # 为每个图表生成step=7事件
                                         for chart_idx, chart_json_str in enumerate(chart_matches, 1):
@@ -3988,14 +3960,14 @@ async def _stream_response_generator(
                                                     from src.app.domains.query.agent_transformer import convert_simple_chart_to_echarts
                                                     echarts_option = convert_simple_chart_to_echarts(parsed_data)
                                                     if echarts_option:
-                                                        logger.info(f"✅ 成功转换简化格式图表{chart_idx}")
+                                                        logger.debug(f"✅ 成功转换简化格式图表{chart_idx}")
                                                     else:
                                                         logger.warning(f"⚠️ 简化格式转换失败，跳过图表{chart_idx}")
                                                         continue
                                                 else:
                                                     # 已经是完整的 ECharts 配置
                                                     echarts_option = parsed_data
-                                                    logger.info(f"✅ 成功解析图表{chart_idx}: {list(echarts_option.keys())}")
+                                                    logger.debug(f"✅ 成功解析图表{chart_idx}: {list(echarts_option.keys())}")
 
                                                 # 发送图表配置事件
                                                 chart_event = {
@@ -4103,7 +4075,7 @@ async def _stream_response_generator(
                 else:
                     echarts_option = parsed_data
 
-                logger.info(f"✅ 成功提取 ECharts 配置: {list(echarts_option.keys())}")
+                logger.debug(f"✅ 成功提取 ECharts 配置: {list(echarts_option.keys())}")
 
                 # 发送图表配置事件
                 chart_chunk = {
@@ -4160,16 +4132,16 @@ async def _stream_response_generator(
                 logger.error(f"❌ 提取 ECharts 配置时发生错误: {e}")
         elif chart_match and chart_already_generated:
             # 🔧 修复：跳过fallback路径，因为图表已通过二次LLM调用生成
-            logger.info("🔧 跳过fallback图表生成路径，图表已通过二次LLM调用生成")
+            logger.debug("🔧 跳过fallback图表生成路径，图表已通过二次LLM调用生成")
         elif should_generate_chart and not chart_already_generated:
             # 🔧 新增：尝试从 markdown 代码块中提取简化格式的图表
             # AI 可能没有使用 [CHART_START]...[CHART_END] 标记
-            logger.info("🔧 未找到 [CHART_START] 标记，尝试从 markdown 代码块提取简化格式图表...")
+            logger.debug("🔧 未找到 [CHART_START] 标记，尝试从 markdown 代码块提取简化格式图表...")
             from src.app.domains.query.agent_transformer import extract_simple_charts_from_text
             simple_charts = extract_simple_charts_from_text(full_content)
 
             if simple_charts:
-                logger.info(f"✅ 从 markdown 代码块提取到 {len(simple_charts)} 个简化格式图表")
+                logger.debug(f"✅ 从 markdown 代码块提取到 {len(simple_charts)} 个简化格式图表")
 
                 for chart_idx, echarts_option in enumerate(simple_charts, 1):
                     try:
@@ -4226,7 +4198,7 @@ async def _stream_response_generator(
                     except Exception as e:
                         logger.error(f"❌ 处理简化格式图表{chart_idx}失败: {e}")
             else:
-                logger.info("🔧 未从 markdown 代码块中提取到简化格式图表")
+                logger.debug("🔧 未从 markdown 代码块中提取到简化格式图表")
 
         # 发送结束标记
         yield "data: [DONE]\n\n"
@@ -4256,7 +4228,7 @@ async def chat_completion(
     try:
         # 获取tenant_id，支持开发环境下的默认租户
         tenant_id = getattr(current_user, 'tenant_id', None) or current_user.get('tenant_id', 'default_tenant')
-        logger.info(f"Chat completion request for tenant: {tenant_id}, stream={request.stream}, data_source_ids={request.data_source_ids}")
+        logger.debug(f"Chat completion request for tenant: {tenant_id}, stream={request.stream}, data_source_ids={request.data_source_ids}")
         logger.debug(f"Chat completion request debug - stream={request.stream}, data_source_ids={request.data_source_ids}")
         # 转换提供商
         provider = None
@@ -4280,7 +4252,7 @@ async def chat_completion(
         # 收集Schema信息用于前端展示
         schema_info = None
         if data_sources_context:
-            logger.info(f"Data sources context retrieved for tenant {tenant_id}, length: {len(data_sources_context)}")
+            logger.debug(f"Data sources context retrieved for tenant {tenant_id}, length: {len(data_sources_context)}")
             # 调试日志：打印数据源上下文的前1000个字符
             logger.debug(f"Data sources context content (first 1000 chars): {data_sources_context[:1000]}")
             
@@ -4304,7 +4276,7 @@ async def chat_completion(
                 "data_source_name": data_source_name
             }
         else:
-            logger.info(f"No data sources found for tenant {tenant_id}")
+            logger.debug(f"No data sources found for tenant {tenant_id}")
 
         # 转换消息格式
         messages = _convert_chat_messages(request.messages)
@@ -4325,7 +4297,7 @@ async def chat_completion(
                 matching_sources = [ds for ds in data_sources if ds.id in request.data_source_ids]
                 if matching_sources:
                     db_type = matching_sources[0].db_type
-                    logger.info(f"🔍 [LLM端点] 检测到单个数据源，db_type={db_type}")
+                    logger.debug(f"🔍 [LLM端点] 检测到单个数据源，db_type={db_type}")
             except Exception as e:
                 logger.warning(f"⚠️ 获取数据源类型失败: {e}，使用默认 db_type=postgresql")
         elif request.data_source_ids and len(request.data_source_ids) > 1:
@@ -4341,9 +4313,9 @@ async def chat_completion(
                     db_types = set(ds.db_type for ds in matching_sources)
                     if len(db_types) == 1:
                         db_type = db_types.pop()
-                        logger.info(f"🔍 [LLM端点] 多个数据源但类型一致，db_type={db_type}")
+                        logger.debug(f"🔍 [LLM端点] 多个数据源但类型一致，db_type={db_type}")
                     else:
-                        logger.info(f"🔍 [LLM端点] 多个数据源类型不同: {db_types}，使用默认 postgresql")
+                        logger.debug(f"🔍 [LLM端点] 多个数据源类型不同: {db_types}，使用默认 postgresql")
                         db_type = "postgresql"  # 多种类型时使用默认
             except Exception as e:
                 logger.warning(f"⚠️ 获取数据源类型失败: {e}，使用默认 db_type=postgresql")
@@ -4355,7 +4327,7 @@ async def chat_completion(
             system_prompt = _build_system_prompt_with_context(data_sources_context, db_type)
             system_message = LLMMessage(role="system", content=system_prompt)
             messages.insert(0, system_message)
-            logger.info("Added system message with data sources context")
+            logger.debug("Added system message with data sources context")
         elif data_sources_context:
             # 如果已有system消息，替换为完整的数据分析系统提示（包含SQL生成指令）
             # 这样确保AI知道如何正确生成SQL查询
@@ -4363,7 +4335,7 @@ async def chat_completion(
             for i, msg in enumerate(messages):
                 if msg.role == "system":
                     messages[i] = LLMMessage(role="system", content=full_system_prompt, thinking=msg.thinking)
-                    logger.info("Replaced existing system message with full data sources context and SQL instructions")
+                    logger.debug("Replaced existing system message with full data sources context and SQL instructions")
                     break
 
         # 提取用户的最后一条消息作为原始问题
@@ -4382,7 +4354,6 @@ async def chat_completion(
             table_name = None
             if data_sources_context:
                 # 从第一个数据源中提取可能的表名
-                import re
                 for ds in data_sources_context:
                     if ds.get("schema_info") and ds["schema_info"].get("tables"):
                         # 获取第一个表名作为相关表
@@ -4406,7 +4377,7 @@ async def chat_completion(
                         # 在原有提示后追加历史错误示例
                         enhanced_prompt = msg.content + "\n\n" + few_shot_prompt
                         messages[i] = LLMMessage(role="system", content=enhanced_prompt, thinking=msg.thinking)
-                        logger.info(f"✅ [SQL错误记忆] 已注入{few_shot_prompt.count('错误')}个历史错误示例到Prompt")
+                        logger.debug(f"✅ [SQL错误记忆] 已注入{few_shot_prompt.count('错误')}个历史错误示例到Prompt")
                         break
         except Exception as error_inject_error:
             logger.warning(f"⚠️ [SQL错误记忆] 注入历史错误失败: {error_inject_error}")
@@ -4416,13 +4387,13 @@ async def chat_completion(
         if request.stream:
             # 流式响应
             # 注意：chat_completion 是异步函数，需要 await 来获取 AsyncGenerator
-            logger.info(f"[STREAM] Starting stream request for tenant {tenant_id}")
-            logger.info(f"[STREAM] Starting stream request for tenant {tenant_id}")
+            logger.debug(f"[STREAM] Starting stream request for tenant {tenant_id}")
+            logger.debug(f"[STREAM] Starting stream request for tenant {tenant_id}")
             
             # 方案 B: 不使用 Function Calling，改用 SQL 代码块检测
             # DeepSeek 不支持标准的 OpenAI Function Calling 协议
             # 所以我们让 AI 直接在回答中输出 ```sql ... ``` 代码块，然后自动检测并执行
-            logger.info(f"[STREAM] 使用 SQL 代码块检测模式（方案B）")
+            logger.debug("[STREAM] 使用 SQL 代码块检测模式（方案B）")
             
             response_generator = await llm_service.chat_completion(
                 tenant_id=tenant_id,
@@ -4436,7 +4407,7 @@ async def chat_completion(
                 tools=None  # 不传递工具定义，使用 SQL 代码块检测
             )
             
-            logger.info(f"[STREAM] Stream generator created, starting response")
+            logger.debug("[STREAM] Stream generator created, starting response")
 
             # ========== 🔧 修复：先分类问题，再决定使用哪个生成器 ==========
             # 导入问题分类器
@@ -4448,7 +4419,7 @@ async def chat_completion(
             # 🔧 关键修复：先分类问题，再决定使用哪个生成器
             # 即使有数据源，如果是简单对话也应使用动态步骤流程
             question_type = classify_question(original_question, has_data_source=is_agent_mode)
-            logger.info(f"[STREAM] Question classified as: {question_type.value}, is_agent_mode={is_agent_mode}")
+            logger.debug(f"[STREAM] Question classified as: {question_type.value}, is_agent_mode={is_agent_mode}")
 
             # 判断是否需要使用SQL流程（只有真正需要查询数据时才使用）
             # 🔧 修复：SCHEMA_QUERY不需要SQL流程，Agent直接回答schema信息即可
@@ -4460,7 +4431,7 @@ async def chat_completion(
 
             if needs_sql_flow:
                 # Agent SQL查询模式：6-8步流程（仅在真正需要数据查询时使用）
-                logger.info(f"[STREAM] Using Agent SQL mode for data query, question_type={question_type.value}")
+                logger.debug(f"[STREAM] Using Agent SQL mode for data query, question_type={question_type.value}")
                 return StreamingResponse(
                     _stream_response_generator(
                         response_generator,
@@ -4483,7 +4454,7 @@ async def chat_completion(
             else:
                 # 🔧 修复：普通对话模式（包括简单问候）使用动态步骤流程
                 # 即使有数据源，如果是简单对话也走这里
-                logger.info(f"[STREAM] Using General Chat mode (dynamic steps: {question_type.value})")
+                logger.debug(f"[STREAM] Using General Chat mode (dynamic steps: {question_type.value})")
                 return StreamingResponse(
                     _stream_general_chat_generator(
                         response_generator,
@@ -4512,7 +4483,7 @@ async def chat_completion(
                 stream=request.stream,
                 enable_thinking=request.enable_thinking
             )
-            logger.info(f"[PERF] llm_service.chat_completion took {time.time() - llm_start:.2f}s")
+            logger.debug(f"[PERF] llm_service.chat_completion took {time.time() - llm_start:.2f}s")
 
             if isinstance(response, LLMResponse):
                 # 检测并执行SQL查询（使用之前提取的原始问题和指定的数据源）
@@ -4791,7 +4762,7 @@ async def test_intelligent_params(
                 messages=case["messages"],
                 enable_thinking=None,  # 自动判断
                 temperature=complexity.get("recommend_temperature", 0.7),
-                max_tokens=complexity.get("recommend_max_tokens", getattr(settings, "llm_max_output_tokens", 8192))
+                max_tokens=complexity.get("recommend_max_tokens", 8192)
             )
 
             results.append({
@@ -4958,7 +4929,7 @@ async def test_all_features(
             stream=False,
             enable_thinking=None,  # 自动启用思考模式
             temperature=complexity_analysis.get("recommend_temperature", 0.7),
-            max_tokens=complexity_analysis.get("recommend_max_tokens", getattr(settings, "llm_max_output_tokens", 8192))
+            max_tokens=complexity_analysis.get("recommend_max_tokens", 8192)
         )
 
         # 获取可用模型列表

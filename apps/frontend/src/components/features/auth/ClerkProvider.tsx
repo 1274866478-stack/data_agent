@@ -40,6 +40,7 @@
 import { ReactNode, useEffect, useState } from 'react'
 import { AuthProvider } from './AuthContext'
 import { useAuthStore } from '@/store'
+import logger from '@/lib/logger'
 
 interface ClerkProviderProps {
   children: ReactNode
@@ -75,7 +76,7 @@ export function ClerkProviderWrapper({ children, publishableKey }: ClerkProvider
           setClerkLoaded(true)
         }
       } catch (error) {
-        console.error('Failed to load Clerk:', error)
+        logger.error('ClerkProvider', 'failed to load clerk', error)
         setClerkLoaded(false)
       }
     }

@@ -81,10 +81,66 @@ import re
 import sys
 import os
 import copy
+import builtins
+from pathlib import Path
 from datetime import datetime, date
-from typing import Annotated, Literal, Optional, Dict, Any, List, Tuple
+from typing import Literal, Optional, Dict, Any, List, Tuple
 
 # 配置日志记录器
+logger = logging.getLogger(__name__)
+
+
+_stdout_flag = os.getenv("AGENT_STDOUT_VERBOSE")
+if _stdout_flag is None:
+    # CLI 直跑保留 stdout，服务模式默认降为 debug 日志
+    _stdout_flag = "1" if __name__ == "__main__" else "0"
+_print_to_stdout = _stdout_flag.lower() in {"1", "true", "yes", "on"}
+
+
+def _agent_print(*args, **kwargs):
+    if _print_to_stdout:
+        builtins.print(*args, **kwargs)
+        return
+
+    sep = kwargs.get("sep", " ")
+    end = kwargs.get("end", "")
+    try:
+        message = sep.join(str(arg) for arg in args) + ("" if end == "\n" else str(end))
+    except Exception:
+        message = " ".join(str(arg) for arg in args)
+    logger.debug(message)
+
+
+# 统一模块内遗留 print 输出，避免污染容器标准输出
+print = _agent_print
+
+try:
+    from .core.backend_runtime import import_first_available
+except ImportError:  # pragma: no cover - script mode fallback
+    from core.backend_runtime import import_first_available
+
+DATA_VALIDATOR_MODULE_CANDIDATES = (
+    "app.domains.query.agent.data_validator",
+    "app.services.agent.data_validator",
+    "src.app.domains.query.agent.data_validator",
+    "src.app.services.agent.data_validator",
+)
+
+FILE_TOOLS_MODULE_CANDIDATES = (
+    "app.services.agent.tools",
+    "app.domains.query.agent.tools",
+    "src.app.services.agent.tools",
+    "src.app.domains.query.agent.tools",
+)
+
+
+def _load_backend_exports(module_candidates, required_attrs):
+    module = import_first_available(
+        module_candidates,
+        required_attrs=required_attrs,
+    )
+    return module, {attr: getattr(module, attr) for attr in required_attrs}
+
 
 def _looks_like_year_trend(question: str) -> bool:
     if not question:
@@ -418,21 +474,20 @@ from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from pathlib import Path
 
 try:
     # 作为包导入时（from AgentV2.sql_agent import ...）
     from .config import config
     from .models import VisualizationResponse, QueryResult, ChartConfig, ChartType
     from .terminal_viz import render_response
-    from .data_transformer import sql_result_to_echarts_data, sql_result_to_mcp_echarts_data
+    from .data_transformer import sql_result_to_echarts_data
     from .chart_service import ChartRequest, generate_chart_simple, ChartResponse
 except ImportError:
     # 直接运行时（python sql_agent.py）
     from config import config
     from models import VisualizationResponse, QueryResult, ChartConfig, ChartType
     from terminal_viz import render_response
-    from data_transformer import sql_result_to_echarts_data, sql_result_to_mcp_echarts_data
+    from data_transformer import sql_result_to_echarts_data
     from chart_service import ChartRequest, generate_chart_simple, ChartResponse
 
 # 🔥 加载精简版 prompt（包含趋势查询强制规则）
@@ -461,27 +516,15 @@ MIN_ANALYSIS_LENGTH = 50  # 最短分析长度阈值
 # 🔧 新增：企业级可信智能数据体节点
 try:
     from .nodes import (
-        PlanningNode,
-        ReflectionNode,
-        ClarificationNode,
-        AnalysisNode,
         create_planning_node,
         create_reflection_node,
         create_clarification_node,
-        create_analysis_node,
-        ErrorCategory
     )
 except ImportError:
     from nodes import (
-        PlanningNode,
-        ReflectionNode,
-        ClarificationNode,
-        AnalysisNode,
         create_planning_node,
         create_reflection_node,
         create_clarification_node,
-        create_analysis_node,
-        ErrorCategory
     )
 
 # 🔥 导入语义层工具
@@ -503,28 +546,31 @@ except ImportError:
     )
 
 # 数据一致性验证：防止 LLM 幻觉导致的数据不匹配
+smart_field_mapping = None
+recommend_chart = None
 try:
-    from backend.src.app.services.agent.data_validator import (
-        validate_sql_data_consistency,
-        smart_field_mapping,
-        recommend_chart,
+    _validator_module, _validator_exports = _load_backend_exports(
+        DATA_VALIDATOR_MODULE_CANDIDATES,
+        ("smart_field_mapping", "recommend_chart"),
     )
+    smart_field_mapping = _validator_exports["smart_field_mapping"]
+    recommend_chart = _validator_exports["recommend_chart"]
     DATA_VALIDATION_ENABLED = True
-except ImportError:
+except Exception:
     DATA_VALIDATION_ENABLED = False
-    print("⚠️  警告: 数据验证模块未启用（data_validator.py不可用）")
+    logger.warning("数据验证模块未启用（data_validator.py 不可用）")
 
 # 🔧 新增：导入 database_tools 模块用于设置用户查询上下文
 try:
-    from .tools.database_tools import _set_user_query, _clear_user_query
+    from .tools import clear_user_query_context, set_user_query_context
     DATABASE_TOOLS_AVAILABLE = True
 except ImportError:
     try:
-        from tools.database_tools import _set_user_query, _clear_user_query
+        from tools import clear_user_query_context, set_user_query_context
         DATABASE_TOOLS_AVAILABLE = True
     except ImportError:
         DATABASE_TOOLS_AVAILABLE = False
-        print("⚠️  警告: database_tools 模块未可用")
+        logger.warning("database_tools 模块未可用")
 
 # 表推荐工具
 try:
@@ -542,22 +588,39 @@ except ImportError:
         TABLE_RECOMMENDATION_TOOLS_AVAILABLE = True
     except ImportError:
         TABLE_RECOMMENDATION_TOOLS_AVAILABLE = False
-        print("⚠️  警告: table_recommendation_tools 模块未可用")
+        logger.warning("table_recommendation_tools 模块未可用")
 
 # 🔍 错误追踪模块（质量保证）
+_error_category_cls = None
+_error_tracker_decorator = None
+_log_agent_error_fn = None
 try:
-    from .error_tracker import error_tracker, log_agent_error, ErrorCategory
+    from .error_tracker import (
+        error_tracker as _error_tracker_decorator,
+        log_agent_error as _log_agent_error_fn,
+        ErrorCategory as _error_category_cls,
+    )
     ERROR_TRACKING_ENABLED = True
 except ImportError:
     try:
-        from error_tracker import error_tracker, log_agent_error, ErrorCategory
+        from error_tracker import (
+            error_tracker as _error_tracker_decorator,
+            log_agent_error as _log_agent_error_fn,
+            ErrorCategory as _error_category_cls,
+        )
         ERROR_TRACKING_ENABLED = True
     except ImportError:
         ERROR_TRACKING_ENABLED = False
-        print("⚠️  警告: 错误追踪模块未启用（error_tracker.py不可用）")
+        logger.warning("错误追踪模块未启用（error_tracker.py 不可用）")
 
+if _error_category_cls is not None:
+    ErrorCategory = _error_category_cls
+    error_tracker = _error_tracker_decorator
+    log_agent_error = _log_agent_error_fn
+else:
     # 提供回退的 ErrorCategory 定义
     from enum import Enum
+
     class ErrorCategory(str, Enum):
         DANGEROUS_OPERATION = "dangerous_operation"
         SQL_INJECTION_ATTEMPT = "sql_injection_attempt"
@@ -566,6 +629,9 @@ except ImportError:
         SCHEMA_NOT_FOUND = "schema_not_found"
         EMPTY_RESULT = "empty_result"
         SQL_SYNTAX_ERROR = "sql_syntax_error"
+        DATA_TYPE_MISMATCH = "data_type_mismatch"
+        MCP_TOOL_FAILURE = "mcp_tool_failure"
+        AMBIGUOUS_QUERY = "ambiguous_query"
         UNKNOWN = "unknown"
 
     # 提供 no-op 的回退函数
@@ -580,56 +646,24 @@ _inspect_file_tool = None
 _analyze_dataframe_tool = None
 
 try:
-    import sys
-    from pathlib import Path
-    
-    # 尝试多种导入路径
-    import_paths = [
-        # 路径1: 从项目根目录导入
-        (Path(__file__).parent.parent / "backend" / "src", "app.services.agent.tools"),
-        # 路径2: 从 backend 目录导入
-        (Path(__file__).parent.parent / "backend" / "src" / "app" / "services" / "agent", "tools"),
-        # 路径3: 直接导入（如果已经在路径中）
-        (None, "src.app.services.agent.tools"),
-    ]
-    
-    for backend_path, import_module in import_paths:
-        try:
-            if backend_path and str(backend_path) not in sys.path:
-                sys.path.insert(0, str(backend_path))
-            
-            module = __import__(import_module, fromlist=['inspect_file', 'analyze_dataframe'])
-            _inspect_file_tool = getattr(module, 'inspect_file', None)
-            _analyze_dataframe_tool = getattr(module, 'analyze_dataframe', None)
-            
-            if _inspect_file_tool and _analyze_dataframe_tool:
-                print(f"[OK] 文件数据源工具导入成功 (路径: {import_module})")
-                print(f"   - inspect_file: {getattr(_inspect_file_tool, 'name', 'unknown')}")
-                print(f"   - analyze_dataframe: {getattr(_analyze_dataframe_tool, 'name', 'unknown')}")
-                break
-        except (ImportError, AttributeError) as e:
-            continue
-    
-    if not _inspect_file_tool or not _analyze_dataframe_tool:
-        raise ImportError("所有导入路径都失败了")
-        
-except Exception as e:
-    import os
-    print(f"[WARNING] 文件数据源工具导入失败: {e}")
-    print(f"   当前工作目录: {os.getcwd()}")
-    print(f"   脚本路径: {Path(__file__).absolute()}")
-    print(f"   Python 路径: {sys.path[:3]}")
-    print("   提示: 这些工具可能在某些环境下不可用，但会尝试继续运行")
+    module, file_tool_exports = _load_backend_exports(
+        FILE_TOOLS_MODULE_CANDIDATES,
+        ("inspect_file", "analyze_dataframe"),
+    )
+    _inspect_file_tool = file_tool_exports["inspect_file"]
+    _analyze_dataframe_tool = file_tool_exports["analyze_dataframe"]
+    logger.info("文件数据源工具导入成功: %s", module.__name__)
+
+except Exception as exc:
+    logger.warning("文件数据源工具导入失败，将继续运行: %s", exc)
 
 import base64
-import os
-from datetime import datetime
 
 # 🔒 导入独立的 SQL 安全校验模块
 try:
-    from .sql_validator import SQLValidator, SQLValidationError
+    from .sql_validator import SQLValidator
 except ImportError:
-    from sql_validator import SQLValidator, SQLValidationError
+    from sql_validator import SQLValidator
 
 
 # ===============================================
@@ -687,9 +721,6 @@ class SQLQualityOptimizer:
                     return match_obj.group(0)
 
             # 从右向左替换（避免索引变化）
-            tenant_id_pattern = r"tenant_id\s*=\s*'[^']+'(?:\s+AND\s+)?"
-            parts = re.split(tenant_id_pattern, sql, flags=re.IGNORECASE)
-
             # 更简单的方法：直接重建 WHERE 子句
             where_match = re.search(r'WHERE\s+(.+?)(?:GROUP BY|ORDER BY|LIMIT|$)', sql, re.IGNORECASE | re.DOTALL)
             if where_match:
@@ -1231,7 +1262,7 @@ def get_system_prompt(db_type: str = "postgresql") -> str:
     Returns:
         str: 系统提示词（包含当前时间信息）
     """
-    print(f"🔍 [get_system_prompt] 调用参数 db_type='{db_type}'")
+    logger.debug("[get_system_prompt] db_type=%s", db_type)
 
     # 🕒 动态时间上下文（对于"昨天"、"上月"等时间查询至关重要）
     current_time = datetime.now()
@@ -1411,16 +1442,16 @@ ORDER BY order_count;
 
         # 在提示词末尾追加数据分析输出要求和时间上下文
         result = result + data_analysis_output_requirement + time_context
-        print(f"🔍 [get_system_prompt] 成功生成提示词，长度={len(result)}")
+        logger.debug("[get_system_prompt] 生成提示词长度=%s", len(result))
         # 打印提示词的前200字符，验证是否包含数据库特定信息
         preview = result[:200].replace('\n', ' ')
-        print(f"🔍 [get_system_prompt] 提示词预览: {preview}...")
+        logger.debug("[get_system_prompt] 提示词预览: %s...", preview)
         return result
     except ImportError as e:
-        print(f"⚠️ 无法导入 prompt_generator: {e}，使用默认PostgreSQL提示词")
+        logger.warning("无法导入 prompt_generator，使用默认 PostgreSQL 提示词: %s", e)
         return BASE_SYSTEM_PROMPT + data_analysis_output_requirement + time_context
     except Exception as e:
-        print(f"⚠️ 生成动态提示词失败: {e}，使用默认PostgreSQL提示词")
+        logger.warning("生成动态提示词失败，使用默认 PostgreSQL 提示词: %s", e)
         return BASE_SYSTEM_PROMPT + data_analysis_output_requirement + time_context
 
 
@@ -2441,7 +2472,7 @@ def _get_mcp_config():
             db_url += "&sslmode=require"
         else:
             db_url += "?sslmode=require"
-        print(f"🔒 添加SSL参数到数据库连接")
+        print("🔒 添加SSL参数到数据库连接")
 
     mcp_config = {
         "postgres": {
@@ -2515,23 +2546,23 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
         if _inspect_file_tool:
             tool_name = getattr(_inspect_file_tool, "name", "inspect_file")
             if tool_name not in tool_names_before:
-                print(f"➕ [强制添加] inspect_file 工具")
+                print("➕ [强制添加] inspect_file 工具")
                 _cached_tools.append(_inspect_file_tool)
             else:
-                print(f"ℹ️ inspect_file 工具已存在于 MCP 工具列表中")
+                print("ℹ️ inspect_file 工具已存在于 MCP 工具列表中")
         else:
-            print(f"⚠️ inspect_file 工具未导入，无法添加")
+            print("⚠️ inspect_file 工具未导入，无法添加")
         
         # 强制添加 analyze_dataframe
         if _analyze_dataframe_tool:
             tool_name = getattr(_analyze_dataframe_tool, "name", "analyze_dataframe")
             if tool_name not in tool_names_before:
-                print(f"➕ [强制添加] analyze_dataframe 工具")
+                print("➕ [强制添加] analyze_dataframe 工具")
                 _cached_tools.append(_analyze_dataframe_tool)
             else:
-                print(f"ℹ️ analyze_dataframe 工具已存在于 MCP 工具列表中")
+                print("ℹ️ analyze_dataframe 工具已存在于 MCP 工具列表中")
         else:
-            print(f"⚠️ analyze_dataframe 工具未导入，无法添加")
+            print("⚠️ analyze_dataframe 工具未导入，无法添加")
         
         # 🔥 添加语义层工具
         from langchain_core.tools import StructuredTool
@@ -2585,7 +2616,7 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
             _cached_tools.extend(table_recommendation_tools)
             print(f"✅ 已添加 {len(table_recommendation_tools)} 个表推荐工具")
         else:
-            print(f"⚠️  表推荐工具未可用，跳过注册")
+            print("⚠️  表推荐工具未可用，跳过注册")
 
         # 最终验证
         final_tool_count = len(_cached_tools)
@@ -2829,7 +2860,7 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
 
         if not any(isinstance(m, SystemMessage) for m in messages):
             messages = [SystemMessage(content=enhanced_system_prompt)] + messages
-            print(f"📝 [系统提示词] 添加新的系统消息")
+            print("📝 [系统提示词] 添加新的系统消息")
         elif is_split_request or is_merge_request:
             # 替换已有的系统消息
             old_system_count = len([m for m in messages if isinstance(m, SystemMessage)])
@@ -2839,7 +2870,7 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
             if chart_count:
                 print(f"📝 [增强提示词] 包含图表数量指令: {chart_count} 个图表")
             else:
-                print(f"📝 [增强提示词] 包含拆分指令 (无具体数量)")
+                print("📝 [增强提示词] 包含拆分指令 (无具体数量)")
 
         # 🔧 标准化消息内容：将 ToolMessage 的 list 格式转换为 string
         # MCP 服务器返回的 ToolMessage.content 可能是 list 格式
@@ -2919,12 +2950,12 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
                     else:
                         # 如果没有有效的 tool_calls，保留消息但移除 tool_calls
                         cleaned_messages.append(LC_AIMessage(content=msg.content))
-                        print(f"🔧 [消息清理] AIMessage 的所有 tool_calls 被移除")
+                        print("🔧 [消息清理] AIMessage 的所有 tool_calls 被移除")
                 else:
                     cleaned_messages.append(msg)
             messages = cleaned_messages
         else:
-            print(f"🔧 [消息清理] 所有 tool_calls 均有效，无需清理")
+            print("🔧 [消息清理] 所有 tool_calls 均有效，无需清理")
 
         response = await llm_with_tools.ainvoke(messages)
 
@@ -2933,7 +2964,7 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
             try:
                 response.tool_calls = apply_time_aggregation_fix_to_tool_calls_v2(
                     list(response.tool_calls),
-                    question
+                    str(last_human_message or "")
                 )
             except Exception as e:
                 print(f"⚠️ [时间聚合修正失败] {e}")
@@ -2947,7 +2978,7 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
                 if len(chart_tools) < chart_count:
                     print(f"⚠️ [警告] 用户要求 {chart_count} 个图表，但 LLM 只调用了 {len(chart_tools)} 个图表工具！")
         else:
-            print(f"🔧 [工具调用] 本次 LLM 调用没有工具调用")
+            print("🔧 [工具调用] 本次 LLM 调用没有工具调用")
 
         # 🔧 如果是拆分请求但LLM没有调用工具，强制提取SQL并创建工具调用
         if is_split_request and not response.tool_calls:
@@ -3056,13 +3087,13 @@ async def _get_or_create_agent(db_type: str = "postgresql"):
                     if tool_message_count >= 3:
                         print(f"❌ 修复次数已达上限 ({tool_message_count})，停止尝试")
                         return END
-                    print(f"🚨 检测到工具执行错误，路由回 Agent 进行自我修正...")
+                    print("🚨 检测到工具执行错误，路由回 Agent 进行自我修正...")
                     return "agent"
 
             # 🔥 核心修复：工具执行成功后，强制回到 agent 让 LLM 生成最终分析答案
             # 这解决了"工具调用后只返回原始数据而不生成分析文本"的问题
             if tool_message_count < 5:  # 确保不会无限循环
-                print(f"✅ 工具执行完成，路由回 Agent 生成最终分析答案...")
+                print("✅ 工具执行完成，路由回 Agent 生成最终分析答案...")
                 return "agent"
 
         # B. 检查 AI 是否要调用工具
@@ -3180,7 +3211,7 @@ GROUP BY category;'''
 FROM {table_name}
 GROUP BY category;'''
 
-                logger.info(f"[SQL优化] 检测到占比类单次COUNT查询，自动转换为GROUP BY")
+                logger.info("[SQL优化] 检测到占比类单次COUNT查询，自动转换为GROUP BY")
                 logger.info(f"  原始SQL: {query[:100]}...")
                 logger.info(f"  优化SQL: {optimized[:100]}...")
                 return optimized
@@ -3288,13 +3319,6 @@ GROUP BY category;'''
         if not isinstance(last_message, ToolMessage):
             return {"messages": []}
 
-        # 获取原始问题（用于上下文）
-        original_question = ""
-        for msg in messages:
-            if isinstance(msg, HumanMessage):
-                original_question = msg.content
-                break
-
         # 检查最近的 query 工具调用
         for msg in reversed(messages):
             if isinstance(msg, AIMessage) and msg.tool_calls:
@@ -3319,7 +3343,7 @@ GROUP BY category;'''
 
 请使用修复后的 SQL 重新查询。"""
 
-                            print(f"🔧 [SQL质量检查] 检测到问题并已修复")
+                            print("🔧 [SQL质量检查] 检测到问题并已修复")
                             for issue in issues:
                                 print(f"  - {issue}")
 
@@ -3386,7 +3410,6 @@ GROUP BY category;'''
         messages = state["messages"]
 
         # 首先检查是否已经执行了SQL查询
-        has_query_result = False
         has_sql_data = False
         has_chart = False  # 🔧 新增：检查是否已生成图表
 
@@ -3406,14 +3429,6 @@ GROUP BY category;'''
                 elif 'image' in content.lower() or '图表已生成' in content:
                     has_chart = True
                     break
-                # 检查是否是query工具的调用
-                for earlier_msg in messages:
-                    if isinstance(earlier_msg, AIMessage) and earlier_msg.tool_calls:
-                        for tc in earlier_msg.tool_calls:
-                            if tc.get('name') in ('query', 'execute_query'):
-                                has_query_result = True
-                                break
-
         # 检查反思结果
         for msg in reversed(messages):
             if isinstance(msg, AIMessage):
@@ -3548,7 +3563,7 @@ async def run_agent(question: str, thread_id: str = "1", verbose: bool = True, d
     """
     # 🔧 新增：设置用户查询上下文（用于地理查询智能推荐）
     if DATABASE_TOOLS_AVAILABLE:
-        _set_user_query(question)
+        set_user_query_context(question)
 
     # 🚀 使用持久化的 Agent（传递 db_type 参数）
     agent, mcp_client = await _get_or_create_agent(db_type=db_type)
@@ -3618,7 +3633,7 @@ async def run_agent(question: str, thread_id: str = "1", verbose: bool = True, d
         print(f"{'='*60}")
         
         # 打印结构化数据摘要
-        print(f"\n📊 结构化数据摘要:")
+        print("\n📊 结构化数据摘要:")
         print(f"   - SQL: {viz_response.sql[:50]}..." if viz_response.sql else "   - SQL: 无")
         print(f"   - 数据行数: {viz_response.data.row_count}")
         print(f"   - 推荐图表: {viz_response.chart.chart_type.value}")
@@ -3626,7 +3641,7 @@ async def run_agent(question: str, thread_id: str = "1", verbose: bool = True, d
 
     # 🔧 新增：清除用户查询上下文
     if DATABASE_TOOLS_AVAILABLE:
-        _clear_user_query()
+        clear_user_query_context()
 
     return viz_response
 

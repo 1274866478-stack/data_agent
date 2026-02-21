@@ -8,8 +8,6 @@ from typing import Optional, Any, Dict
 import json
 import hashlib
 
-from src.app.core.config import settings
-
 
 class SemanticCache:
     """语义层缓存服务"""
@@ -108,7 +106,7 @@ class SemanticCache:
         # 本地缓存：删除所有该租户的缓存
         keys_to_delete = [
             k for k in self._local_cache.keys()
-            if k.startswith(f"semantic:query:") and f":{tenant_id}:" in k
+            if k.startswith("semantic:query:") and f":{tenant_id}:" in k
         ]
         for key in keys_to_delete:
             del self._local_cache[key]

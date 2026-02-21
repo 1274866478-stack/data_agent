@@ -110,7 +110,7 @@ class RequestLogger:
         """
         记录API请求开始
         """
-        self.logger.info(
+        self.logger.debug(
             f"Request started: {method} {path}",
             extra={
                 "event_type": "request_start",
@@ -133,7 +133,7 @@ class RequestLogger:
         """
         记录API请求完成
         """
-        level = logging.INFO if status_code < 400 else logging.WARNING
+        level = logging.DEBUG if status_code < 400 else logging.WARNING
         self.logger.log(
             level,
             f"Request completed: {method} {path} - {status_code} in {duration:.3f}s",
@@ -158,7 +158,7 @@ def performance_logger(operation_name: str, logger: Optional[logging.Logger] = N
         logger = logging.getLogger(__name__)
 
     start_time = time.time()
-    logger.info(
+    logger.debug(
         f"Starting operation: {operation_name}",
         extra={"event_type": "operation_start", "operation": operation_name},
     )
@@ -180,7 +180,7 @@ def performance_logger(operation_name: str, logger: Optional[logging.Logger] = N
         raise
     else:
         duration = time.time() - start_time
-        logger.info(
+        logger.debug(
             f"Operation completed: {operation_name} in {duration:.3f}s",
             extra={
                 "event_type": "operation_end",
@@ -244,6 +244,10 @@ def setup_logging():
     os.makedirs("logs", exist_ok=True)
 
     logging.config.dictConfig(log_config)
+
+    # 降低第三方噪声日志
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
     # 记录应用启动日志
     logger = logging.getLogger("app")

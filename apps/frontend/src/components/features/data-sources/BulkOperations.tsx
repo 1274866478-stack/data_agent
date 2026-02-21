@@ -76,6 +76,7 @@ import {
   Square,
 } from 'lucide-react'
 import { useDashboardStore, SearchResult } from '@/store/dashboardStore'
+import logger from '@/lib/logger'
 
 interface BulkOperationsProps {
   items: SearchResult[]
@@ -184,7 +185,7 @@ export const BulkOperations: React.FC<BulkOperationsProps> = ({
     try {
       await bulkDelete(selectedItems, activeTab as 'document' | 'database')
     } catch (error) {
-      console.error('批量删除失败:', error)
+      logger.error('BulkOperations', 'batch delete failed', error)
     }
   }
 

@@ -113,6 +113,7 @@ import { documentService } from '@/services/api'
 import type { DocumentStats, KnowledgeDocument } from '@/types/store/document'
 import { DocumentStatus } from '@/types/store/document'
 import { getDocumentUploadKey } from '@/utils/documentKeys'
+import logger from '@/lib/logger'
 
 // 上传进度信息
 export interface UploadProgress {
@@ -121,6 +122,14 @@ export interface UploadProgress {
     status: 'uploading' | 'processing' | 'completed' | 'error'
     error?: string
   }
+}
+
+interface UploadDocumentOptions {
+  refreshAfterUpload?: boolean
+}
+
+interface DeleteDocumentOptions {
+  refreshAfterDelete?: boolean
 }
 
 // 文档状态接口
@@ -150,9 +159,9 @@ interface DocumentState {
 
   // 操作方法
   fetchDocuments: (refresh?: boolean) => Promise<void>
-  uploadDocument: (file: File) => Promise<void>
+  uploadDocument: (file: File, options?: UploadDocumentOptions) => Promise<void>
   uploadMultipleDocuments: (files: File[]) => Promise<void>
-  deleteDocument: (id: string) => Promise<void>
+  deleteDocument: (id: string, options?: DeleteDocumentOptions) => Promise<void>
   deleteSelectedDocuments: () => Promise<void>
   getDocumentPreviewUrl: (id: string, expiresHours?: number) => Promise<string>
   getDocumentDownloadUrl: (id: string) => Promise<string>
@@ -205,7 +214,10 @@ export const useDocumentStore = create<DocumentState>()(
             state.error = null
           })
 
-          const { currentPage, pageSize, statusFilter, fileTypeFilter, searchQuery } = get()
+          // 保留 refresh 参数用于向后兼容（当前实现不区分 refresh 逻辑）
+          void refresh
+
+          const { currentPage, pageSize, statusFilter, fileTypeFilter } = get()
 
           // 构建查询参数
           const params = new URLSearchParams({
@@ -231,7 +243,7 @@ export const useDocumentStore = create<DocumentState>()(
           })
 
         } catch (error) {
-          console.error('Failed to fetch documents:', error)
+          logger.error('DocumentStore', 'fetchDocuments failed', error)
           set((state) => {
             state.error = error instanceof Error ? error.message : '获取文档列表失败'
             state.isLoading = false
@@ -240,9 +252,9 @@ export const useDocumentStore = create<DocumentState>()(
       },
 
       // 上传单个文档
-      uploadDocument: async (file: File) => {
+      uploadDocument: async (file: File, options: UploadDocumentOptions = {}) => {
         try {
-          // ??????
+          // 生成稳定 uploadId，确保进度条按文件粒度更新
           const uploadId = getDocumentUploadKey(file)
 
           set((state) => {
@@ -273,24 +285,27 @@ export const useDocumentStore = create<DocumentState>()(
           )
 
           if (!result.success || !result.document) {
-            throw new Error(result.error || '????')
+            throw new Error(result.error || '上传失败')
           }
 
-          // ????
+          // 更新本地列表和进度
           set((state) => {
             state.uploadProgress[uploadId] = {
               progress: 100,
               status: 'completed'
             }
-            // ???????
+            // 乐观更新：优先把新文档展示到列表顶部
             state.documents.unshift(result.document)
             state.total += 1
           })
 
-          // ??????
-          await get().fetchDocuments()
+          if (options.refreshAfterUpload !== false) {
+            void get().fetchDocuments().catch((error) => {
+              logger.error('DocumentStore', 'background refresh after upload failed', error)
+            })
+          }
 
-          // ????????????
+          // 延迟清理上传进度，方便用户看到完成状态
           setTimeout(() => {
             set((state) => {
               delete state.uploadProgress[uploadId]
@@ -298,8 +313,8 @@ export const useDocumentStore = create<DocumentState>()(
           }, 3000)
 
         } catch (error) {
-          console.error('Upload failed:', error)
-          const errorMessage = error instanceof Error ? error.message : '??????'
+          logger.error('DocumentStore', 'uploadDocument failed', error)
+          const errorMessage = error instanceof Error ? error.message : '上传失败'
           set((state) => {
             state.error = errorMessage
             const uploadId = getDocumentUploadKey(file)
@@ -315,28 +330,37 @@ export const useDocumentStore = create<DocumentState>()(
 
       // 批量上传文档
       uploadMultipleDocuments: async (files: File[]) => {
-        const uploadPromises = files.map(file => get().uploadDocument(file))
+        const uploadPromises = files.map((file) =>
+          get().uploadDocument(file, { refreshAfterUpload: false })
+        )
 
         try {
           const results = await Promise.allSettled(uploadPromises)
+          const successUploads = results.filter((result) => result.status === 'fulfilled').length
 
           // 检查是否有失败的上传
           const failedUploads = results.filter(
             result => result.status === 'rejected'
           ).length
 
+          if (successUploads > 0) {
+            void get().fetchDocuments().catch((error) => {
+              logger.error('DocumentStore', 'background refresh after batch upload failed', error)
+            })
+          }
+
           if (failedUploads > 0) {
             throw new Error(`${failedUploads} 个文件上传失败`)
           }
 
         } catch (error) {
-          console.error('Batch upload failed:', error)
+          logger.error('DocumentStore', 'uploadMultipleDocuments failed', error)
           throw error
         }
       },
 
       // 删除文档
-      deleteDocument: async (id: string) => {
+      deleteDocument: async (id: string, options: DeleteDocumentOptions = {}) => {
         try {
           await documentService.remove(id)
 
@@ -346,11 +370,14 @@ export const useDocumentStore = create<DocumentState>()(
             state.total = Math.max(0, state.total - 1)
           })
 
-          // 刷新统计信息
-          await get().fetchDocuments()
+          if (options.refreshAfterDelete !== false) {
+            void get().fetchDocuments().catch((error) => {
+              logger.error('DocumentStore', 'background refresh after delete failed', error)
+            })
+          }
 
         } catch (error) {
-          console.error('Delete failed:', error)
+          logger.error('DocumentStore', 'deleteDocument failed', error)
           set((state) => {
             state.error = error instanceof Error ? error.message : '删除文档失败'
           })
@@ -367,15 +394,24 @@ export const useDocumentStore = create<DocumentState>()(
         }
 
         try {
-          const deletePromises = selectedDocuments.map(id => get().deleteDocument(id))
-          await Promise.allSettled(deletePromises)
+          const deletePromises = selectedDocuments.map((id) =>
+            get().deleteDocument(id, { refreshAfterDelete: false })
+          )
+          const results = await Promise.allSettled(deletePromises)
+          const successDeletes = results.filter((result) => result.status === 'fulfilled').length
 
           set((state) => {
             state.selectedDocuments = []
           })
 
+          if (successDeletes > 0) {
+            void get().fetchDocuments().catch((error) => {
+              logger.error('DocumentStore', 'background refresh after batch delete failed', error)
+            })
+          }
+
         } catch (error) {
-          console.error('Batch delete failed:', error)
+          logger.error('DocumentStore', 'deleteSelectedDocuments failed', error)
           throw error
         }
       },
@@ -386,7 +422,7 @@ export const useDocumentStore = create<DocumentState>()(
           return await documentService.previewUrl(id, expiresHours)
 
         } catch (error) {
-          console.error('Get preview URL failed:', error)
+          logger.error('DocumentStore', 'getDocumentPreviewUrl failed', error)
           throw error
         }
       },
@@ -397,7 +433,7 @@ export const useDocumentStore = create<DocumentState>()(
           return await documentService.downloadUrl(id)
 
         } catch (error) {
-          console.error('Get download URL failed:', error)
+          logger.error('DocumentStore', 'getDocumentDownloadUrl failed', error)
           throw error
         }
       },
@@ -411,7 +447,7 @@ export const useDocumentStore = create<DocumentState>()(
           await get().fetchDocuments()
 
         } catch (error) {
-          console.error('Process document failed:', error)
+          logger.error('DocumentStore', 'processDocument failed', error)
           set((state) => {
             state.error = error instanceof Error ? error.message : '文档处理失败'
           })
@@ -501,7 +537,7 @@ export const useDocumentStore = create<DocumentState>()(
 
       // 刷新文档列表
       refreshDocuments: async () => {
-        await get().fetchDocuments(true)
+        await get().fetchDocuments()
       },
     })),
     {

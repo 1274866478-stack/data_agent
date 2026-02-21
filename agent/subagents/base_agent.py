@@ -1,55 +1,38 @@
-"""
-Agent 基类 - SOTA 多智能体框架
+from __future__ import annotations
 
-所有子 Agent 的抽象基类，定义统一接口。
-"""
+"""Base class and shared types for subagents."""
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Any, Dict, List
+
+AgentState = Dict[str, Any]
 
 
 class BaseAgent(ABC):
-    """Agent 基类"""
+    """Abstract base contract for all subagents."""
 
-    def __init__(self, name: str, llm=None):
-        """
-        初始化 Agent
-
-        Args:
-            name: Agent 名称
-            llm: LLM 实例 (可选)
-        """
+    def __init__(self, name: str, llm: Any = None) -> None:
         self.name = name
         self.llm = llm
 
     @abstractmethod
-    async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        执行 Agent 逻辑
+    async def execute(self, state: AgentState) -> AgentState:
+        """Execute the agent with current workflow state."""
+        raise NotImplementedError
 
-        Args:
-            state: 当前状态字典
-
-        Returns:
-            更新后的状态字典
-        """
-        pass
-
-    def _build_prompt(self, template: str, **kwargs) -> str:
-        """
-        构建 Prompt
-
-        Args:
-            template: Prompt 模板
-            **kwargs: 模板变量
-
-        Returns:
-            格式化后的 Prompt
-        """
+    def _build_prompt(self, template: str, **kwargs: Any) -> str:
         return template.format(**kwargs)
 
+    @staticmethod
+    def format_cube_schema(cube_schema: Dict[str, Any]) -> str:
+        lines: List[str] = []
+        for cube_name, cube_def in cube_schema.items():
+            measures = ", ".join(cube_def.get("measures", []))
+            dimensions = ", ".join(cube_def.get("dimensions", []))
+            lines.append(f"- {cube_name}: measures=[{measures}] dimensions=[{dimensions}]")
+        return "\n".join(lines)
+
     def get_name(self) -> str:
-        """获取 Agent 名称"""
         return self.name
 
     def __repr__(self) -> str:

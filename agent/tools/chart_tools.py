@@ -13,7 +13,7 @@ Chart Tools - 图表配置生成工具
     - generate_scatter_chart: 生成散点图配置 JSON
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List
 from langchain_core.tools import StructuredTool, BaseTool
 from pydantic import BaseModel, Field
 

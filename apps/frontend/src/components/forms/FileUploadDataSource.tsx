@@ -2,6 +2,9 @@
 
 import React, { useState, useCallback } from 'react';
 import { Upload, X, FileText, Table, Database } from 'lucide-react';
+import { API_BASE_URL } from '@/lib/api-client';
+import { getStoredAuthToken } from '@/lib/auth-token';
+import { extractApiErrorMessage } from '@/lib/api-error';
 
 interface SupportedFileType {
   extension: string;
@@ -152,18 +155,20 @@ export default function FileUploadDataSource({ onSuccess, onCancel }: FileUpload
       if (description.trim()) {
         formData.append('description', description.trim());
       }
+      const authToken = getStoredAuthToken();
 
-      const response = await fetch('/api/v1/file-upload/upload-file', {
+      const response = await fetch(`${API_BASE_URL}/file-upload/upload-file`, {
         method: 'POST',
         body: formData,
         headers: {
-          // 不设置Content-Type，让浏览器自动设置multipart/form-data边界
+          // 不设置 Content-Type，让浏览器自动设置 multipart/form-data 边界
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         }
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || '上传失败');
+        const errorData = await response.json().catch(() => null);
+        throw new Error(extractApiErrorMessage(errorData, '上传失败'));
       }
 
       const result = await response.json();

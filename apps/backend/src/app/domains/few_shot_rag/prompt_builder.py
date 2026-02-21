@@ -7,7 +7,6 @@ Prompt Builder - 动态少样本 Prompt 构建
 3. 动态调整示例数量
 """
 
-import os
 import logging
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
@@ -87,7 +86,7 @@ class PromptBuilder:
                 prompt += f"**用户问题**: {example['question']}\n"
                 prompt += f"**DSL JSON**: {example['metadata'].get('dsl_json', {})}\n"
                 if example['metadata'].get('success'):
-                    prompt += f"**结果**: 成功\n"
+                    prompt += "**结果**: 成功\n"
                 prompt += "\n"
 
         # 4. 添加当前查询

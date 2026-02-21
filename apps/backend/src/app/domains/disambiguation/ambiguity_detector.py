@@ -8,7 +8,7 @@
 """
 
 import re
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional
 
 
 class AmbiguityDetector:

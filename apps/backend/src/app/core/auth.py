@@ -41,7 +41,7 @@
 **依赖深度**: 直接依赖 config.py, jwt_utils.py；被所有需要认证的API端点依赖
 """
 
-from fastapi import Request, status, Depends
+from fastapi import Request, status, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse

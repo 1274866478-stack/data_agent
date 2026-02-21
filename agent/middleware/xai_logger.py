@@ -18,6 +18,7 @@ XAI Logger Middleware - 可解释性日志中间件
 
 import time
 import asyncio
+import logging
 from typing import Any, Dict, List, Optional, Callable, Awaitable
 from dataclasses import dataclass, field
 
@@ -27,6 +28,8 @@ from langchain_core.messages.tool import ToolMessage
 from langgraph.types import Command
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse, ModelCallResult, AgentState
 from langgraph.runtime import Runtime
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -165,7 +168,7 @@ class XAILoggerMiddleware(AgentMiddleware):
 
     使用示例:
     ```python
-    from AgentV2.middleware import XAILoggerMiddleware
+    from agent.middleware import XAILoggerMiddleware
 
     middleware = XAILoggerMiddleware(
         session_id="session_123",
@@ -657,7 +660,7 @@ class XAILoggerMiddleware(AgentMiddleware):
                 f.write('\n')
 
         except Exception as e:
-            print(f"[WARN] 写入日志文件失败: {e}")
+            logger.warning("写入日志文件失败: %s", e)
 
     def get_current_log(self) -> Optional[XAILog]:
         """获取当前日志"""

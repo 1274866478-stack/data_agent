@@ -85,23 +85,18 @@
 **依赖深度**: 直接依赖 data/*, services/*, middleware/*, core/*；被前端查询模块调用
 """
 
-import asyncio
 import uuid
 import time
 import traceback
-import json
-from typing import Dict, Any, Optional, Callable, List
-from datetime import datetime
+from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query as QueryParam, status
-from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from src.app.data.database import get_db
-from src.app.data.models import QueryStatus, QueryType
-from src.app.middleware.tenant_context import get_current_tenant_from_request, get_current_tenant_id
+from src.app.data.models import QueryStatus
+from src.app.middleware.tenant_context import get_current_tenant_from_request
 from src.app.domains.rag_sql.service import QueryContextService
 from src.app.domains.query.service import QueryService
-from src.app.domains.llm.service import llm_service
 from src.app.domains.query.agent import (
     run_agent_query,
     convert_agent_response_to_query_response,
@@ -113,7 +108,7 @@ from src.app.core.jwt_utils import get_current_user_from_token
 from fastapi import Request
 from src.app.schemas.query import (
     QueryRequest, QueryResponseV3, QueryStatusResponse,
-    QueryCacheResponse, QueryHistoryResponse, ErrorResponse,
+    QueryCacheResponse, QueryHistoryResponse,
     SOTAQueryRequest, SOTAQueryResponse
 )
 from src.app.core.config import get_settings
@@ -183,6 +178,36 @@ async def get_current_user_info_from_request(
             "tenant_id": tenant.id,
             "error": str(e)
         }
+
+
+async def get_query_service(
+    tenant=Depends(get_current_tenant_from_request),
+    user_info: Dict[str, Any] = Depends(get_current_user_info_from_request),
+    db: Session = Depends(get_db),
+) -> QueryService:
+    """依赖注入：创建查询服务实例。"""
+    user_id = user_info["user_id"]
+    query_context = QueryContextService.create(db, tenant.id, user_id)
+    return QueryService(query_context)
+
+
+async def handle_chart_merge_request(
+    request: QueryRequest,
+    tenant,
+    user_info: Dict[str, Any],
+    query_id: str,
+) -> QueryResponseV3:
+    """
+    兼容层：转发到 domain 实现，保持现有路由行为不变。
+    """
+    from src.app.domains.query.service import handle_chart_merge_request as _handle_chart_merge_request
+
+    return await _handle_chart_merge_request(
+        request=request,
+        tenant=tenant,
+        user_info=user_info,
+        query_id=query_id,
+    )
 
 
 @router.post("/query", response_model=None)
@@ -267,7 +292,7 @@ async def create_query(
                 data_source_id = selected_source.id
                 logger.info(f"⚠️ [数据源诊断] 未指定数据源，自动使用第一个活跃数据源: ID={data_source_id}, 名称={selected_source.name}, 类型={selected_source.db_type}")
             else:
-                logger.warning(f"❌ [数据源诊断] 没有找到任何活跃数据源")
+                logger.warning("❌ [数据源诊断] 没有找到任何活跃数据源")
         else:
             logger.info(f"✅ [数据源诊断] 用户指定了数据源ID: {data_source_id}")
             
@@ -482,9 +507,6 @@ async def create_query(
                 query=request.query[:100]
             )
 
-            # 检查缓存（简化版，使用 query 作为 hash）
-            query_hash = hash(request.query)
-
             # 处理查询（使用原有逻辑）
             response_data = await query_service.process_query(
                 query_id=query_id,
@@ -607,10 +629,6 @@ async def get_query_status(
     Story 3.1: 查询状态跟踪端点
     """
     try:
-        # 创建查询上下文（使用正确的用户ID）
-        user_id = user_info["user_id"]
-        query_context = QueryContextService.create(db, tenant.id, user_id)
-
         # 查询状态
         from src.app.data.models import QueryLog
         query_log = db.query(QueryLog).filter(

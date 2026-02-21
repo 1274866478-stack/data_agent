@@ -16,7 +16,7 @@
 
 import re
 import logging
-from typing import Dict, Any, List, Optional, Callable, Awaitable
+from typing import Dict, Any, List, Callable, Awaitable
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)

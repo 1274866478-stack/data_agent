@@ -48,6 +48,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import Dict, Any
 import asyncio
+import logging
 from datetime import datetime
 
 from src.app.data.database import get_db, check_database_connection
@@ -56,6 +57,7 @@ from src.app.integrations.vectordb_chroma.client import chromadb_service
 from src.app.integrations.llm_providers.zhipu_client import zhipu_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/status", summary="详细健康检查")

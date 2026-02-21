@@ -1,52 +1,65 @@
-"""
-Generator Agent - 生成器
+from __future__ import annotations
 
-负责：
-1. DSL JSON 生成 - 根据查询计划生成符合语义层规范的 DSL
-2. 少样本学习 - 使用历史成功案例提升生成质量
-3. 格式验证 - 确保 DSL 格式正确
-"""
+"""Generator agent for turning query plans into semantic-layer DSL payloads."""
 
-from typing import Dict, Any, List, Optional
 import json
+from typing import Any, Dict, List, Optional
 
-from .base_agent import BaseAgent
+from .base_agent import AgentState, BaseAgent
 
 
 class GeneratorAgent(BaseAgent):
-    """
-    生成器 Agent
+    """Generate semantic-layer DSL JSON from planning output."""
+    RANKING_KEYWORDS = ["排名", "top", "排行"]
+    TIME_DIMENSION_TOKENS = ["time", "date", "created", "updated", "时间", "日期"]
 
-    输入: 查询计划 + Cube 定义 + 少样本示例（可选）
-    输出: DSL JSON (符合语义层规范)
-    """
-
-    def __init__(self, name: str = "generator", llm=None):
+    def __init__(self, name: str = "generator", llm: Any = None) -> None:
         super().__init__(name, llm)
 
-    async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        执行生成逻辑
+    @staticmethod
+    def _normalize_cube_filters(
+        *,
+        cube_name: str,
+        filters: Any,
+    ) -> List[Dict[str, Any]]:
+        if not isinstance(filters, list):
+            return []
 
-        Args:
-            state: 当前状态，包含 query_plan, cube_schema 等
+        normalized: List[Dict[str, Any]] = []
+        for item in filters:
+            normalized_filter = GeneratorAgent._to_cube_filter(cube_name, item)
+            if normalized_filter is None:
+                continue
+            normalized.append(normalized_filter)
+        return normalized
 
-        Returns:
-            更新后的状态，包含 dsl_json
-        """
+    @staticmethod
+    def _to_cube_filter(cube_name: str, item: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(item, dict):
+            return None
+        member = item.get("member")
+        operator = item.get("operator")
+        values = item.get("values")
+        if not member or not operator or not isinstance(values, list):
+            return None
+        return {
+            "member": f"{cube_name}.{member}",
+            "operator": operator,
+            "values": values,
+        }
+
+    async def execute(self, state: AgentState) -> AgentState:
         query_plan = state.get("query_plan", {})
         cube_schema = state.get("cube_schema", {})
         query = state.get("query", "")
         few_shot_examples = state.get("few_shot_examples", [])
 
-        # 生成 DSL
         dsl_json = await self._generate_dsl(
-            query,
-            query_plan,
-            cube_schema,
-            few_shot_examples
+            query=query,
+            query_plan=query_plan,
+            cube_schema=cube_schema,
+            few_shot_examples=few_shot_examples,
         )
-
         return {"dsl_json": dsl_json}
 
     async def _generate_dsl(
@@ -54,192 +67,103 @@ class GeneratorAgent(BaseAgent):
         query: str,
         query_plan: Dict[str, Any],
         cube_schema: Dict[str, Any],
-        few_shot_examples: List[Dict[str, Any]] = None
+        few_shot_examples: List[Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
-        """
-        生成 DSL JSON
-
-        Args:
-            query: 原始问题
-            query_plan: 查询计划
-            cube_schema: Cube 定义
-            few_shot_examples: 少样本示例（可选）
-
-        Returns:
-            DSL JSON
-        """
-        # 获取目标 Cube
+        _ = few_shot_examples
         target_cubes = query_plan.get("target_cubes", [])
         if not target_cubes:
-            return self._create_error_dsl("未找到目标 Cube")
+            return self._create_error_dsl("No target cube identified")
 
         cube_name = target_cubes[0]
-
-        # 构建 DSL
-        dsl = {
+        dsl: Dict[str, Any] = {
             "cube": cube_name,
             "measures": query_plan.get("required_measures", []),
-            "dimensions": query_plan.get("required_dimensions", [])
+            "dimensions": query_plan.get("required_dimensions", []),
         }
 
-        # 添加时间维度
-        time_req = query_plan.get("time_requirements", {})
-        if time_req.get("has_time_filter"):
-            # 查找时间维度
+        time_requirements = query_plan.get("time_requirements", {})
+        if time_requirements.get("has_time_filter"):
             time_dimension = self._find_time_dimension(cube_name, cube_schema)
             if time_dimension:
                 dsl["timeDimension"] = time_dimension
-                dsl["granularity"] = time_req.get("granularity", "day")
+                dsl["granularity"] = time_requirements.get("granularity", "day")
 
-        # 添加过滤器
-        filters = query_plan.get("filters", [])
-        if filters:
-            # 将过滤器转换为 Cube 格式
-            cube_filters = []
-            for f in filters:
-                cube_filters.append({
-                    "member": f"{cube_name}.{f['member']}",
-                    "operator": f["operator"],
-                    "values": f["values"]
-                })
-            if cube_filters:
-                dsl["filters"] = cube_filters
+        cube_filters = self._normalize_cube_filters(
+            cube_name=cube_name,
+            filters=query_plan.get("filters", []),
+        )
+        if cube_filters:
+            dsl["filters"] = cube_filters
 
-        # 添加排序
-        if "排名" in query or "top" in query.lower():
+        if self._has_ranking_intent(query):
             dsl["order"] = [{f"{cube_name}.created_at": "desc"}]
             dsl["limit"] = 10
 
         return dsl
 
+    def _has_ranking_intent(self, query: str) -> bool:
+        query_lower = query.lower()
+        return any(keyword in query_lower for keyword in self.RANKING_KEYWORDS)
+
     def _find_time_dimension(
         self,
         cube_name: str,
-        cube_schema: Dict[str, Any]
+        cube_schema: Dict[str, Any],
     ) -> Optional[str]:
-        """查找时间维度"""
         if cube_name not in cube_schema:
             return None
 
         dimensions = cube_schema[cube_name].get("dimensions", [])
-
-        for dim in dimensions:
-            dim_lower = dim.lower()
-            if any(kw in dim_lower for kw in ["time", "date", "created", "updated", "时间", "日期"]):
-                return f"{cube_name}.{dim}"
+        for dimension in dimensions:
+            dimension_lower = str(dimension).lower()
+            if any(token in dimension_lower for token in self.TIME_DIMENSION_TOKENS):
+                return f"{cube_name}.{dimension}"
 
         return None
 
     def _create_error_dsl(self, error_message: str) -> Dict[str, Any]:
-        """创建错误 DSL"""
         return {
             "error": error_message,
             "cube": None,
             "measures": [],
-            "dimensions": []
+            "dimensions": [],
         }
 
-    async def generate_with_llm(
-        self,
-        prompt: str
-    ) -> Dict[str, Any]:
-        """
-        使用 LLM 生成 DSL
-
-        Args:
-            prompt: 包含上下文的 Prompt
-
-        Returns:
-            DSL JSON
-        """
+    async def generate_with_llm(self, prompt: str) -> Dict[str, Any]:
         if not self.llm:
-            return {"error": "LLM 未配置"}
+            return {"error": "LLM is not configured"}
 
         try:
             response = await self.llm.ainvoke(prompt)
-            # 解析 LLM 响应
-            # 这里需要根据实际的 LLM 响应格式来解析
-            # 暂时返回占位符
             return {"llm_response": str(response)}
-        except Exception as e:
-            return {"error": f"LLM 生成失败: {str(e)}"}
+        except Exception as exc:
+            return {"error": f"LLM generation failed: {exc}"}
 
     def build_prompt_with_examples(
         self,
         query: str,
         query_plan: Dict[str, Any],
         cube_schema: Dict[str, Any],
-        examples: List[Dict[str, Any]] = None
+        examples: List[Dict[str, Any]] | None = None,
     ) -> str:
-        """
-        构建包含少样本示例的 Prompt
+        example_sections: List[str] = []
+        for index, example in enumerate((examples or [])[:3], start=1):
+            example_sections.append(
+                f"\n## Example {index}\n"
+                f"Question: {example.get('original_question', '')}\n"
+                "DSL:\n"
+                f"{json.dumps(example.get('dsl_json', {}), ensure_ascii=False, indent=2)}\n"
+            )
+        examples_text = "".join(example_sections)
 
-        Args:
-            query: 当前问题
-            query_plan: 查询计划
-            cube_schema: Cube 定义
-            examples: 少样本示例
-
-        Returns:
-            格式化的 Prompt
-        """
-        # 构建示例部分
-        examples_text = ""
-        if examples:
-            for i, ex in enumerate(examples[:3], 1):
-                examples_text += f"""
-## 示例 {i}
-**问题**: {ex.get('original_question', '')}
-**DSL**:
-```json
-{json.dumps(ex.get('dsl_json', {}), ensure_ascii=False, indent=2)}
-```
-"""
-
-        # 构建 Cube 定义部分
-        cube_def_text = self._format_cube_schema(cube_schema)
-
-        # 构建完整 Prompt
-        prompt = f"""
-# 参考案例
-{examples_text if examples_text else "暂无参考案例"}
-
-# 当前任务
-
-**用户问题**: {query}
-
-**查询计划**:
-```json
-{json.dumps(query_plan, ensure_ascii=False, indent=2)}
-```
-
-# 可用的语义层定义
-{cube_def_text}
-
-# 要求
-请参考上述案例，为当前问题生成符合语义层规范的 DSL JSON。
-
-输出格式 (JSON):
-```json
-{{
-    "cube": "CubeName",
-    "measures": ["measure1", "measure2"],
-    "dimensions": ["dimension1"],
-    "filters": [{{"member": "field", "operator": "equals", "values": ["value"]}}],
-    "timeDimension": "created_at",
-    "granularity": "day"
-}}
-```
-
-请直接输出 JSON，不要包含其他说明文字。
-"""
+        cube_def_text = self.format_cube_schema(cube_schema)
+        prompt = (
+            "Generate semantic-layer DSL JSON for the following user request.\n\n"
+            f"Examples:\n{examples_text or 'No examples available.'}\n\n"
+            f"Query: {query}\n\n"
+            "Query plan:\n"
+            f"{json.dumps(query_plan, ensure_ascii=False, indent=2)}\n\n"
+            f"Available schema:\n{cube_def_text}\n\n"
+            "Return JSON only."
+        )
         return prompt
-
-    def _format_cube_schema(self, cube_schema: Dict[str, Any]) -> str:
-        """格式化 Cube 定义"""
-        lines = []
-        for cube_name, cube_def in cube_schema.items():
-            lines.append(f"\n### {cube_name}")
-            lines.append(f"**度量**: {', '.join(cube_def.get('measures', []))}")
-            lines.append(f"**维度**: {', '.join(cube_def.get('dimensions', []))}")
-        return "\n".join(lines)

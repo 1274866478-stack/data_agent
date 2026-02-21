@@ -262,7 +262,7 @@ def monitor_performance(operation_name: str, tags: Optional[Dict[str, str]] = No
         
         try:
             yield transaction
-        except Exception as e:
+        except Exception:
             transaction.set_status("internal_error")
             raise
 

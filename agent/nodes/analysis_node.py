@@ -19,10 +19,9 @@
 版本: 1.0.0
 """
 
-import json
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from enum import Enum
 
@@ -302,16 +301,13 @@ class AnalysisNode:
         insights = []
 
         # 找到占比列和分类列
-        percentage_col = None
         category_col = None
         value_col = None
 
         for col, stat in column_stats.items():
             col_lower = col.lower()
             if stat["type"] == "numeric":
-                if 'percent' in col_lower or '占比' in col_lower or 'ratio' in col_lower:
-                    percentage_col = col
-                elif 'count' in col_lower or '数量' in col_lower or 'value' in col_lower:
+                if 'count' in col_lower or '数量' in col_lower or 'value' in col_lower:
                     value_col = col
             elif stat["type"] == "string":
                 if stat["unique_count"] > 1 and stat["unique_count"] < len(data) / 2:
@@ -324,7 +320,7 @@ class AnalysisNode:
                 max_item = max(values, key=lambda x: x[0])
                 insights.append(DataInsight(
                     type=InsightType.DISTRIBUTION,
-                    title=f"最大占比",
+                    title="最大占比",
                     description=f"'{max_item[1]}' 占比最高，为 {max_item[0]}",
                     value={"category": max_item[1], "value": max_item[0]},
                     severity="info"
@@ -635,20 +631,20 @@ if __name__ == "__main__":
 
     print(f"\n查询: {report.query}")
     print(f"返回行数: {report.row_count}")
-    print(f"\n列统计:")
+    print("\n列统计:")
     for col, stat in report.column_stats.items():
         print(f"  {col}: {stat}")
 
-    print(f"\n洞察:")
+    print("\n洞察:")
     for insight in report.insights:
         print(f"  - [{insight.type.value}] {insight.title}: {insight.description}")
 
-    print(f"\n建议:")
+    print("\n建议:")
     for suggestion in report.suggestions:
         print(f"  - {suggestion}")
 
     if report.chart_recommendation:
-        print(f"\n图表推荐:")
+        print("\n图表推荐:")
         rec = report.chart_recommendation
         print(f"  类型: {rec['chart_type']}")
         print(f"  理由: {rec['reasoning']}")

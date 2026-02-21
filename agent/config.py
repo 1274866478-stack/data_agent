@@ -57,10 +57,14 @@
 **依赖深度**: 直接依赖 2 层（pydantic, python-dotenv）
 """
 import os
-import sys
-from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel
+
+try:
+    from .core.backend_runtime import import_backend_module
+except ImportError:
+    # 兼容直接运行（非包方式）
+    from core.backend_runtime import import_backend_module
 
 # Load environment variables from .env file
 load_dotenv()
@@ -70,11 +74,10 @@ load_dotenv()
 def _get_backend_config():
     """Lazily load backend config only when needed"""
     try:
-        backend_src = Path(__file__).parent.parent / "backend" / "src"
-        if backend_src.exists() and str(backend_src) not in sys.path:
-            sys.path.insert(0, str(backend_src))
-        
-        from app.core.config import get_settings
+        config_module = import_backend_module("app.core.config")
+        get_settings = getattr(config_module, "get_settings", None)
+        if not callable(get_settings):
+            return None
         return get_settings()
     except (ImportError, ModuleNotFoundError, Exception):
         # Backend config not available, use standalone mode

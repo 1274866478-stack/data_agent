@@ -19,15 +19,37 @@ Cube Joins 解析器 - 语义层表关联支持
 """
 
 import logging
+import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Type
 
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+DANGEROUS_JOIN_KEYWORDS = (
+    "DROP",
+    "DELETE",
+    "INSERT",
+    "UPDATE",
+    "EXEC",
+    "EXECUTE",
+    "TRUNCATE",
+    "ALTER",
+)
+SQL_INJECTION_PATTERNS = ("--", "/*", "*/", ";", "1=1", "1 = 1")
+COMPARISON_OPERATORS = ("=", "<", ">", "<=", ">=", "<>")
+JOIN_SQL_OPERATORS = ("=", "==", "!=", "<", ">")
+CUBE_PLACEHOLDERS = (r"\{CUBE\}", r"\$\{CUBE\}")
+
+
+def _contains_any(text: str, patterns: Tuple[str, ...]) -> bool:
+    """Return True when any pattern appears in text."""
+    return any(pattern in text for pattern in patterns)
 
 
 # ============================================================================
@@ -58,21 +80,19 @@ def validate_join_condition(join_sql: str) -> bool:
     join_upper = join_sql.upper().strip()
 
     # 检查危险关键字
-    dangerous_keywords = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'EXEC', 'EXECUTE', 'TRUNCATE', 'ALTER']
-    for keyword in dangerous_keywords:
+    for keyword in DANGEROUS_JOIN_KEYWORDS:
         if keyword in join_upper:
             logger.warning(f"[SECURITY] JOIN condition contains dangerous keyword: {keyword}")
             return False
 
     # 检查 SQL 注入模式
-    injection_patterns = ['--', '/*', '*/', ';', '1=1', '1 = 1']
-    for pattern in injection_patterns:
+    for pattern in SQL_INJECTION_PATTERNS:
         if pattern in join_sql:
             logger.warning(f"[SECURITY] JOIN condition contains injection pattern: {pattern}")
             return False
 
     # 检查是否包含基本的连接符（JOIN 条件通常包含 =）
-    if not any(op in join_sql for op in ['=', '<', '>', '<=', '>=', '<>']):
+    if not _contains_any(join_sql, COMPARISON_OPERATORS):
         logger.warning("[SECURITY] JOIN condition missing comparison operator")
         return False
 
@@ -142,6 +162,13 @@ class JoinDefinition:
             "metadata": self.metadata
         }
 
+    @staticmethod
+    def _replace_patterns(text: str, patterns: Tuple[str, ...], replacement: str) -> str:
+        """Replace regex patterns with a replacement."""
+        for pattern in patterns:
+            text = re.sub(pattern, replacement, text)
+        return text
+
     def get_join_sql(
         self,
         from_cube: str,
@@ -168,14 +195,11 @@ class JoinDefinition:
         join_sql = self.sql
 
         # 替换 {CUBE} 为源表别名
-        join_sql = re.sub(r'\{CUBE\}', actual_from_alias, join_sql)
-        join_sql = re.sub(r'\$\{CUBE\}', actual_from_alias, join_sql)
+        join_sql = self._replace_patterns(join_sql, CUBE_PLACEHOLDERS, actual_from_alias)
 
         # 替换 {TargetCube} 为目标表别名
-        target_pattern = r'\{' + self.name + r'\}'
-        join_sql = re.sub(target_pattern, actual_to_alias, join_sql)
-        target_pattern = r'\$\{' + self.name + r'\}'
-        join_sql = re.sub(target_pattern, actual_to_alias, join_sql)
+        target_patterns = (rf"\{{{self.name}\}}", rf"\$\{{{self.name}\}}")
+        join_sql = self._replace_patterns(join_sql, target_patterns, actual_to_alias)
 
         return join_sql
 
@@ -266,6 +290,21 @@ class CubeJoinsParser:
         logger.info(f"加载了 {count} 个 Cube 定义")
         return count
 
+    @staticmethod
+    def _ensure_list(value: Any) -> List[Any]:
+        """Normalize schema fields to list."""
+        if isinstance(value, list):
+            return value
+        return []
+
+    @staticmethod
+    def _parse_enum(value: str, enum_cls: Type[Enum], default: Any) -> Any:
+        """Parse enum with default fallback."""
+        try:
+            return enum_cls(value)
+        except ValueError:
+            return default
+
     def _load_yaml_file(self, yaml_file: Path) -> Optional[CubeDefinition]:
         """加载单个 YAML 文件"""
         with open(yaml_file, 'r', encoding='utf-8') as f:
@@ -278,17 +317,17 @@ class CubeJoinsParser:
         sql_table = data.get('sql_table', data.get('sql', f'"{cube_name}"'))
 
         # 解析 joins
-        joins = []
-        for join_data in data.get('joins', []):
+        joins: List[JoinDefinition] = []
+        for join_data in self._ensure_list(data.get('joins')):
             join = self._parse_join(join_data, cube_name)
             if join:
                 joins.append(join)
 
         # 解析 measures
-        measures = data.get('measures', [])
+        measures = self._ensure_list(data.get('measures'))
 
         # 解析 dimensions
-        dimensions = data.get('dimensions', [])
+        dimensions = self._ensure_list(data.get('dimensions'))
 
         return CubeDefinition(
             name=cube_name,
@@ -313,17 +352,20 @@ class CubeJoinsParser:
                 return None
 
             relationship_str = join_data.get('relationship', 'many_to_one')
-            try:
-                relationship = RelationshipType(relationship_str)
-            except ValueError:
+            relationship = self._parse_enum(
+                relationship_str,
+                RelationshipType,
+                RelationshipType.MANY_TO_ONE,
+            )
+            if relationship_str != relationship.value:
                 logger.warning(f"无效的关系类型: {relationship_str}")
-                relationship = RelationshipType.MANY_TO_ONE
 
             join_type_str = join_data.get('join_type', 'INNER')
-            try:
-                join_type = JoinType(join_type_str.upper())
-            except ValueError:
-                join_type = JoinType.INNER
+            join_type = self._parse_enum(
+                join_type_str.upper(),
+                JoinType,
+                JoinType.INNER,
+            )
 
             alias = join_data.get('alias')
             metadata = join_data.get('metadata', {})
@@ -508,20 +550,23 @@ class CubeJoinsParser:
         sql = sql.strip()
 
         # 检查是否包含基本的连接符
-        if not any(op in sql for op in ['=', '==', '!=', '<', '>']):
+        if not _contains_any(sql, JOIN_SQL_OPERATORS):
             return False
 
-        # 检查括号是否匹配
-        stack = []
+        return CubeJoinsParser._has_balanced_parentheses(sql)
+
+    @staticmethod
+    def _has_balanced_parentheses(sql: str) -> bool:
+        """Validate parentheses in SQL expression."""
+        stack: List[str] = []
         for char in sql:
-            if char == '(':
+            if char == "(":
                 stack.append(char)
-            elif char == ')':
+            elif char == ")":
                 if not stack:
                     return False
                 stack.pop()
-
-        return len(stack) == 0
+        return not stack
 
 
 # ============================================================================
@@ -542,6 +587,32 @@ class JoinSQLGenerator:
         """
         self.parser = parser
 
+    @staticmethod
+    def _primary_alias_map(primary_cube: str, use_aliases: bool) -> Dict[str, str]:
+        """Build alias map for primary cube."""
+        return {primary_cube: "t0"} if use_aliases else {}
+
+    @staticmethod
+    def _build_join_clause_sql(join: JoinDefinition, join_sql: str, to_alias: str) -> str:
+        """Build JOIN clause SQL text."""
+        join_clause = f"{join.join_type.value} JOIN {join.name}"
+        if to_alias:
+            join_clause += f" AS {to_alias}"
+        return f"{join_clause} ON {join_sql}"
+
+    @staticmethod
+    def _collect_select_parts(
+        select_columns: Dict[str, List[str]],
+        alias_map: Dict[str, str],
+    ) -> List[str]:
+        """Build SELECT clause columns."""
+        select_parts: List[str] = []
+        for cube_name, columns in select_columns.items():
+            alias = alias_map.get(cube_name, cube_name)
+            for col in columns:
+                select_parts.append(f"{alias}.{col}" if alias else f"{cube_name}.{col}")
+        return select_parts
+
     def generate_join_clause(
         self,
         primary_cube: str,
@@ -561,12 +632,9 @@ class JoinSQLGenerator:
         if not required_cubes:
             return "", {}
 
-        alias_map: Dict[str, str] = {}
+        alias_map = self._primary_alias_map(primary_cube, use_aliases)
         join_clauses: List[str] = []
         visited = {primary_cube}
-
-        if use_aliases:
-            alias_map[primary_cube] = "t0"
 
         for required_cube in required_cubes:
             if required_cube == primary_cube:
@@ -597,10 +665,7 @@ class JoinSQLGenerator:
                     logger.error(f"[SECURITY] Unsafe JOIN condition rejected: {join.sql[:50]}...")
                     continue
 
-                join_clause = f"{join.join_type.value} JOIN {join.name}"
-                if to_alias:
-                    join_clause += f" AS {to_alias}"
-                join_clause += f" ON {join_sql}"
+                join_clause = self._build_join_clause_sql(join, join_sql, to_alias)
 
                 join_clauses.append(join_clause)
                 alias_map[join.name] = to_alias or join.name
@@ -647,14 +712,7 @@ class JoinSQLGenerator:
         )
 
         # 生成 SELECT 子句
-        select_parts = []
-        for cube_name, columns in select_columns.items():
-            alias = alias_map.get(cube_name, cube_name)
-            for col in columns:
-                if alias:
-                    select_parts.append(f"{alias}.{col}")
-                else:
-                    select_parts.append(f"{cube_name}.{col}")
+        select_parts = self._collect_select_parts(select_columns, alias_map)
 
         if not select_parts:
             select_parts = [f"{alias_map.get(primary_cube, primary_cube)}.*"]
@@ -724,27 +782,27 @@ class JoinSQLGenerator:
     @staticmethod
     def _get_cube_columns(cube: CubeDefinition) -> List[Dict[str, Any]]:
         """获取 Cube 的列信息"""
-        columns = []
-
-        # 添加度量列
-        for measure in cube.measures:
-            columns.append({
-                "name": measure.get('name'),
-                "type": measure.get('type'),
-                "category": "measure",
-                "description": measure.get('description', '')
-            })
-
-        # 添加维度列
-        for dimension in cube.dimensions:
-            columns.append({
-                "name": dimension.get('name'),
-                "type": dimension.get('type'),
-                "category": "dimension",
-                "description": dimension.get('description', '')
-            })
-
+        columns: List[Dict[str, Any]] = []
+        JoinSQLGenerator._append_columns(columns, cube.measures, "measure")
+        JoinSQLGenerator._append_columns(columns, cube.dimensions, "dimension")
         return columns
+
+    @staticmethod
+    def _append_columns(
+        columns: List[Dict[str, Any]],
+        source_columns: List[Dict[str, Any]],
+        category: str,
+    ) -> None:
+        """Append column metadata rows."""
+        for column in source_columns:
+            columns.append(
+                {
+                    "name": column.get("name"),
+                    "type": column.get("type"),
+                    "category": category,
+                    "description": column.get("description", ""),
+                }
+            )
 
 
 # ============================================================================
@@ -771,6 +829,19 @@ class CubeJoinsMiddleware:
         self.parser = CubeJoinsParser(schema_dir)
         self.generator = JoinSQLGenerator(self.parser)
         self.enable_auto_detect = enable_auto_detect
+
+    def _cube_exists(self, cube_name: str) -> bool:
+        """Check if cube exists in parser."""
+        return self.parser.get_cube(cube_name) is not None
+
+    @staticmethod
+    def _extract_cube_names(metrics: List[str]) -> Set[str]:
+        """Extract cube names from metric strings like cube.measure."""
+        result: Set[str] = set()
+        for metric in metrics:
+            if "." in metric:
+                result.add(metric.split(".")[0])
+        return result
 
     def enhance_semantic_query(
         self,
@@ -817,20 +888,8 @@ class CubeJoinsMiddleware:
         Returns:
             建议的 Cube 列表
         """
-        suggested = set()
-
-        # 解析度量
-        for measure in measures:
-            if '.' in measure:
-                cube_name = measure.split('.')[0]
-                suggested.add(cube_name)
-
-        # 解析维度
-        for dimension in dimensions:
-            if '.' in dimension:
-                cube_name = dimension.split('.')[0]
-                suggested.add(cube_name)
-
+        suggested = self._extract_cube_names(measures)
+        suggested.update(self._extract_cube_names(dimensions))
         return list(suggested)
 
     def validate_join_feasibility(
@@ -854,11 +913,11 @@ class CubeJoinsMiddleware:
             "error": None
         }
 
-        if from_cube not in self.parser._cubes:
+        if not self._cube_exists(from_cube):
             result["error"] = f"源 Cube '{from_cube}' 不存在"
             return result
 
-        if to_cube not in self.parser._cubes:
+        if not self._cube_exists(to_cube):
             result["error"] = f"目标 Cube '{to_cube}' 不存在"
             return result
 
@@ -934,8 +993,6 @@ def validate_join_path(from_cube: str, to_cube: str) -> str:
 # ============================================================================
 
 if __name__ == "__main__":
-    import json
-
     # 配置日志
     logging.basicConfig(
         level=logging.INFO,

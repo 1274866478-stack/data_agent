@@ -354,7 +354,7 @@ class ChartGuidanceMiddleware:
 
     使用示例:
     ```python
-    from AgentV2.middleware import ChartGuidanceMiddleware
+    from agent.middleware import ChartGuidanceMiddleware
 
     middleware = ChartGuidanceMiddleware()
     agent_input = middleware.pre_process({"messages": [...]})

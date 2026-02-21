@@ -62,11 +62,15 @@ from .time_aggregation import (
     TimeAggregationMiddleware,
     create_time_aggregation_middleware
 )
-# 🔴 临时禁用 - knowledge_base.py 文件不存在
-# from .knowledge_middleware import (
-#     KnowledgeInjectionMiddleware,
-#     create_knowledge_middleware
-# )
+try:
+    from .knowledge_middleware import (
+        KnowledgeInjectionMiddleware,
+        create_knowledge_middleware
+    )
+    _ = (KnowledgeInjectionMiddleware, create_knowledge_middleware)
+    _KNOWLEDGE_MIDDLEWARE_AVAILABLE = True
+except Exception:  # pragma: no cover - optional middleware
+    _KNOWLEDGE_MIDDLEWARE_AVAILABLE = False
 
 __all__ = [
     "SQLSecurityMiddleware",
@@ -102,7 +106,10 @@ __all__ = [
     # 月度聚合修正中间件
     "TimeAggregationMiddleware",
     "create_time_aggregation_middleware",
-    # 知识注入中间件（双知识系统）- 🔴 临时禁用
-    # "KnowledgeInjectionMiddleware",
-    # "create_knowledge_middleware",
 ]
+
+if _KNOWLEDGE_MIDDLEWARE_AVAILABLE:
+    __all__.extend([
+        "KnowledgeInjectionMiddleware",
+        "create_knowledge_middleware",
+    ])

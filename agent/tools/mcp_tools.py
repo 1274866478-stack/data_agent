@@ -175,7 +175,7 @@ if __name__ == "__main__":
 
         # 测试配置
         config = get_default_mcp_config()
-        print(f"\n[INFO] MCP 配置:")
+        print("\n[INFO] MCP 配置:")
         for name, cfg in config.items():
             print(f"  - {name}: {cfg['command']} {' '.join(cfg['args'][:2])}...")
 

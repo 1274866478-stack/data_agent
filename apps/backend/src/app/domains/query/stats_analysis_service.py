@@ -9,8 +9,7 @@
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Union
-from datetime import datetime
+from typing import Dict, Any, List, Optional
 import math
 
 logger = logging.getLogger(__name__)

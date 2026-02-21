@@ -170,6 +170,19 @@ except ImportError:
         return ""
 
 
+def _build_examples_section(examples: str) -> str:
+    """Build optional examples section for full prompt."""
+    if not examples:
+        return ""
+    return f"\n## 参考示例：\n{examples}\n"
+
+
+def _append_full_prompt_sections(base_prompt: str) -> str:
+    """Append guidance blocks shared by full prompt."""
+    prompt = base_prompt + get_chart_guidance()
+    return prompt + SEMANTIC_LAYER_GUIDANCE
+
+
 def get_chart_guidance() -> str:
     """
     返回图表生成指南模板
@@ -583,9 +596,7 @@ def get_system_prompt(simplified: bool = True) -> str:
 
     # 完整版：用于特殊场景
     examples = load_golden_examples()
-    examples_section = ""
-    if examples:
-        examples_section = f"\n## 参考示例：\n{examples}\n"
+    examples_section = _build_examples_section(examples)
 
     prompt = f"""你是一个专业的数据分析助手，支持 SQL 数据库和文件数据源（Excel/CSV），具备数据查询和图表可视化能力。
 
@@ -769,12 +780,4 @@ SELECT ... FROM ... WHERE ... GROUP BY ... HAVING ... ORDER BY ... LIMIT
 - 金额 < 1万：使用"元"单位
 """
 
-    # 🔥 追加图表指南（强制图表生成和详细数据分析）
-    # v4.0.0: 图表指南现在直接集成到系统提示词中，避免 Agent 缓存问题
-    prompt = prompt + get_chart_guidance()
-
-    # 🔥 追加语义层指南（优先使用 cube_schema 文档）
-    # v4.1.0: 添加语义层文档获取策略，降低 Token 消耗和 Schema 幻觉
-    prompt = prompt + SEMANTIC_LAYER_GUIDANCE
-
-    return prompt
+    return _append_full_prompt_sections(prompt)

@@ -137,7 +137,6 @@ export function EnergyLabSignUpForm() {
 
         setUser(mockUser)
         setToken('dev-mode-token')
-        localStorage.setItem('auth_token', 'dev-mode-token')
 
         // 注册成功后跳转到首页
         router.push('/')

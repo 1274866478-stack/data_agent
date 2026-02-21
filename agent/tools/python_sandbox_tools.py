@@ -17,12 +17,9 @@ Python 沙箱工具 - 安全执行 Python 代码进行数据分析
 import json
 import logging
 import traceback
-import signal
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import io
-import sys
 
 logger = logging.getLogger(__name__)
 

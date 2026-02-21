@@ -4,12 +4,10 @@
 从历史修复中学习，优化修复策略
 """
 
-import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 
 from sqlalchemy import select, and_
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.data.models import RepairHistory
 from src.app.core.database import get_db

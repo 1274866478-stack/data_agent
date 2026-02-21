@@ -619,10 +619,12 @@ class DeepSeekProvider(BaseLLMProvider):
         except Exception as e:
             logger.error(f"DeepSeek chat completion failed: {e}")
             if stream:
+                error_message = f"DeepSeek API error: {str(e)}"
+
                 async def error_stream():
                     yield LLMStreamChunk(
                         type="error",
-                        content=f"DeepSeek API error: {str(e)}",
+                        content=error_message,
                         provider=LLMProvider.DEEPSEEK.value
                     )
                 return error_stream()
@@ -937,10 +939,12 @@ class OpenRouterProvider(BaseLLMProvider):
         except Exception as e:
             logger.error(f"OpenRouter chat completion failed: {e}")
             if stream:
+                error_message = f"OpenRouter API error: {str(e)}"
+
                 async def error_stream():
                     yield LLMStreamChunk(
                         type="error",
-                        content=f"OpenRouter API error: {str(e)}",
+                        content=error_message,
                         provider=LLMProvider.OPENROUTER.value
                     )
                 return error_stream()

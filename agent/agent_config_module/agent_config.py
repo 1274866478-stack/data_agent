@@ -299,7 +299,7 @@ if __name__ == "__main__":
     # 获取默认配置
     config = get_config()
 
-    print(f"\n[INFO] 默认配置:")
+    print("\n[INFO] 默认配置:")
     print(f"  LLM Model: {config.llm.model}")
     print(f"  LLM Temperature: {config.llm.temperature}")
     print(f"  Database URL: {config.database.url[:30]}...")
@@ -308,10 +308,10 @@ if __name__ == "__main__":
     # 验证配置
     errors = validate_config(config)
     if errors:
-        print(f"\n[WARN] 配置错误:")
+        print("\n[WARN] 配置错误:")
         for error in errors:
             print(f"  - {error}")
     else:
-        print(f"\n[PASS] 配置验证通过")
+        print("\n[PASS] 配置验证通过")
 
     print("=" * 60)

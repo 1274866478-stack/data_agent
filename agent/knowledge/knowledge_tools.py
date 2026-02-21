@@ -16,15 +16,13 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from .knowledge_base import (
     KnowledgeBaseService,
-    KnowledgeEntry,
-    LearningEntry,
     ErrorCategory,
     create_knowledge_base
 )
@@ -411,7 +409,7 @@ async def save_learning(
             "error_category": error_category
         }, ensure_ascii=False, indent=2)
 
-    except ValueError as e:
+    except ValueError:
         logger.error(f"无效的错误类别: {error_category}")
         return json.dumps({
             "success": False,
@@ -549,7 +547,6 @@ def search_knowledge_sync(
         loop = asyncio.get_event_loop()
         if loop.is_running():
             # 如果在已有事件循环中，使用 create_task
-            import concurrent.futures
             import threading
 
             result_container = []

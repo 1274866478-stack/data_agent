@@ -44,13 +44,12 @@ import time
 import weakref
 import json
 import hashlib
-from typing import Dict, Any, Optional, List, Callable, Union, TypeVar, Generic
-from dataclasses import dataclass, field
+from typing import Dict, Any, Optional, List, Callable, TypeVar, Generic
+from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 import logging
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from functools import wraps, lru_cache
 
 logger = logging.getLogger(__name__)
@@ -608,7 +607,7 @@ def performance_monitor(operation_name: str):
                 resource_monitor.record_metric(f"{operation_name}_duration", duration)
                 resource_monitor.record_metric(f"{operation_name}_success", 1)
                 return result
-            except Exception as e:
+            except Exception:
                 duration = time.time() - start_time
                 resource_monitor.record_metric(f"{operation_name}_duration", duration)
                 resource_monitor.record_metric(f"{operation_name}_error", 1)

@@ -15,7 +15,7 @@ Schema 元数据配置 - Schema Metadata Configuration
 作者: BMad Master
 """
 
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -168,31 +168,33 @@ TABLE_RELATIONSHIPS: Dict[str, Dict[str, Any]] = {
             }
         ]
     },
+}
 
-    # ========== Excel 数据源的常见表映射 ==========
+# ========== Excel 数据源的常见表映射 ==========
+EXCEL_TABLE_MAPPINGS: Dict[str, Dict[str, List[str]]] = {
     "users": {
         "excel_sheets": ["users", "用户表", "Customers", "客户表"],
-        "common_columns": ["id", "username", "email", "phone"]
+        "common_columns": ["id", "username", "email", "phone"],
     },
     "addresses": {
         "excel_sheets": ["addresses", "地址表"],
-        "common_columns": ["id", "user_id", "province", "city", "district"]
+        "common_columns": ["id", "user_id", "province", "city", "district"],
     },
     "orders": {
         "excel_sheets": ["orders", "订单表", "Orders", "销售订单表"],
-        "common_columns": ["id", "user_id", "order_date", "total_amount"]
+        "common_columns": ["id", "user_id", "order_date", "total_amount"],
     },
     "products": {
         "excel_sheets": ["products", "产品表", "Products", "商品表"],
-        "common_columns": ["id", "name", "price", "category_id"]
+        "common_columns": ["id", "name", "price", "category_id"],
     },
     "categories": {
         "excel_sheets": ["categories", "分类表", "Categories", "产品分类"],
-        "common_columns": ["id", "name", "parent_id"]
+        "common_columns": ["id", "name", "parent_id"],
     },
     "order_items": {
         "excel_sheets": ["order_items", "订单明细", "OrderItems", "订单详情"],
-        "common_columns": ["id", "order_id", "product_id", "quantity", "unit_price"]
+        "common_columns": ["id", "order_id", "product_id", "quantity", "unit_price"],
     },
 }
 

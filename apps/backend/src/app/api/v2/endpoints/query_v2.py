@@ -16,7 +16,7 @@ API: POST /api/v2/query
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 import logging
@@ -30,7 +30,6 @@ from ....integrations.agentv2_gateway import agentv2_gateway
 
 # 创建 logger
 logger = logging.getLogger(__name__)
-AGENTV2_AVAILABLE = agentv2_gateway.is_available()
 
 # ============================================================================
 # 请求/响应模型
@@ -38,6 +37,19 @@ AGENTV2_AVAILABLE = agentv2_gateway.is_available()
 
 class QueryRequestV2(BaseModel):
     """查询请求模型 V2"""
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "query": "查询销售额TOP 10的产品",
+                "connection_id": "conn_123",
+                "session_id": "session_abc",
+                "max_results": 100,
+                "include_chart": True,
+                "chart_type": "bar",
+            }
+        }
+    )
+
     query: str = Field(..., description="自然语言查询", min_length=1)
     connection_id: Optional[str] = Field(None, description="数据源连接ID")
     session_id: Optional[str] = Field(None, description="会话ID")
@@ -46,20 +58,24 @@ class QueryRequestV2(BaseModel):
     include_chart: bool = Field(False, description="是否生成图表")
     chart_type: Optional[str] = Field(None, description="图表类型")
 
-class Config:
-    json_schema_extra = {
-        "example": {
-            "query": "查询销售额TOP 10的产品",
-            "connection_id": "conn_123",
-            "session_id": "session_abc",
-            "max_results": 100,
-            "include_chart": True,
-            "chart_type": "bar"
-        }
-    }
-
 class QueryResponseV2(BaseModel):
     """查询响应模型 V2"""
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "success": True,
+                "query": "查询结果",
+                "sql": "SELECT * FROM products ORDER BY sales DESC LIMIT 10",
+                "data": [],
+                "row_count": 10,
+                "processing_steps": ["解析查询", "生成SQL", "执行查询"],
+                "tenant_id": "tenant_123",
+                "session_id": "xxx-xxx-xxx",
+                "processing_time_ms": 1234,
+            }
+        }
+    )
+
     success: bool
     answer: str
     sql: Optional[str] = None
@@ -81,21 +97,6 @@ class QueryResponseV2(BaseModel):
     lineage: Optional[List[Dict[str, Any]]] = None  # 表格分布记录
     insights: Optional[List[str]] = None  # 数据业务提示
 
-class Config:
-    json_schema_extra = {
-        "example": {
-            "success": True,
-            "query": "查询结果",
-            "sql": "SELECT * FROM products ORDER BY sales DESC LIMIT 10",
-            "data": [],
-            "row_count": 10,
-            "processing_steps": ["解析查询", "生成SQL", "执行查询"],
-            "tenant_id": "tenant_123",
-            "session_id": "xxx-xxx-xxx",
-            "processing_time_ms": 1234
-        }
-    }
-
 class ErrorResponse(BaseModel):
     """错误响应模型"""
     success: bool = False
@@ -108,16 +109,6 @@ class ErrorResponse(BaseModel):
 # ============================================================================
 
 router = APIRouter(prefix="/query", tags=["query-v2"])
-
-# ============================================================================
-# 依赖
-# ============================================================================
-
-def get_agent_factory() -> Any:
-    """获取 AgentFactory 实例"""
-    if not agentv2_gateway.is_available():
-        return None
-    return agentv2_gateway.get_default_factory()
 
 def get_tenant_from_request(request: QueryRequestV2) -> str:
     """
@@ -144,7 +135,6 @@ async def create_query_v2(
     tenant_id: str = Depends(get_tenant_from_request),
     user_id: str = Depends(get_user_from_request),
     db: Session = Depends(get_db),
-    agent_factory: Any = Depends(get_agent_factory)
 ):
     """
     Data Agent V2 查询端点
@@ -159,13 +149,11 @@ async def create_query_v2(
     - 可解释性：完整的推理过程记录
     - 日志持久化：双通道写入（数据库 + 文件）
     """
-    import time
-
     start_time = time.time()
 
     # 新增：生成或使用 session_id 用于日志追踪
     session_id = request.session_id or str(uuid.uuid4())
-    logger.info(f"[V2] 开始处理查询，session_id={session_id}")
+    logger.debug("[V2] 开始处理查询，session_id=%s", session_id)
 
     try:
         # 1. 验证租户
@@ -175,7 +163,8 @@ async def create_query_v2(
                 detail="租户ID缺失"
             )
 
-        if not AGENTV2_AVAILABLE or agent_factory is None:
+        runtime_available = agentv2_gateway.is_available()
+        if not runtime_available:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
@@ -185,53 +174,14 @@ async def create_query_v2(
                 },
             )
 
-        # 2. 创建 Agent (带租户隔离和数据源连接)
-        try:
-            # DEBUG: 打印中间件类信息
-            mid_module = agentv2_gateway.get_middleware_module()
-            logger.debug(f"TenantIsolationMiddleware 类检查: {hasattr(mid_module.TenantIsolationMiddleware, 'wrap_tool_call')}")
-            logger.debug(f"SQLSecurityMiddleware 类检查: {hasattr(mid_module.SQLSecurityMiddleware, 'wrap_model_call')}")
-            logger.debug(f"所有方法: {[a for a in dir(mid_module.TenantIsolationMiddleware) if not a.startswith('_')]}")
-
-            logger.debug(f"开始创建agent... connection_id={request.connection_id}, session_id={session_id}")
-            agent = agent_factory.get_or_create_agent(
-                tenant_id=tenant_id,
-                user_id=user_id,
-                session_id=session_id,
-                connection_id=request.connection_id,
-                db_session=db
-            )
-            logger.debug("Agent 创建成功")
-        except Exception as e:
-            # 添加详细的错误信息
-            import traceback
-            error_detail = f"{str(e)}\n\n            Traceback:\n{traceback.format_exc()}"
-            logger.error(f"[ERROR] Agent 创建失败: {error_detail}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={
-                    "success": False,
-                    "error": error_detail,
-                    "error_type": "agent_initialization_error",
-                    "tenant_id": tenant_id
-                }
-            )
-
-        # 3. 准备输入
-        agent_input = {
-            "messages": [
-                {"role": "user", "content": request.query}
-            ]
-        }
-
-        # 4. SQL 安全预检查（暂时禁用，等待中间件修复）
+        # 2. SQL 安全预检查（暂时禁用，等待中间件修复）
         # sql_middleware = SQLSecurityMiddleware()
         # 注意：这里简化了实际的 SQL 提取逻辑
         # 实际实现需要从消息中提取 SQL
 
-        # 5. 检查响应缓存
+        # 3. 检查响应缓存
         cached_response = None
-        if AGENTV2_AVAILABLE:
+        if runtime_available:
             response_cache = agentv2_gateway.get_response_cache()
             cached_response = response_cache.get(
                 query=request.query,
@@ -240,17 +190,25 @@ async def create_query_v2(
                 context={"data_sources": []}  # 可从 request 获取
             )
             if cached_response:
-                logger.info(f"[V2] 使用缓存响应: {request.query[:30]}...")
+                logger.debug("[V2] 使用缓存响应: %s...", request.query[:30])
                 # 添加缓存标记到处理步骤
                 cached_response["processing_steps"] = ["缓存命中"] + cached_response.get("processing_steps", [])
                 cached_response["from_cache"] = True
                 return QueryResponseV2(**cached_response)
 
-        # 6. 强制预调用 list_tables() 确保获取实际表名
-        # 这解决了 AI 跳过 list_tables() 直接猜测表名的问题
-        if AGENTV2_AVAILABLE and request.connection_id:
+        # 4. 预热表名缓存（仅首次）
+        if runtime_available and request.connection_id:
+            cached_table_names = agentv2_gateway.get_cached_table_names(
+                tenant_id=tenant_id,
+                connection_id=request.connection_id,
+            )
+            needs_prefetch = not cached_table_names
+        else:
+            needs_prefetch = False
+
+        if needs_prefetch and request.connection_id:
             try:
-                logger.info(f"[V2] 强制预调用 list_tables() 获取表名...")
+                logger.debug("[V2] 预调用 list_tables() 获取表名缓存")
                 tables_result = await agentv2_gateway.list_tables(
                     connection_id=request.connection_id,
                     db_session=db,
@@ -258,67 +216,58 @@ async def create_query_v2(
                 )
                 if tables_result and "tables" in tables_result:
                     table_names = tables_result["tables"]
-                    logger.info(f"[V2] 预期获取到表名列表: {table_names}")
-                    # 缓存表名到 AgentFactory
-                    agentv2_gateway.cache_table_names(
-                        tenant_id=tenant_id,
-                        table_names=table_names,
-                        connection_id=request.connection_id
-                    )
-                    logger.info(f"[V2] 表名已缓存到AgentFactory")
+                    if isinstance(table_names, list) and table_names:
+                        agentv2_gateway.cache_table_names(
+                            tenant_id=tenant_id,
+                            table_names=table_names,
+                            connection_id=request.connection_id
+                        )
+                        logger.debug("[V2] 表名缓存已更新，数量=%s", len(table_names))
             except Exception as e:
-                logger.warning(f"[V2] 强制预调用 list_tables() 失败，继续执行查询: {e}")
+                logger.warning("[V2] list_tables 预热失败，继续执行查询: %s", e)
 
-        # 7. 执行真实查询（使用同步调用在异步上下文中运行）
-        logger.info(f"[V2] 执行查询: {request.query}")
-        # 注意：由于中间件暂未实现异步方法，使用 asyncio.to_thread 运行同步调用
-        import asyncio
-        from contextvars import copy_context
+        # 5. 执行查询（统一通过 gateway）
+        logger.debug("[V2] 执行查询: %s", request.query)
+        QUERY_TIMEOUT = 120.0
+        invoke_result = await agentv2_gateway.invoke_query(
+            question=request.query,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session_id=session_id,
+            connection_id=request.connection_id,
+            db_session=db,
+            timeout_seconds=QUERY_TIMEOUT,
+        )
 
-        user_query_set = False
-        if AGENTV2_AVAILABLE:
-            user_query_set = agentv2_gateway.set_user_query_context(request.query)
-
-        # 添加超时保护，防止 Agent 调用无限期挂起
-        QUERY_TIMEOUT = 120.0  # 120秒超时
-
-        try:
-            ctx = copy_context()
-            result = await asyncio.wait_for(
-                asyncio.to_thread(ctx.run, agent.invoke, agent_input),
-                timeout=QUERY_TIMEOUT
-            )
-            logger.info(f"[V2] 查询完成，结果类型: {type(result)}")
-        except asyncio.TimeoutError:
-            logger.error(f"[V2] 查询超时（{QUERY_TIMEOUT}秒）: {request.query}")
+        if not invoke_result.success:
+            error_msg = invoke_result.error or "查询执行失败"
+            lowered = error_msg.lower()
+            if "timeout" in lowered or "timed out" in lowered:
+                raise HTTPException(
+                    status_code=status.HTTP_408_REQUEST_TIMEOUT,
+                    detail={
+                        "success": False,
+                        "error": "查询超时，请简化查询条件或稍后重试",
+                        "error_type": "timeout_error",
+                        "tenant_id": tenant_id,
+                        "timeout_seconds": QUERY_TIMEOUT,
+                    },
+                )
             raise HTTPException(
-                status_code=status.HTTP_408_REQUEST_TIMEOUT,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={
                     "success": False,
-                    "error": "查询超时，请简化查询条件或稍后重试",
-                    "error_type": "timeout_error",
+                    "error": error_msg,
+                    "error_type": "agent_invoke_error",
                     "tenant_id": tenant_id,
-                    "timeout_seconds": QUERY_TIMEOUT
-                }
+                },
             )
-        finally:
-            if user_query_set:
-                agentv2_gateway.clear_user_query_context()
 
-        # 8. 解析返回结果
-        # DeepAgents 返回的结果通常包含 messages 字段
-        answer = ""
+        # 6. 解析返回结果
+        answer = invoke_result.answer or ""
         processing_steps = []
         subagent_calls = []
-
-        if hasattr(result, "get"):
-            # 字典类型结果
-            messages = result.get("messages", [])
-        elif isinstance(result, list):
-            # 列表类型结果
-            messages = result
-        else:
-            messages = []
+        messages = invoke_result.messages or []
 
         # 从消息中回填 answer（避免返回空字符串）
         if not answer:
@@ -337,8 +286,8 @@ async def create_query_v2(
                         break
 
         # ========== [数据验证模块] 从消息中提取 SQL 和数据 ==========
-        extracted_sql = None
-        extracted_data = None
+        extracted_sql = invoke_result.sql or None
+        extracted_data = invoke_result.data or None
         chart_config = None
         chart_validation = None
         query_chain: List[Dict[str, Any]] = []
@@ -353,104 +302,152 @@ async def create_query_v2(
         build_cell_lineage = validator_funcs["build_cell_lineage"]
         generate_insights_from_rows = validator_funcs["generate_insights_from_rows"]
         DATA_VALIDATION_AVAILABLE = True
+        needs_message_extract = extracted_sql is None or extracted_data is None
+        debug_enabled = logger.isEnabledFor(logging.DEBUG)
+
+        if extracted_sql and not query_chain:
+            query_chain.append(
+                {
+                    "step": 1,
+                    "sql": extracted_sql,
+                    "source": "agentv2_gateway",
+                }
+            )
+        if extracted_data and query_chain:
+            query_chain[-1].setdefault("row_count", len(extracted_data))
+            query_chain[-1].setdefault(
+                "columns",
+                list(extracted_data[0].keys()) if isinstance(extracted_data[0], dict) else [],
+            )
 
         if DATA_VALIDATION_AVAILABLE:
-            logger.info("[V2] 消息数量: {len(messages)}")
-            for i, msg in enumerate(messages):
-                msg_type = type(msg).__name__
-                msg_class_str = str(msg.__class__) if hasattr(msg, '__class__') else 'N/A'
-                logger.info(f"[V2] 消息 {i}: type={msg_type}, class={msg_class_str}")
-                if hasattr(msg, 'tool_calls'):
-                    logger.info(f"[V2]   - tool_calls: {msg.tool_calls}")
-                if hasattr(msg, 'content'):
-                    content_preview = str(msg.content)[:200] if msg.content else None
-                    logger.info(f"[V2]   - content: {content_preview}")
+            if debug_enabled:
+                logger.debug("[V2] 消息数量: %s", len(messages))
+                for i, msg in enumerate(messages):
+                    msg_type = type(msg).__name__
+                    msg_class_str = str(msg.__class__) if hasattr(msg, '__class__') else 'N/A'
+                    logger.debug("[V2] 消息 %s: type=%s, class=%s", i, msg_type, msg_class_str)
+                    if isinstance(msg, dict):
+                        if "tool_calls" in msg:
+                            logger.debug("[V2]   - tool_calls: %s", msg.get("tool_calls"))
+                        content_preview = str(msg.get("content", ""))[:200] if msg.get("content") else None
+                        logger.debug("[V2]   - content: %s", content_preview)
+                    else:
+                        if hasattr(msg, 'tool_calls'):
+                            logger.debug("[V2]   - tool_calls: %s", msg.tool_calls)
+                        if hasattr(msg, 'content'):
+                            content_preview = str(msg.content)[:200] if msg.content else None
+                            logger.debug("[V2]   - content: %s", content_preview)
 
-            # 从消息中提取 SQL（从 AIMessage 的 tool_calls 中）
-            for msg in messages:
-                # 提取 SQL（从 AIMessage 的 tool_calls 中）
-                if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                    for tc in msg.tool_calls:
-                        tc_name = tc.get('name') if isinstance(tc, dict) else getattr(tc, 'name', None)
-                        logger.info(f"[V2] 检查工具调用: {tc_name}")
-                        # AgentV2 使用 execute_query 工具，参数名为 'query'
-                        if tc_name in ('execute_query', 'query', 'mcp_postgres_query'):
-                            tc_args = tc.get('args') if isinstance(tc, dict) else getattr(tc, 'args', {})
-                            if tc_args:
-                                extracted_sql = (
-                                    tc_args.get('query') or
-                                    tc_args.get('sql') or
-                                    tc_args.get('q')
-                                )
-                                if extracted_sql:
-                                    logger.info(f"[V2] 提取到SQL: {extracted_sql[:100] if extracted_sql else None}...")
-                                    if not query_chain or query_chain[-1].get("sql") != extracted_sql:
-                                        query_chain.append({"step": len(query_chain)+1, "sql": extracted_sql, "source": tc_name or "execute_query"})
-                                    break  # 找到 SQL 后跳出
+            if needs_message_extract:
+                # 从消息中提取 SQL（从 AIMessage 的 tool_calls 中）
+                for msg in messages:
+                    if isinstance(msg, dict):
+                        tool_calls = msg.get("tool_calls") or []
+                    else:
+                        tool_calls = getattr(msg, "tool_calls", None) or []
 
-                # 提取数据（从 ToolMessage 中）
-                msg_class_name = str(msg.__class__) if hasattr(msg, '__class__') else ''
-                if 'ToolMessage' in msg_class_name or 'Tool' in msg_class_name:
-                    try:
-                        import json
-                        content = msg.content
-                        logger.info(f"[V2] ToolMessage content type: {type(content)}")
-                        if isinstance(content, str):
-                            # 尝试解析 JSON 数据
-                            data = json.loads(content)
-                            # 检查是否是标准的查询结果格式 {"columns": [...], "rows": [...], ...}
-                            if isinstance(data, dict) and 'columns' in data and 'rows' in data:
-                                # 转换为字典列表格式
-                                columns = data.get('columns', [])
-                                rows = data.get('rows', [])
-                                extracted_data = [
-                                    {col: val for col, val in zip(columns, row)}
-                                    for row in rows
-                                ]
-                                logger.info(f"[V2] 提取到数据: {len(extracted_data)} 条")
-                                break
-                            elif isinstance(data, list) and len(data) > 0:
-                                if all(isinstance(row, dict) for row in data):
-                                    extracted_data = data
-                                    logger.info(f"[V2] 提取到数据: {len(extracted_data)} 条，格式: {list(data[0].keys())}")
+                    # 提取 SQL（从 AIMessage 的 tool_calls 中）
+                    if tool_calls:
+                        for tc in tool_calls:
+                            tc_name = tc.get('name') if isinstance(tc, dict) else getattr(tc, 'name', None)
+                            if debug_enabled:
+                                logger.debug("[V2] 检查工具调用: %s", tc_name)
+                            # AgentV2 使用 execute_query 工具，参数名为 'query'
+                            if tc_name in ('execute_query', 'query', 'mcp_postgres_query'):
+                                tc_args = tc.get('args') if isinstance(tc, dict) else getattr(tc, 'args', {})
+                                if tc_args:
+                                    extracted_sql = (
+                                        tc_args.get('query') or
+                                        tc_args.get('sql') or
+                                        tc_args.get('q')
+                                    )
+                                    if extracted_sql:
+                                        logger.debug("[V2] 提取到SQL: %s...", extracted_sql[:100] if extracted_sql else None)
+                                        if not query_chain or query_chain[-1].get("sql") != extracted_sql:
+                                            query_chain.append({"step": len(query_chain)+1, "sql": extracted_sql, "source": tc_name or "execute_query"})
+                                        break  # 找到 SQL 后跳出
+
+                    # 提取数据（从 ToolMessage 中）
+                    msg_class_name = str(msg.__class__) if hasattr(msg, '__class__') else ''
+                    is_tool_message = (
+                        ("ToolMessage" in msg_class_name or "Tool" in msg_class_name)
+                        or (isinstance(msg, dict) and msg.get("role") == "tool")
+                    )
+                    if is_tool_message:
+                        try:
+                            import json
+                            content = msg.get("content") if isinstance(msg, dict) else msg.content
+                            if debug_enabled:
+                                logger.debug("[V2] ToolMessage content type: %s", type(content))
+                            if isinstance(content, str):
+                                # 尝试解析 JSON 数据
+                                data = json.loads(content)
+                                # 检查是否是标准的查询结果格式 {"columns": [...], "rows": [...], ...}
+                                if isinstance(data, dict) and 'columns' in data and 'rows' in data:
+                                    # 转换为字典列表格式
+                                    columns = data.get('columns', [])
+                                    rows = data.get('rows', [])
+                                    extracted_data = [
+                                        {col: val for col, val in zip(columns, row)}
+                                        for row in rows
+                                    ]
+                                    logger.debug("[V2] 提取到数据: %s 条", len(extracted_data))
                                     break
-                            elif isinstance(data, dict) and 'error' in data:
-                                # 错误响应，跳过
-                                logger.debug(f"[V2] 跳过错误响应: {data.get('error', 'Unknown error')}")
-                            elif isinstance(data, dict) and 'tables' in data:
-                                # list_tables 响应，跳过
-                                logger.debug(f"[V2] 跳过 list_tables 响应")
-                        elif isinstance(content, list):
-                            if all(isinstance(row, dict) for row in content):
-                                extracted_data = content
-                                logger.info(f"[V2] 提取到数据: {len(content)} 条")
-                                break
-                    except (ValueError, TypeError, AttributeError, json.JSONDecodeError) as e:
-                        logger.debug(f"[V2] 数据提取跳过: {e}")
+                                elif isinstance(data, list) and len(data) > 0:
+                                    if all(isinstance(row, dict) for row in data):
+                                        extracted_data = data
+                                        logger.debug("[V2] 提取到数据: %s 条，格式: %s", len(extracted_data), list(data[0].keys()))
+                                        break
+                                elif isinstance(data, dict) and 'error' in data:
+                                    # 错误响应，跳过
+                                    if debug_enabled:
+                                        logger.debug("[V2] 跳过错误响应: %s", data.get("error", "Unknown error"))
+                                elif isinstance(data, dict) and 'tables' in data:
+                                    # list_tables 响应，跳过
+                                    if debug_enabled:
+                                        logger.debug("[V2] 跳过 list_tables 响应")
+                            elif isinstance(content, list):
+                                if all(isinstance(row, dict) for row in content):
+                                    extracted_data = content
+                                    logger.debug("[V2] 提取到数据: %s 条", len(content))
+                                    break
+                        except (ValueError, TypeError, AttributeError, json.JSONDecodeError) as e:
+                            if debug_enabled:
+                                logger.debug("[V2] 数据提取跳过: %s", e)
 
             # 自动统计执行查询的结果和表格分布
             if extracted_data:
                 if query_chain:
                     query_chain[-1].setdefault("row_count", len(extracted_data))
                     query_chain[-1].setdefault("columns", list(extracted_data[0].keys()) if isinstance(extracted_data[0], dict) else [])
-                if DATA_VALIDATION_AVAILABLE and extracted_data and len(extracted_data) > 0:
+                if DATA_VALIDATION_AVAILABLE:
                     lineage = build_cell_lineage(extracted_sql, extracted_data)
                     insights = generate_insights_from_rows(extracted_data, request.query)
-                    logger.info(f"[V2] 应用数据一致性验证...")
+                    logger.debug("[V2] 应用数据一致性验证...")
                 try:
                     validation_result = validate_sql_data_consistency(
                         executed_sql=extracted_sql or "SELECT * FROM unknown",
                         query_results=extracted_data
                     )
-                    logger.info(f"[V2] 验证结果: is_valid={validation_result.is_valid}, actual_columns={validation_result.actual_columns}")
+                    logger.debug(
+                        "[V2] 验证结果: is_valid=%s, actual_columns=%s",
+                        validation_result.is_valid,
+                        validation_result.actual_columns,
+                    )
                 except Exception as e:
                     logger.error(f"[V2] 数据验证失败: {e}")
                 # 2. 智能字段映射
                 field_mapping = smart_field_mapping(extracted_data, extracted_sql)
-                logger.info(f"[V2] 字段映射: x_field={field_mapping.x_field}, y_field={field_mapping.y_field}, confidence={field_mapping.confidence}")
+                logger.debug(
+                    "[V2] 字段映射: x_field=%s, y_field=%s, confidence=%s",
+                    field_mapping.x_field,
+                    field_mapping.y_field,
+                    field_mapping.confidence,
+                )
                 # 3. 图表推荐
                 chart_rec = recommend_chart(extracted_data, extracted_sql, request.query)
-                logger.info(f"[V2] 图表推荐: chart_type={chart_rec.chart_type}")
+                logger.debug("[V2] 图表推荐: chart_type=%s", chart_rec.chart_type)
                 # 4. 构建图表配置
                 if field_mapping.x_field and field_mapping.y_field:
                     chart_config = {
@@ -460,27 +457,15 @@ async def create_query_v2(
                         "title": chart_rec.title,
                         "reasoning": chart_rec.reasoning
                     }
-                    logger.info(f"[V2] 图表配置已生成: {chart_config}")
-                if chart_validation:
-                    validation_result = validate_chart_fields_in_sql(
+                    logger.debug("[V2] 图表配置已生成: %s", chart_config)
+                if chart_config:
+                    chart_validation = validate_chart_fields_in_sql(
                         executed_sql=extracted_sql or "",
                         extracted_data=extracted_data,
                         chart_fields=[field_mapping.x_field, field_mapping.y_field]
                     ).model_dump()
                     if chart_validation and not chart_validation.get("is_valid"):
                         logger.warning(f"[V2] 图表字段一致性验证失败: {chart_validation}")
-
-            # 应用数据验证
-            if DATA_VALIDATION_AVAILABLE and extracted_data and len(extracted_data) > 0:
-                try:
-                    logger.info("[V2] 应用数据一致性验证...")
-                    validation_result = validate_sql_data_consistency(
-                        executed_sql=extracted_sql or "SELECT * FROM unknown",
-                        query_results=extracted_data
-                    )
-                    logger.info(f"[V2] 验证结果: is_valid={validation_result.is_valid}, actual_columns={validation_result.actual_columns}")
-                except Exception as e:
-                    logger.error(f"[V2] 数据验证失败: {e}")
 
             # 自动统计执行查询的结果和表格分布
             if extracted_data:
@@ -504,16 +489,19 @@ async def create_query_v2(
 
             # 步骤2: 理解数据结构
             tables_found = []
-            if hasattr(result, '__dict__'):
-                # 尝试从结果中提取表信息
-                result_dict = result.__dict__ if hasattr(result, '__dict__') else result
-                if 'messages' in result_dict:
-                    for msg in result_dict['messages']:
-                        if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                            for tc in msg.tool_calls:
-                                if tc.get('name') == 'list_tables':
-                                    tables_found = tc.get('args', {}).get('tables', [])
-                                    break
+            for msg in messages:
+                tool_calls = getattr(msg, "tool_calls", None)
+                if not tool_calls:
+                    continue
+                for tc in tool_calls:
+                    tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                    if tc_name == "list_tables":
+                        tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {}) or {}
+                        if isinstance(tc_args, dict):
+                            tables_found = tc_args.get("tables", []) or []
+                        break
+                if tables_found:
+                    break
             processing_steps.append({
                 "step": step_number,
                 "name": "理解数据结构",
@@ -597,7 +585,7 @@ async def create_query_v2(
                 })
             step_number += 1
 
-            logger.info(f"[V2] 回答长度: {len(answer)} 字符，处理步骤数: {len(processing_steps)}")
+            logger.debug("[V2] 回答长度: %s 字符，处理步骤数: %s", len(answer), len(processing_steps))
 
             # 计算行数
             row_count = len(extracted_data) if extracted_data else 0
@@ -629,7 +617,7 @@ async def create_query_v2(
             )
 
             # 存储到缓存
-            if AGENTV2_AVAILABLE:
+            if runtime_available:
                 response_cache = agentv2_gateway.get_response_cache()
                 response_cache.set(
                     query=request.query,
@@ -638,7 +626,7 @@ async def create_query_v2(
                     connection_id=request.connection_id,
                     context={"data_sources": []}
                 )
-                logger.info(f"[V2] 响应已缓存: {request.query[:30]}...")
+                logger.debug("[V2] 响应已缓存: %s...", request.query[:30])
             return response_obj
     except HTTPException as http_exc:
         # 直接传递 HTTP 异常
@@ -737,32 +725,3 @@ async def get_capabilities_v2():
         ]
     }
 
-# ============================================================================
-# 辅助函数
-# ============================================================================
-
-def _extract_sql_from_response(response: str) -> Optional[str]:
-    """从响应中提取 SQL 语句
-
-    简单的 SQL 提取（实际实现需要更复杂的解析）
-    """
-    import re
-
-    # 尝试从 markdown 代码块中提取
-    sql_pattern = r"```sql\s*(SELECT.*?)?\s*```"
-    match = re.search(sql_pattern, response, re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-
-    # 尝试直接查找 SELECT 语句
-    lines = response.split('\n')
-    for line in lines:
-        line = line.strip()
-        if line.upper().startswith('SELECT'):
-            return line
-    return None
-
-def _sanitize_response_for_tenant(response: str, tenant_id: str) -> str:
-    """确保响应中不包含其他租户的数据"""
-    # 这里可以添加额外的过滤逻辑
-    return response

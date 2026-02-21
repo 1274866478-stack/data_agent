@@ -17,7 +17,7 @@
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional, Literal
+from typing import Dict, Any, List, Optional
 from enum import Enum
 
 from langchain_core.messages import HumanMessage, AIMessage
@@ -444,7 +444,7 @@ class ClarificationNode:
                     content += f"  - {option.description}\n"
 
             if question.allow_custom:
-                content += f"- **自定义**: 输入您自己的值\n"
+                content += "- **自定义**: 输入您自己的值\n"
 
             content += "\n"
 

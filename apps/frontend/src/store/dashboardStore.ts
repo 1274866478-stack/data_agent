@@ -102,10 +102,12 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import { useAuthStore } from './authStore'
+import { API_BASE_URL } from '@/lib/api-client'
+import { getStoredAuthToken } from '@/lib/auth-token'
 
 // 获取 API 基础 URL
 const getApiBaseUrl = () => {
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'
+  return API_BASE_URL
 }
 
 // 获取当前用户的 tenant_id 和 user_id
@@ -114,6 +116,14 @@ const getAuthParams = () => {
   return {
     tenant_id: user?.tenant_id || 'default_tenant',
     user_id: user?.id || 'anonymous'
+  }
+}
+
+const buildAuthHeaders = (): HeadersInit => {
+  const token = getStoredAuthToken()
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    'Content-Type': 'application/json',
   }
 }
 
@@ -253,10 +263,7 @@ export const useDashboardStore = create<DashboardState>()(
           const params = new URLSearchParams({ tenant_id, user_id })
 
           const response = await fetch(`${apiBaseUrl}/data-sources/overview?${params}`, {
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-              'Content-Type': 'application/json',
-            },
+            headers: buildAuthHeaders(),
           })
 
           if (!response.ok) {
@@ -370,10 +377,7 @@ export const useDashboardStore = create<DashboardState>()(
 
           const apiBaseUrl = getApiBaseUrl()
           const response = await fetch(`${apiBaseUrl}/data-sources/search?${params}`, {
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-              'Content-Type': 'application/json',
-            },
+            headers: buildAuthHeaders(),
           })
 
           if (!response.ok) {
@@ -407,10 +411,7 @@ export const useDashboardStore = create<DashboardState>()(
 
           const response = await fetch(`${apiBaseUrl}/data-sources/bulk-delete?${params}`, {
             method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('token')}`,
-              'Content-Type': 'application/json',
-            },
+            headers: buildAuthHeaders(),
             body: JSON.stringify({
               item_ids: itemIds,
               item_type: itemType,

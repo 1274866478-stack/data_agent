@@ -13,8 +13,7 @@ AgentV2 - Data Agent V2 based on DeepAgents
 
 快速开始:
     ```python
-    from AgentV2 import create_agent
-    from AgentV2.tools import get_mcp_tools
+    from agent import create_agent
 
     # 创建 Agent
     agent = create_agent(tenant_id="my_tenant")

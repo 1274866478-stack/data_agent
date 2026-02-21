@@ -88,17 +88,14 @@
 **依赖深度**: 依赖minio_client和document_service
 """
 
-import asyncio
 import uuid
 import hashlib
-import json
-from typing import Optional, List, Dict, Any, AsyncGenerator
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from enum import Enum
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
 
 from src.app.integrations.storage_minio.client import minio_service
 from fastapi.concurrency import run_in_threadpool
@@ -243,7 +240,7 @@ class ChunkedUploadService:
             self.chunk_data[session_id] = chunks
 
             logger.info(
-                f"初始化上传会话成功",
+                "初始化上传会话成功",
                 extra={
                     "session_id": session_id,
                     "tenant_id": tenant_id,
@@ -350,7 +347,7 @@ class ChunkedUploadService:
                     session.status = UploadSessionStatus.COMPLETED
 
                 logger.info(
-                    f"分块上传成功",
+                    "分块上传成功",
                     extra={
                         "session_id": session_id,
                         "chunk_number": chunk_number,
@@ -500,7 +497,7 @@ class ChunkedUploadService:
                 await self.cleanup_session(session_id)
 
                 logger.info(
-                    f"文件上传完成",
+                    "文件上传完成",
                     extra={
                         "session_id": session_id,
                         "tenant_id": session.tenant_id,
@@ -551,7 +548,7 @@ class ChunkedUploadService:
             await self.cleanup_session(session_id)
 
             logger.info(
-                f"上传会话已中止",
+                "上传会话已中止",
                 extra={
                     "session_id": session_id,
                     "tenant_id": session.tenant_id

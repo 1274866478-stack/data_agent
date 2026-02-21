@@ -35,26 +35,30 @@ import json
 import time
 import threading
 from typing import Optional, List, Dict, Any, Tuple
-from functools import wraps, lru_cache
+from functools import lru_cache
 import logging
 
 # 使用 contextvars 替代 threading.local，支持异步/多线程环境
 from contextvars import ContextVar
 
+try:
+    from ..core.backend_runtime import import_backend_module, run_async_sync
+except ImportError:
+    # 兼容直接运行（非包方式）
+    from core.backend_runtime import import_backend_module, run_async_sync
+
 logger = logging.getLogger(__name__)
 
 # 🔧 新增：导入表描述配置
 try:
-    from ..config.table_descriptions import (
-        TABLE_DESCRIPTIONS,
+    from ..table_config import (
         enrich_tables_with_description,
-        get_table_description
     )
     TABLE_DESCRIPTIONS_AVAILABLE = True
-    logger.info("✅ [database_tools] 表描述配置加载成功")
+    logger.debug("[database_tools] table descriptions loaded")
 except ImportError:
     TABLE_DESCRIPTIONS_AVAILABLE = False
-    logger.warning("⚠️ [database_tools] 表描述配置未找到，将使用基础模式")
+    logger.warning("[database_tools] table descriptions unavailable; using basic mode")
 
 # 🔧 新增：导入表关系元数据（智能错误提示）
 try:
@@ -67,10 +71,10 @@ try:
         TABLE_RELATIONSHIPS
     )
     SCHEMA_METADATA_AVAILABLE = True
-    logger.info("✅ [database_tools] 表关系元数据加载成功")
+    logger.debug("[database_tools] schema metadata loaded")
 except ImportError:
     SCHEMA_METADATA_AVAILABLE = False
-    logger.warning("⚠️ [database_tools] 表关系元数据未找到，智能错误提示将被禁用")
+    logger.warning("[database_tools] schema metadata unavailable; advanced hints disabled")
 
     # 提供回退的空函数
     def find_column_suggestion(*args, **kwargs):
@@ -88,10 +92,10 @@ except ImportError:
 try:
     from ..sql_validator import SQLValidator
     SQL_VALIDATOR_AVAILABLE = True
-    logger.info("✅ [database_tools] SQL 校验和修正器加载成功")
+    logger.debug("[database_tools] sql validator loaded")
 except ImportError:
     SQL_VALIDATOR_AVAILABLE = False
-    logger.warning("⚠️ [database_tools] SQL 校验和修正器未找到")
+    logger.warning("[database_tools] sql validator unavailable")
     SQLValidator = None
 
 # ============================================================================
@@ -117,7 +121,11 @@ def _set_connection_context(
     _connection_id_ctx.set(connection_id)
     _db_session_ctx.set(db_session)
     _tenant_id_ctx.set(tenant_id)
-    logger.info(f"[CONTEXT_SET] connection_id={connection_id}, tenant_id={tenant_id}")
+    logger.debug(
+        "[CONTEXT_SET] connection_id=%s tenant_id=%s",
+        connection_id,
+        tenant_id,
+    )
 
 
 def _get_connection_context() -> Tuple[Optional[str], Optional[Any], Optional[str]]:
@@ -125,7 +133,11 @@ def _get_connection_context() -> Tuple[Optional[str], Optional[Any], Optional[st
     connection_id = _connection_id_ctx.get()
     db_session = _db_session_ctx.get()
     tenant_id = _tenant_id_ctx.get()
-    logger.info(f"[CONTEXT_GET] connection_id={connection_id}, tenant_id={tenant_id}")
+    logger.debug(
+        "[CONTEXT_GET] connection_id=%s tenant_id=%s",
+        connection_id,
+        tenant_id,
+    )
     return (connection_id, db_session, tenant_id)
 
 
@@ -134,14 +146,14 @@ def _clear_connection_context() -> None:
     _connection_id_ctx.set(None)
     _db_session_ctx.set(None)
     _tenant_id_ctx.set(None)
-    logger.info("[CONTEXT_CLEAR] Connection context cleared")
+    logger.debug("[CONTEXT_CLEAR] connection context cleared")
 
 
 # 🔧 新增：list_tables 调用标志管理函数
 def _set_list_tables_called(value: bool = True) -> None:
     """设置 list_tables 已调用标志"""
     _list_tables_called_ctx.set(value)
-    logger.info(f"[LIST_TABLES_FLAG] Set to {value}")
+    logger.debug("[LIST_TABLES_FLAG] set to %s", value)
 
 
 def _get_list_tables_called() -> bool:
@@ -152,14 +164,17 @@ def _get_list_tables_called() -> bool:
 def _reset_list_tables_flag() -> None:
     """重置 list_tables 调用标志"""
     _list_tables_called_ctx.set(False)
-    logger.info("[LIST_TABLES_FLAG] Reset to False")
+    logger.debug("[LIST_TABLES_FLAG] reset to False")
 
 
 # 🔧 新增：用户查询上下文管理函数
 def _set_user_query(query: str) -> None:
     """设置当前用户查询"""
     _user_query_ctx.set(query)
-    logger.info(f"[USER_QUERY] Set: {query[:100]}..." if len(query) > 100 else f"[USER_QUERY] Set: {query}")
+    logger.debug(
+        "[USER_QUERY] set: %s",
+        (query[:100] + "...") if len(query) > 100 else query,
+    )
 
 
 def _get_user_query() -> Optional[str]:
@@ -170,7 +185,17 @@ def _get_user_query() -> Optional[str]:
 def _clear_user_query() -> None:
     """清除用户查询"""
     _user_query_ctx.set(None)
-    logger.info("[USER_QUERY] Cleared")
+    logger.debug("[USER_QUERY] cleared")
+
+
+def set_user_query_context(query: str) -> None:
+    """Public wrapper for user query context setup."""
+    _set_user_query(query)
+
+
+def clear_user_query_context() -> None:
+    """Public wrapper for user query context cleanup."""
+    _clear_user_query()
 
 
 # 🔧 新增：地理查询智能推荐函数
@@ -205,7 +230,7 @@ def _add_geo_table_recommendation(
     if not has_geo_query:
         return tables
 
-    logger.info(f"[GEO_RECOMMENDATION] 检测到地理位置查询，添加 addresses 表推荐")
+    logger.debug("[GEO_RECOMMENDATION] 检测到地理位置查询，添加 addresses 表推荐")
 
     # 为 addresses 表添加强烈推荐标记
     for table in tables:
@@ -221,7 +246,7 @@ def _add_geo_table_recommendation(
             table["priority"] = "highest"
             table["recommendation_reason"] = "检测到地理位置查询，addresses 表是最佳选择"
             table["geo_query_recommended"] = True
-            logger.info(f"[GEO_RECOMMENDATION] 已为 {table.get('name')} 表添加地理推荐标记")
+            logger.debug(f"[GEO_RECOMMENDATION] 已为 {table.get('name')} 表添加地理推荐标记")
             break
 
     return tables
@@ -620,13 +645,31 @@ def get_cache_stats() -> Dict[str, Any]:
         "query_cache": _query_cache.get_stats()
     }
 
+
+def _import_data_source_connection_model():
+    """导入后端 DataSourceConnection 模型（按需）。"""
+    models_module = import_backend_module("app.data.models")
+    model = getattr(models_module, "DataSourceConnection", None)
+    if model is None:
+        raise ImportError("DataSourceConnection not found in app.data.models")
+    return model
+
+
+def _import_data_source_service():
+    """导入后端 data_source_service（按需）。"""
+    service_module = import_backend_module("app.services.data_source_service")
+    service = getattr(service_module, "data_source_service", None)
+    if service is None:
+        raise ImportError("data_source_service not found in app.services.data_source_service")
+    return service
+
 # ============================================================================
 # 数据库连接管理
 # ============================================================================
 
 def get_database_url(
     connection_id: Optional[str] = None
-) -> Tuple[str, Optional["DataSourceConnectionInfo"]]:
+) -> Tuple[str, Optional[Any]]:
     """
     获取数据库连接 URL 或 Excel 文件路径
 
@@ -641,18 +684,16 @@ def get_database_url(
     # 从连接上下文获取数据库会话和租户 ID
     _, db_session, tenant_id = _get_connection_context()
 
+    default_url = os.environ.get(
+        "DATABASE_URL",
+        "postgresql://postgres:postgres@localhost:5432/data_agent",
+    )
+
     # 如果没有提供 connection_id，尝试获取租户的默认活跃数据源
     if not connection_id:
         if db_session and tenant_id:
             try:
-                # Docker 环境路径设置（确保 /app/src 在 sys.path 开头）
-                import sys
-                if "/app/src" in sys.path:
-                    sys.path.remove("/app/src")
-                sys.path.insert(0, "/app/src")
-                logger.debug("Ensured /app/src is at sys.path[0] for default data source query")
-
-                from app.data.models import DataSourceConnection
+                DataSourceConnection = _import_data_source_connection_model()
 
                 # 查询租户的第一个活跃数据源
                 connection = db_session.query(DataSourceConnection).filter(
@@ -662,19 +703,19 @@ def get_database_url(
 
                 if connection:
                     connection_id = str(connection.id)
-                    logger.info(f"自动获取租户 {tenant_id} 的默认数据源: {connection.name} (ID: {connection_id})")
+                    logger.debug(f"自动获取租户 {tenant_id} 的默认数据源: {connection.name} (ID: {connection_id})")
                 else:
                     logger.warning(f"租户 {tenant_id} 没有配置活跃数据源，使用系统元数据库")
-                    return os.environ.get("DATABASE_URL"), None
+                    return default_url, None
             except ImportError as e:
                 logger.error(f"Failed to import DataSourceConnection model: {e}")
-                return os.environ.get("DATABASE_URL"), None
+                return default_url, None
             except Exception as e:
                 logger.error(f"Failed to query default data source: {e}")
-                return os.environ.get("DATABASE_URL"), None
+                return default_url, None
         else:
             # 没有数据库会话，使用环境变量中的默认数据库
-            return os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/data_agent"), None
+            return default_url, None
 
     # 从这里开始有 connection_id
     if not db_session or not tenant_id:
@@ -682,123 +723,40 @@ def get_database_url(
             f"connection_id provided but db_session/tenant_id not available. "
             f"Using default database. connection_id={connection_id}"
         )
-        return os.environ.get("DATABASE_URL"), None
+        return default_url, None
 
     try:
-        # 导入数据源服务（Docker 环境使用 /app 路径）
-        import sys
-
-        # 详细的调试日志
-        logger.info(f"BEFORE: /app/src in sys.path = {('/app/src' in sys.path)}")
-        logger.info(f"BEFORE: os.path.exists('/app/src') = {os.path.exists('/app/src')}")
-        logger.info(f"BEFORE: os.path.exists('/app/src/app/services') = {os.path.exists('/app/src/app/services')}")
-        logger.info(f"BEFORE: sys.path[0] = {sys.path[0]}")
-
-        # 确保 /app/src 在 sys.path 的最前面（因为 app 包在 /app/src/app/...）
-        # Python 导入 app.services 时，会在 sys.path 中查找 app/ 目录
-        if "/app/src" in sys.path:
-            sys.path.remove("/app/src")
-        sys.path.insert(0, "/app/src")
-        logger.info("ACTION: Ensured /app/src is at sys.path[0]")
-
-        logger.info(f"AFTER: sys.path[0] = {sys.path[0]}")
-
-        # 检查 /app/src/app 目录内容
-        if os.path.exists("/app/src/app"):
-            all_files = os.listdir("/app/src/app")
-            logger.info(f"Files in /app/src/app (total {len(all_files)}): {all_files}")
-            # 检查 services 是否存在
-            if "services" in all_files:
-                logger.info("✓ services directory found in /app/src/app")
-                # 检查 __init__.py 文件
-                init_files = []
-                for pyc_init in ["/app/src/app/__init__.py", "/app/src/app/services/__init__.py"]:
-                    if os.path.exists(pyc_init):
-                        init_files.append(pyc_init + " ✓")
-                    else:
-                        init_files.append(pyc_init + " ✗")
-                logger.info(f"__init__.py files: {init_files}")
-            else:
-                logger.error("✗ services directory NOT found in /app/src/app")
-        else:
-            logger.error(f"Directory /app/src/app does not exist!")
-
-        # 检查是否能直接访问 services 目录
-        if os.path.exists("/app/src/app/services/data_source_service.py"):
-            logger.info("✓ data_source_service.py file exists")
-        else:
-            logger.error("✗ data_source_service.py file NOT found at /app/src/app/services/")
-
-        # 清除可能的陈旧导入缓存（包括 app 模块本身）
-        stale_keys = [k for k in sys.modules.keys() if k.startswith("app.")]
-        if stale_keys:
-            logger.info(f"Removing stale imports from sys.modules: {stale_keys}")
-            for key in stale_keys:
-                del sys.modules[key]
-        # 确保删除 app 模块本身（可能是命名空间包）
-        if "app" in sys.modules:
-            logger.info(f"Removing 'app' module from sys.modules (was: {type(sys.modules['app'])})")
-            del sys.modules["app"]
-
-        # 尝试导入
-        logger.info("Attempting to import app.services.data_source_service...")
-        try:
-            from app.services.data_source_service import data_source_service
-            from app.services.data_source_service import DataSourceConnectionInfo
-            logger.info("Successfully imported data_source_service")
-        except ImportError as e:
-            # 添加更详细的错误信息
-            logger.error(f"ImportError: {e}")
-            logger.error(f"sys.path[0:3] = {sys.path[0:3]}")
-            # 检查 app 模块是否在 sys.modules 中
-            if "app" in sys.modules:
-                logger.error(f"app module already in sys.modules: {sys.modules['app']}")
-            if "app.services" in sys.modules:
-                logger.error(f"app.services already in sys.modules: {sys.modules['app.services']}")
-            raise
-
-        # 同步包装：因为 data_source_service 是异步的
-        import asyncio
-
-        def get_connection_info():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                logger.info(f"Calling data_source_service.get_data_source_connection_info(connection_id={connection_id}, tenant_id={tenant_id})")
-                result = loop.run_until_complete(
-                    data_source_service.get_data_source_connection_info(
-                        connection_id=connection_id,
-                        tenant_id=tenant_id,
-                        db=db_session
-                    )
-                )
-                logger.info(f"data_source_service returned: {result}")
-                return result
-            except Exception as e:
-                logger.error(f"Error in get_connection_info: {e}", exc_info=True)
-                raise
-            finally:
-                loop.close()
-
-        connection_info = get_connection_info()
-        logger.info(f"Retrieved connection_info: type={connection_info.connection_type}, file_path={connection_info.file_path}")
+        data_source_service = _import_data_source_service()
+        connection_info = run_async_sync(
+            data_source_service.get_data_source_connection_info(
+                connection_id=connection_id,
+                tenant_id=tenant_id,
+                db=db_session,
+            )
+        )
+        logger.debug(
+            "Retrieved connection_info: connection_id=%s tenant_id=%s type=%s",
+            connection_id,
+            tenant_id,
+            getattr(connection_info, "connection_type", ""),
+        )
 
         # 根据数据源类型返回不同的连接信息
         if connection_info.connection_type == "excel":
             # Excel 文件：返回特殊标记和文件信息
-            logger.info(f"Using Excel data source: {connection_info.file_path}, sheets={connection_info.sheets}")
+            logger.debug(f"Using Excel data source: {connection_info.file_path}, sheets={connection_info.sheets}")
             return f"excel://{connection_info.file_path}", connection_info
         else:
             # 数据库：返回解密后的连接字符串
-            logger.info(f"Using database data source: type={connection_info.connection_type}")
+            logger.debug(f"Using database data source: type={connection_info.connection_type}")
             return connection_info.connection_string, connection_info
 
     except ImportError as e:
         logger.error(f"Failed to import data_source_service: {e}")
-        return os.environ.get("DATABASE_URL"), None
+        return default_url, None
     except Exception as e:
         logger.error(f"Failed to get connection info for {connection_id}: {e}")
-        return os.environ.get("DATABASE_URL"), None
+        return default_url, None
 
 
 def _is_excel_connection(database_url: str) -> bool:
@@ -851,7 +809,7 @@ def _has_subquery(query: str) -> bool:
 
     for pattern in subquery_patterns:
         if re.search(pattern, query_upper):
-            logger.info(f"[子查询检测] 检测到子查询模式: {pattern}")
+            logger.debug(f"[子查询检测] 检测到子查询模式: {pattern}")
             return True
 
     return False
@@ -876,12 +834,12 @@ def create_db_connection(database_url: str):
         import sqlite3
         # SQLite 连接格式: sqlite:///path/to/database.db
         db_path = database_url.replace("sqlite:///", "")
-        logger.info(f"Creating SQLite connection: {db_path}")
+        logger.debug(f"Creating SQLite connection: {db_path}")
         return sqlite3.connect(db_path)
     else:
         # PostgreSQL 连接
         import psycopg2
-        logger.info(f"Creating PostgreSQL connection")
+        logger.debug("Creating PostgreSQL connection")
         return psycopg2.connect(database_url)
 
 
@@ -946,16 +904,11 @@ def _get_excel_sheet_mapping_cached(english_table: str) -> Optional[str]:
     """
     try:
         # 动态导入 SchemaLoader，避免循环导入
-        import sys
-        from pathlib import Path
-
-        # 添加 AgentV2 到 sys.path（如果尚未添加）
-        agentv2_path = Path(__file__).parent.parent
-        agentv2_str = str(agentv2_path)
-        if agentv2_str not in sys.path:
-            sys.path.insert(0, agentv2_str)
-
-        from AgentV2.schema_pruning import SchemaLoader
+        try:
+            from ..schema_pruning import SchemaLoader
+        except ImportError:
+            # 兼容本地直接运行（非包方式）
+            from schema_pruning import SchemaLoader
 
         loader = SchemaLoader()
         _, _, yaml_mappings = loader.load_from_yaml()
@@ -967,7 +920,7 @@ def _get_excel_sheet_mapping_cached(english_table: str) -> Optional[str]:
             for key, value in yaml_mappings.items():
                 if key.lower() == english_table.lower():
                     primary = value
-                    logger.info(f"表名映射（大小写不敏感）: {english_table} -> {key} -> {primary}")
+                    logger.debug(f"表名映射（大小写不敏感）: {english_table} -> {key} -> {primary}")
                     break
 
         # 🔧 修复 1: 构建候选列表（主映射 + 备用名称，支持大小写不敏感）
@@ -978,7 +931,7 @@ def _get_excel_sheet_mapping_cached(english_table: str) -> Optional[str]:
             for key, value in SHEET_ALTERNATIVES.items():
                 if key.lower() == english_table.lower():
                     alt = value
-                    logger.info(f"SHEET_ALTERNATIVES 映射（大小写不敏感）: {english_table} -> {key} -> {alt}")
+                    logger.debug(f"SHEET_ALTERNATIVES 映射（大小写不敏感）: {english_table} -> {key} -> {alt}")
                     break
         candidates.extend(alt)
 
@@ -1001,7 +954,7 @@ def _clear_excel_sheet_mapping_cache() -> None:
     也可以在映射验证失败时自动调用，以获取最新的配置。
     """
     _get_excel_sheet_mapping_cached.cache_clear()
-    logger.info("已清除 Excel 表名映射缓存")
+    logger.debug("已清除 Excel 表名映射缓存")
 
 
 def _get_excel_sheet_mapping(english_table: str, file_path: str = None) -> Optional[str]:
@@ -1054,7 +1007,7 @@ def _get_excel_sheet_mapping(english_table: str, file_path: str = None) -> Optio
                 # 返回第一个存在的工作表
                 for name in unique_candidates:
                     if _sheet_exists(file_path, name):
-                        logger.info(f"表名映射（验证存在）: {english_table} -> {name}")
+                        logger.debug(f"表名映射（验证存在）: {english_table} -> {name}")
                         return name
 
                 # 所有候选都不存在
@@ -1071,7 +1024,7 @@ def _get_excel_sheet_mapping(english_table: str, file_path: str = None) -> Optio
         
         # 如果验证失败且有 file_path，清除缓存后重试一次
         if result is None and file_path:
-            logger.info(f"表名映射验证失败，清除缓存后重试: {english_table}")
+            logger.debug(f"表名映射验证失败，清除缓存后重试: {english_table}")
             result = try_mapping(clear_cache=True)
         
         return result
@@ -1228,7 +1181,7 @@ def execute_excel_query(
 
         logger.debug(f"Excel 文件已读取: shape={df.shape}, columns={list(df.columns)}")
 
-        logger.info(f"Excel file loaded: {file_path}, sheet: {sheet_name}, shape: {df.shape}")
+        logger.debug(f"Excel file loaded: {file_path}, sheet: {sheet_name}, shape: {df.shape}")
 
         # 🔧 预检查：验证 WHERE 条件中的列是否存在（增强版：智能建议）
         import re
@@ -1362,7 +1315,7 @@ def execute_excel_query(
             "sheet_name": sheet_name
         }
 
-        logger.info(f"Excel query executed: {len(rows)} rows returned")
+        logger.debug(f"Excel query executed: {len(rows)} rows returned")
         return json.dumps(result, ensure_ascii=False, default=str)
 
     except FileNotFoundError:
@@ -1830,6 +1783,7 @@ def _apply_where_clause(df: "Any", where_clause: str) -> "Any":
         过滤后的 DataFrame
     """
     import re
+    import pandas as pd
 
     result_df = df.copy()
 
@@ -1915,7 +1869,7 @@ def _apply_where_clause(df: "Any", where_clause: str) -> "Any":
                 if is_location_col:
                     # 扩展查询条件，支持简称匹配
                     expanded_values = _expand_province_condition(value, actual_col)
-                    logger.info(f"[省份智能匹配] 列 '{actual_col}' 值 '{value}' 扩展为: {expanded_values}")
+                    logger.debug(f"[省份智能匹配] 列 '{actual_col}' 值 '{value}' 扩展为: {expanded_values}")
 
                     # 构建模糊匹配掩码
                     combined_mask = None
@@ -2036,7 +1990,7 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
     # 原因：ContextVar 在异步环境中可能导致检查失效，且 LLM 已通过提示词了解正确流程
     # 仅记录日志，不阻止执行
     if not _get_list_tables_called():
-        logger.info(f"execute_query called without prior list_tables call (query: {query[:50]}...)")
+        logger.debug(f"execute_query called without prior list_tables call (query: {query[:50]}...)")
         # 注意：不再返回错误，允许执行继续
         # 依赖提示词指导 LLM 按正确顺序调用工具
 
@@ -2045,12 +1999,12 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
     # 系统会由租户隔离中间件自动注入正确的 tenant_id 过滤条件
     query_with_tenant_removed = _remove_llm_added_tenant_id(query)
     if query_with_tenant_removed != query:
-        logger.info(f"Removed LLM-added tenant_id: {query[:50]}... -> {query_with_tenant_removed[:50]}...")
+        logger.debug(f"Removed LLM-added tenant_id: {query[:50]}... -> {query_with_tenant_removed[:50]}...")
 
     # 清理和修复 SQL
     cleaned_query = clean_and_validate_sql(query_with_tenant_removed)
     if cleaned_query != query_with_tenant_removed:
-        logger.info(f"SQL cleaned: {query_with_tenant_removed[:50]}... -> {cleaned_query[:50]}...")
+        logger.debug(f"SQL cleaned: {query_with_tenant_removed[:50]}... -> {cleaned_query[:50]}...")
 
     user_query = _get_user_query() or ""
 
@@ -2071,7 +2025,7 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
         # 1. 先修正占比查询
         fixed_query = SQLValidator.fix_proportion_sql(cleaned_query, user_query)
         if fixed_query != cleaned_query:
-            logger.warning(f"[月度聚合修正] 占比查询SQL已自动修正")
+            logger.warning("[月度聚合修正] 占比查询SQL已自动修正")
             cleaned_query = fixed_query
 
         # 2. 再修正时间聚合（年度趋势查询）
@@ -2098,7 +2052,7 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
     # 🔧 保留原有的占比检测作为后盾
     proportion_error = _check_invalid_proportion_query_pattern(cleaned_query)
     if proportion_error:
-        logger.warning(f"[占比类查询错误] 检测到错误的占比查询模式，返回错误")
+        logger.warning("[占比类查询错误] 检测到错误的占比查询模式，返回错误")
         return proportion_error
 
     # 确保有租户 ID 用于缓存隔离
@@ -2112,29 +2066,29 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
         try:
             cached_json = json.loads(cached_result)
             if "error" in cached_json:
-                logger.info(f"Query result cache HIT but contains error, ignoring: {cleaned_query[:50]}...")
+                logger.debug(f"Query result cache HIT but contains error, ignoring: {cleaned_query[:50]}...")
                 # 继续执行查询，不返回缓存的错误
             else:
-                logger.info(f"Query result cache HIT (success): {cleaned_query[:50]}...")
+                logger.debug(f"Query result cache HIT (success): {cleaned_query[:50]}...")
                 return cached_result
         except json.JSONDecodeError:
             # 如果解析失败，不使用缓存
             logger.warning(f"Query result cache HIT but invalid JSON, ignoring: {cleaned_query[:50]}...")
-    logger.info(f"Query result cache MISS (tenant={cache_tenant_id}): {cleaned_query[:50]}...")
+    logger.debug(f"Query result cache MISS (tenant={cache_tenant_id}): {cleaned_query[:50]}...")
 
     # 获取数据源连接信息
     if database_url is None:
         database_url, connection_info = get_database_url(connection_id)
-    logger.info(f"Using connection: connection_id={connection_id}, url_type={'excel' if _is_excel_connection(database_url) else 'database'}")
+    logger.debug(f"Using connection: connection_id={connection_id}, url_type={'excel' if _is_excel_connection(database_url) else 'database'}")
 
     # 如果是 Excel 连接，使用 Excel 查询
     if _is_excel_connection(database_url):
-        logger.info(f"Detected Excel data source, using Excel query")
+        logger.debug("Detected Excel data source, using Excel query")
         file_path = _get_excel_file_path(database_url)
 
         # 🆕 检测子查询（Excel 数据源不支持子查询）
         if _has_subquery(cleaned_query):
-            logger.warning(f"[Excel 子查询] 检测到 Excel 查询包含子查询，返回错误")
+            logger.warning("[Excel 子查询] 检测到 Excel 查询包含子查询，返回错误")
             return json.dumps({
                 "error": "Excel 数据源不支持子查询（Subquery）",
                 "error_type": "subquery_not_supported",
@@ -2157,12 +2111,12 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
         has_join = any(keyword in query_upper for keyword in join_keywords)
 
         if has_join:
-            logger.warning(f"[Excel JOIN] 检测到 Excel 查询包含 JOIN，尝试智能拆分")
+            logger.warning("[Excel JOIN] 检测到 Excel 查询包含 JOIN，尝试智能拆分")
             # 尝试智能拆分 JOIN 查询
             split_result = _try_split_join_query(cleaned_query, file_path)
             if split_result:
                 # 拆分成功，返回拆分后的结果
-                logger.info(f"[Excel JOIN] ✅ 拆分成功，返回结果")
+                logger.debug("[Excel JOIN] ✅ 拆分成功，返回结果")
                 return split_result
             else:
                 # 拆分失败，返回详细错误和建议
@@ -2205,7 +2159,7 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
             import pandas as pd
             excel_file = pd.ExcelFile(file_path, engine='openpyxl')
             valid_sheets = excel_file.sheet_names
-            logger.info(f"Excel 文件包含工作表: {valid_sheets}")
+            logger.debug(f"Excel 文件包含工作表: {valid_sheets}")
         except Exception as e:
             logger.error(f"无法读取 Excel 文件工作表列表: {e}")
             return json.dumps({
@@ -2215,11 +2169,11 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
 
         # 处理表名映射和工作表验证
         if extracted_table_name:
-            logger.info(f"从 SQL 提取表名: '{extracted_table_name}'")
+            logger.debug(f"从 SQL 提取表名: '{extracted_table_name}'")
 
             # 检查提取的表名是否直接存在于 Excel 文件
             if extracted_table_name not in valid_sheets:
-                logger.info(f"表名 '{extracted_table_name}' 不在有效工作表列表中，尝试映射...")
+                logger.debug(f"表名 '{extracted_table_name}' 不在有效工作表列表中，尝试映射...")
 
             # 🔥 应用表名映射（英文表名 -> Excel 工作表名）
             # 传递 file_path 以便验证工作表存在并支持备用名称回退
@@ -2227,12 +2181,12 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
 
             if mapped_sheet:
                 sheet_name = mapped_sheet
-                logger.info(f"✅ 表名映射成功: '{extracted_table_name}' -> '{sheet_name}'")
+                logger.debug(f"✅ 表名映射成功: '{extracted_table_name}' -> '{sheet_name}'")
             else:
                 # 🔧 修复 3: 映射失败时，检查原始表名是否存在于 Excel 文件
                 if extracted_table_name in valid_sheets:
                     sheet_name = extracted_table_name
-                    logger.info(f"✅ 使用原始表名（无映射但存在）: '{sheet_name}'")
+                    logger.debug(f"✅ 使用原始表名（无映射但存在）: '{sheet_name}'")
                 else:
                     # 映射失败且原始表名也不存在，返回详细错误
                     available_sheets = ", ".join(f'"{s}"' for s in valid_sheets)
@@ -2267,18 +2221,18 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
                 }, ensure_ascii=False)
 
         # 🔧 修复 4: 添加详细日志
-        logger.info(f"🚀 执行 Excel 查询: file_path={file_path}, sheet_name='{sheet_name}', query={cleaned_query[:100]}...")
+        logger.debug(f"🚀 执行 Excel 查询: file_path={file_path}, sheet_name='{sheet_name}', query={cleaned_query[:100]}...")
         result = execute_excel_query(cleaned_query, file_path, sheet_name)
 
         # 记录查询结果摘要
         try:
             result_json = json.loads(result)
             if "error" not in result_json:
-                logger.info(f"✅ Excel 查询成功: columns={result_json.get('columns')}, row_count={result_json.get('row_count')}")
+                logger.debug(f"✅ Excel 查询成功: columns={result_json.get('columns')}, row_count={result_json.get('row_count')}")
             else:
                 logger.error(f"❌ Excel 查询失败: {result_json.get('error')}")
         except:
-            logger.info(f"Excel 查询完成（结果无法解析为 JSON）")
+            logger.debug("Excel 查询完成（结果无法解析为 JSON）")
 
         # 存储到租户隔离的缓存
         _query_cache.set(cache_tenant_id, cache_key, result)
@@ -2322,7 +2276,7 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
                 "success": True
             }
 
-            logger.info(f"Query executed successfully: {len(rows)} rows returned")
+            logger.debug(f"Query executed successfully: {len(rows)} rows returned")
 
         except Exception as e:
             result_container["error"] = e
@@ -2341,7 +2295,7 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
         # 🔧 清除该查询的缓存条目（如果存在）
         try:
             _query_cache.delete(cache_tenant_id, cache_key)
-            logger.info(f"Cleared timeout cache entry for query: {cleaned_query[:50]}...")
+            logger.debug(f"Cleared timeout cache entry for query: {cleaned_query[:50]}...")
         except Exception as cache_error:
             logger.warning(f"Failed to clear cache entry: {cache_error}")
 
@@ -2360,7 +2314,7 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
         # 🔧 清除该查询的缓存条目（如果存在），确保下次查询会重新执行
         try:
             _query_cache.delete(cache_tenant_id, cache_key)
-            logger.info(f"Cleared error cache entry for query: {cleaned_query[:50]}...")
+            logger.debug(f"Cleared error cache entry for query: {cleaned_query[:50]}...")
         except Exception as cache_error:
             logger.warning(f"Failed to clear cache entry: {cache_error}")
 
@@ -2377,9 +2331,9 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
         # 🔧 只缓存成功的结果，不缓存错误结果
         if "error" not in result_container["result"]:
             _query_cache.set(cache_tenant_id, cache_key, result_json)
-            logger.info(f"Query result cached (tenant={cache_tenant_id}): {cleaned_query[:50]}...")
+            logger.debug(f"Query result cached (tenant={cache_tenant_id}): {cleaned_query[:50]}...")
         else:
-            logger.info(f"Query result contains error, NOT caching (tenant={cache_tenant_id}): {cleaned_query[:50]}...")
+            logger.debug(f"Query result contains error, NOT caching (tenant={cache_tenant_id}): {cleaned_query[:50]}...")
 
         return result_json
 
@@ -2469,7 +2423,7 @@ def _remove_llm_added_tenant_id(query: str) -> str:
     sql = ' '.join(sql.split())
 
     if sql != original_sql and 'tenant_id' in original_sql.lower():
-        logger.info(f"Removed LLM-added tenant_id conditions")
+        logger.debug("Removed LLM-added tenant_id conditions")
 
     return sql
 
@@ -2725,7 +2679,7 @@ def clean_and_validate_sql(query: str) -> str:
         )
         # 如果修改了 SQL，记录日志
         if 'tenant_id' in original_sql.lower() and 'tenant_id' not in sql.lower():
-            logger.info("Auto-fixed: tenants.tenant_id → tenants.id")
+            logger.debug("Auto-fixed: tenants.tenant_id → tenants.id")
 
     # 修复 1: 移除 ORDER BY/GROUP BY 后面错误跟的 AND/OR/WHERE 条件
     # 错误示例: SELECT ... ORDER BY year AND tenant_id = '...'
@@ -2753,7 +2707,7 @@ def clean_and_validate_sql(query: str) -> str:
             else:
                 # 没有其他子句，直接截断
                 sql = before_clause
-            logger.info(f"Removed incorrect {match.group(2)} clause after {keyword}: {match.group(0)[:50]}...")
+            logger.debug(f"Removed incorrect {match.group(2)} clause after {keyword}: {match.group(0)[:50]}...")
 
     # 修复 2: 检测并修复 WHERE 子句位置错误
     # 错误示例: SELECT ... GROUP BY year ORDER BY year WHERE tenant_id = '...'
@@ -2777,7 +2731,7 @@ def clean_and_validate_sql(query: str) -> str:
 
         # 检查 WHERE 是否在 GROUP BY 或 ORDER BY 之后
         if where_pos > group_pos or where_pos > order_pos:
-            logger.info("Detected WHERE after GROUP BY/ORDER BY, fixing...")
+            logger.debug("Detected WHERE after GROUP BY/ORDER BY, fixing...")
 
             # 使用基于位置的子句提取（更可靠）
             # 找出所有子句的起始和结束位置
@@ -2813,7 +2767,7 @@ def clean_and_validate_sql(query: str) -> str:
                 # 确保以分号结尾
                 if not sql.endswith(';'):
                     sql += ';'
-                logger.info(f"Rebuilt SQL with correct clause order: {sql[:80]}...")
+                logger.debug(f"Rebuilt SQL with correct clause order: {sql[:80]}...")
 
     # 修复 3: 移除 LIMIT 后面的任何内容（LLM 常见错误）
     # 匹配 LIMIT 子句，然后截断，移除后面的 WHERE, AND, OR 等
@@ -2831,7 +2785,7 @@ def clean_and_validate_sql(query: str) -> str:
         if re.match(r'^(WHERE|AND|OR|GROUP BY|HAVING)', remaining_sql, re.IGNORECASE):
             # 截断到 LIMIT 数字结束的地方
             sql = sql[:limit_end].rstrip()
-            logger.info(f"Removed content after LIMIT: {remaining_sql[:50]}...")
+            logger.debug(f"Removed content after LIMIT: {remaining_sql[:50]}...")
 
     # 修复 4: 移除末尾的分号（如果有多个）
     sql = re.sub(r';+$', '', sql)
@@ -2883,7 +2837,7 @@ def _extract_table_name_from_query(query: str) -> Optional[str]:
         match = re.search(double_quote_pattern, cleaned, re.IGNORECASE)
         if match:
             table_name = match.group(1)
-            logger.info(f"Extracted table name (double-quoted) from query: '{table_name}'")
+            logger.debug(f"Extracted table name (double-quoted) from query: '{table_name}'")
             return table_name
 
         # 🔧 匹配单引号内的表名
@@ -2891,7 +2845,7 @@ def _extract_table_name_from_query(query: str) -> Optional[str]:
         match = re.search(single_quote_pattern, cleaned, re.IGNORECASE)
         if match:
             table_name = match.group(1)
-            logger.info(f"Extracted table name (single-quoted) from query: '{table_name}'")
+            logger.debug(f"Extracted table name (single-quoted) from query: '{table_name}'")
             return table_name
 
         # 🔧 最后：匹配不带引号的表名（支持emoji和中文，但不能有空格）
@@ -2900,7 +2854,7 @@ def _extract_table_name_from_query(query: str) -> Optional[str]:
         match = re.search(unquoted_pattern, cleaned, re.IGNORECASE)
         if match:
             table_name = match.group(1)
-            logger.info(f"Extracted table name (unquoted) from query: '{table_name}'")
+            logger.debug(f"Extracted table name (unquoted) from query: '{table_name}'")
             return table_name
 
         logger.warning(f"Could not extract table name from query: {query[:100]}...")
@@ -2940,7 +2894,7 @@ def _extract_all_tables_from_query(query: str) -> list[str]:
         for match in re.finditer(join_pattern, cleaned, re.IGNORECASE):
             tables.append(match.group(1))
 
-        logger.info(f"从查询中提取到表名: {tables}")
+        logger.debug(f"从查询中提取到表名: {tables}")
         return tables
     except Exception as e:
         logger.warning(f"提取表名时出错: {e}")
@@ -2966,15 +2920,12 @@ def _try_split_join_query(query: str, file_path: str) -> Optional[str]:
     import re
 
     try:
-        logger.info(f"[JOIN拆分] 尝试拆分 JOIN 查询: {query[:100]}...")
-
-        # 提取查询中的所有表和别名
-        tables = _extract_all_tables_from_query(query)
+        logger.debug(f"[JOIN拆分] 尝试拆分 JOIN 查询: {query[:100]}...")
 
         # 加载 Excel 文件获取所有工作表
         excel_file = pd.ExcelFile(file_path, engine='openpyxl')
         available_sheets = excel_file.sheet_names
-        logger.info(f"[JOIN拆分] Excel 工作表: {available_sheets}")
+        logger.debug(f"[JOIN拆分] Excel 工作表: {available_sheets}")
 
         # 提取 SELECT 子句
         select_match = re.search(r'SELECT\s+(.+?)\s+FROM', query, re.IGNORECASE)
@@ -2983,7 +2934,7 @@ def _try_split_join_query(query: str, file_path: str) -> Optional[str]:
         # 提取 WHERE 子句中的字段引用
         where_match = re.search(r'WHERE\s+(.+?)(?:\s+GROUP|\s+ORDER|\s+LIMIT|;|$)', query, re.IGNORECASE)
         if not where_match:
-            logger.info("[JOIN拆分] 未找到 WHERE 子句，无法拆分")
+            logger.debug("[JOIN拆分] 未找到 WHERE 子句，无法拆分")
             return None
 
         where_clause = where_match.group(1)
@@ -3000,10 +2951,10 @@ def _try_split_join_query(query: str, file_path: str) -> Optional[str]:
                 target_columns.append(match[2].lower())
 
         if not target_columns:
-            logger.info("[JOIN拆分] 未找到目标列，无法拆分")
+            logger.debug("[JOIN拆分] 未找到目标列，无法拆分")
             return None
 
-        logger.info(f"[JOIN拆分] 目标列: {target_columns}")
+        logger.debug(f"[JOIN拆分] 目标列: {target_columns}")
 
         # 找出包含目标字段的工作表
         target_sheet = None
@@ -3018,14 +2969,14 @@ def _try_split_join_query(query: str, file_path: str) -> Optional[str]:
                 if col in columns_lower:
                     target_sheet = sheet
                     target_column_actual = [c for c in df.columns if c.lower() == col][0]
-                    logger.info(f"[JOIN拆分] 找到目标列 '{col}' 在工作表 '{sheet}' 中，实际列名: '{target_column_actual}'")
+                    logger.debug(f"[JOIN拆分] 找到目标列 '{col}' 在工作表 '{sheet}' 中，实际列名: '{target_column_actual}'")
                     break
 
             if target_sheet:
                 break
 
         if not target_sheet:
-            logger.info(f"[JOIN拆分] 未找到包含目标列的工作表")
+            logger.debug("[JOIN拆分] 未找到包含目标列的工作表")
             return None
 
         # 构建新的查询：针对目标工作表
@@ -3034,7 +2985,7 @@ def _try_split_join_query(query: str, file_path: str) -> Optional[str]:
 
         # 构建新查询
         new_query = f"SELECT {select_clause} FROM \"{target_sheet}\" WHERE {simplified_where}"
-        logger.info(f"[JOIN拆分] 构建新查询: {new_query}")
+        logger.debug(f"[JOIN拆分] 构建新查询: {new_query}")
 
         # 执行新查询
         df = pd.read_excel(file_path, sheet_name=target_sheet, engine='openpyxl')
@@ -3061,7 +3012,7 @@ def _try_split_join_query(query: str, file_path: str) -> Optional[str]:
             "_split_note": f"原查询包含 JOIN，已自动拆分为对工作表 '{target_sheet}' 的查询"
         }
 
-        logger.info(f"[JOIN拆分] ✅ 拆分成功: {len(rows)} 行")
+        logger.debug(f"[JOIN拆分] ✅ 拆分成功: {len(rows)} 行")
         return json.dumps(result, ensure_ascii=False, default=str)
 
     except Exception as e:
@@ -3169,7 +3120,7 @@ def list_tables(connection_id: Optional[str] = None) -> str:
     # 确保有租户 ID 用于缓存隔离
     cache_tenant_id = tenant_id or "default_tenant"
 
-    logger.info(f"list_tables: connection_id={connection_id}, tenant_id={cache_tenant_id}")
+    logger.debug(f"list_tables: connection_id={connection_id}, tenant_id={cache_tenant_id}")
 
     # 清除旧缓存以确保使用新的连接信息
     if connection_id:
@@ -3179,7 +3130,7 @@ def list_tables(connection_id: Optional[str] = None) -> str:
     cache_key = _make_cache_key("list_tables", connection_id)
     cached = _schema_cache.get(cache_tenant_id, cache_key)
     if cached is not None:
-        logger.info(f"list_tables: 返回缓存结果 (tenant={cache_tenant_id})")
+        logger.debug(f"list_tables: 返回缓存结果 (tenant={cache_tenant_id})")
         return cached
 
     # 获取数据源连接信息
@@ -3187,7 +3138,7 @@ def list_tables(connection_id: Optional[str] = None) -> str:
 
     # 如果是 Excel 连接，返回工作表列表
     if _is_excel_connection(database_url):
-        logger.info("list_tables: Detected Excel data source, listing sheets")
+        logger.debug("list_tables: Detected Excel data source, listing sheets")
         try:
             file_path = _get_excel_file_path(database_url)
             import pandas as pd
@@ -3223,7 +3174,7 @@ def list_tables(connection_id: Optional[str] = None) -> str:
 
             result_str = json.dumps(result, ensure_ascii=False, indent=2)
             _schema_cache.set(cache_tenant_id, cache_key, result_str)
-            logger.info(f"list_tables: Excel 文件，{len(sheets)} 个工作表: {sheets} (tenant={cache_tenant_id})")
+            logger.debug(f"list_tables: Excel 文件，{len(sheets)} 个工作表: {sheets} (tenant={cache_tenant_id})")
 
             # 🔧 设置标志，表示 list_tables 已被调用
             _set_list_tables_called(True)
@@ -3292,7 +3243,7 @@ def list_tables(connection_id: Optional[str] = None) -> str:
         result_str = json.dumps(result, ensure_ascii=False, indent=2)
         # 存入租户隔离的缓存
         _schema_cache.set(cache_tenant_id, cache_key, result_str)
-        logger.info(f"list_tables: 查询成功，缓存结果 ({len(tables)} 个表) (tenant={cache_tenant_id})")
+        logger.debug(f"list_tables: 查询成功，缓存结果 ({len(tables)} 个表) (tenant={cache_tenant_id})")
 
         # 🔧 设置标志，表示 list_tables 已被调用
         _set_list_tables_called(True)
@@ -3355,7 +3306,7 @@ def _get_table_recommendation_for_query(
         column_names = [col.get("name", "").lower() for col in columns]
         for geo_field, recommendation in geo_field_table_map.items():
             if geo_field in column_names:
-                logger.info(f"[表推荐] 检测到 {geo_field} 字段在 {table_name} 表中，"
+                logger.debug(f"[表推荐] 检测到 {geo_field} 字段在 {table_name} 表中，"
                            f"建议使用 {recommendation['recommended_table']} 表")
                 return {
                     "current_table": table_name,
@@ -3370,7 +3321,7 @@ def _get_table_recommendation_for_query(
         column_names = [col.get("name", "").lower() for col in columns]
         geo_fields = [f for f in ["province", "city", "district"] if f in column_names]
         if geo_fields:
-            logger.info(f"[表推荐] {table_name} 表是地理位置查询的正确表，包含: {geo_fields}")
+            logger.debug(f"[表推荐] {table_name} 表是地理位置查询的正确表，包含: {geo_fields}")
             return {
                 "current_table": table_name,
                 "is_recommended": True,
@@ -3411,7 +3362,7 @@ def get_schema(table_name: str, connection_id: Optional[str] = None) -> str:
     cache_key = _make_cache_key("get_schema", table_name, connection_id)
     cached = _schema_cache.get(cache_tenant_id, cache_key)
     if cached is not None:
-        logger.info(f"get_schema({table_name}): 返回缓存结果 (tenant={cache_tenant_id})")
+        logger.debug(f"get_schema({table_name}): 返回缓存结果 (tenant={cache_tenant_id})")
         return cached
 
     # 获取数据源连接信息
@@ -3419,7 +3370,7 @@ def get_schema(table_name: str, connection_id: Optional[str] = None) -> str:
 
     # 如果是 Excel 连接，返回列信息
     if _is_excel_connection(database_url):
-        logger.info(f"get_schema({table_name}): Detected Excel data source, getting columns")
+        logger.debug(f"get_schema({table_name}): Detected Excel data source, getting columns")
         try:
             file_path = _get_excel_file_path(database_url)
             import pandas as pd
@@ -3462,7 +3413,7 @@ def get_schema(table_name: str, connection_id: Optional[str] = None) -> str:
 
             result_str = json.dumps(result, ensure_ascii=False)
             _schema_cache.set(cache_tenant_id, cache_key, result_str)
-            logger.info(f"get_schema({table_name}): Excel 工作表，{len(columns)} 列 (tenant={cache_tenant_id})")
+            logger.debug(f"get_schema({table_name}): Excel 工作表，{len(columns)} 列 (tenant={cache_tenant_id})")
 
             return result_str
 
@@ -3538,7 +3489,7 @@ def get_schema(table_name: str, connection_id: Optional[str] = None) -> str:
         result_str = json.dumps(result, ensure_ascii=False)
         # 存入租户隔离的缓存
         _schema_cache.set(cache_tenant_id, cache_key, result_str)
-        logger.info(f"get_schema({table_name}): 查询成功，缓存结果 ({len(columns)} 列) (tenant={cache_tenant_id})")
+        logger.debug(f"get_schema({table_name}): 查询成功，缓存结果 ({len(columns)} 列) (tenant={cache_tenant_id})")
 
         return result_str
 
@@ -3941,7 +3892,11 @@ def get_database_tools(
         )
     ])
 
-    logger.info(f"[get_database_tools] Created {len(tools)} tools with connection_id={connection_id}")
+    logger.debug(
+        "[get_database_tools] created %s tools with connection_id=%s",
+        len(tools),
+        connection_id,
+    )
     return tools
 
 
@@ -3950,8 +3905,6 @@ def get_database_tools(
 # ============================================================================
 
 if __name__ == "__main__":
-    import asyncio
-
     print("=" * 60)
     print("Database Tools 测试")
     print("=" * 60)

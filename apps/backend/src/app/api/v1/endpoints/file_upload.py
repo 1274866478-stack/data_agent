@@ -52,10 +52,8 @@ import pandas as pd
 import sqlite3
 
 from src.app.core.auth import get_current_user_with_tenant
-from src.app.data.models import Tenant
 from src.app.data.database import get_db
 from src.app.domains.data_sources.service import data_source_service
-from src.app.integrations.db_adapters.database_interface import PostgreSQLAdapter
 
 logger = logging.getLogger(__name__)
 

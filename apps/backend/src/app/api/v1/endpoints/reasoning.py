@@ -55,19 +55,16 @@
 
 import json
 import asyncio
-from typing import Dict, Any, Optional, List, Union
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+import logging
+from typing import Dict, Any, Optional, List
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.app.domains.reasoning.service import (
     reasoning_engine,
-    QueryType,
     ReasoningMode,
-    QueryAnalysis,
-    ReasoningResult,
     conversation_manager,
-    ConversationState,
     usage_monitoring_service,
     ProviderType,
     UsageType
@@ -76,6 +73,7 @@ from src.app.core.auth import get_current_user_with_tenant
 from src.app.data.models import Tenant
 
 router = APIRouter(prefix="/reasoning", tags=["Reasoning"])
+logger = logging.getLogger(__name__)
 
 
 class ReasoningRequest(BaseModel):
@@ -313,7 +311,7 @@ async def stream_reasoning(
             can_proceed, warnings = await usage_monitoring_service.tracker.check_usage_limits(
                 tenant_id, ProviderType.ZHIPU
             )
-            if not canceed:
+            if not can_proceed:
                 yield f"data: {json.dumps({'type': 'error', 'message': '已达到使用量限制'})}\n\n"
                 return
 

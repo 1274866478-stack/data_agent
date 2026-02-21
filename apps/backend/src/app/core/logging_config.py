@@ -43,10 +43,9 @@
 import logging
 import logging.handlers
 import json
-import time
 import traceback
 import sys
-from typing import Dict, Any, Optional
+from typing import Optional
 from datetime import datetime
 from pathlib import Path
 

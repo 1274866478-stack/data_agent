@@ -21,7 +21,6 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -454,7 +453,6 @@ class SemanticLayerService:
                                 # 例如: ${order_date} -> order_date, ${created_at}::date -> created_at
                                 match = re.search(r'\$\{([^}]+)\}', dim_sql)
                                 if match:
-                                    col_ref = match.group(1)
                                     # 如果有::date或::timestamp等类型转换，保留它
                                     dim_sql = dim_sql.replace('${', '').replace('}', '')
 

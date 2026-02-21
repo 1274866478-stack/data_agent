@@ -53,6 +53,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Loader2 } from 'lucide-react'
 import { useAuth } from './AuthContext'
+import logger from '@/lib/logger'
 
 export function SignInForm() {
   const [error, setError] = useState('')
@@ -97,30 +98,30 @@ export function SignInForm() {
               })
 
               // 监听登录成功事件
-              clerk.addListener('sign-in.completed', async (session: any) => {
+                clerk.addListener('sign-in.completed', async (session: any) => {
                 try {
                   const token = await session.getToken()
                   await login(token)
                   router.push('/')
                 } catch (error) {
-                  console.error('Login completed but token handling failed:', error)
+                  logger.error('SignInForm', 'login completed but token handling failed', error)
                   setError('登录成功，但会话处理失败')
                 }
               })
 
               clerk.addListener('sign-in.failed', (error: any) => {
-                console.error('Clerk sign in failed:', error)
+                logger.error('SignInForm', 'clerk sign in failed', error)
                 setClerkError(error.message || '登录失败')
               })
 
             } catch (clerkError) {
-              console.error('Clerk initialization failed:', clerkError)
+              logger.error('SignInForm', 'clerk initialization failed', clerkError)
               setClerkError('认证服务初始化失败，请刷新页面重试')
             }
           }
         }
       } catch (error) {
-        console.error('Failed to initialize Clerk:', error)
+        logger.error('SignInForm', 'failed to initialize clerk', error)
         setClerkError('认证服务加载失败')
       }
     }

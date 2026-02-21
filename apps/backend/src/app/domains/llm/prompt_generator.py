@@ -2,9 +2,6 @@
 动态系统提示词生成器
 根据数据库类型生成特定的系统提示词
 """
-from typing import Dict, Any
-import sys
-from pathlib import Path
 import re
 import logging
 
@@ -69,7 +66,7 @@ def generate_database_aware_system_prompt(db_type: str, base_system_prompt: str 
         db_specific_instructions += f"{i}. {note}\n"
 
     # 添加函数禁止使用说明
-    db_specific_instructions += f"""
+    db_specific_instructions += """
 
 ### 🚫 禁止使用的函数（此数据库不支持）
 """

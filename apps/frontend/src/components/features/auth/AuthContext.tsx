@@ -45,6 +45,9 @@
 
 import { createContext, useContext, useEffect, ReactNode } from 'react'
 import { useAuthStore } from '@/store'
+import { API_BASE_URL } from '@/lib/api-client'
+import { clearStoredAuthToken, getStoredAuthToken, setStoredAuthToken } from '@/lib/auth-token'
+import logger from '@/lib/logger'
 
 interface AuthContextType {
   user: any | null
@@ -73,10 +76,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (token: string) => {
     try {
       setToken(token)
-      localStorage.setItem('auth_token', token)
+      setStoredAuthToken(token)
 
       // 验证token并获取用户信息
-      const response = await fetch('/api/v1/auth/me', {
+      const response = await fetch(`${API_BASE_URL}/auth/me`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
@@ -91,7 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error('Failed to validate token')
       }
     } catch (error) {
-      console.error('Login failed:', error)
+      logger.error('AuthContext', 'login failed', error)
       logout()
       setLoading(false) // 登录失败后也要设置loading为false
       throw error
@@ -103,7 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       if (token) {
         // 调用后端登出API
-        await fetch('/api/v1/auth/logout', {
+        await fetch(`${API_BASE_URL}/auth/logout`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -112,11 +115,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         })
       }
     } catch (error) {
-      console.error('Logout API call failed:', error)
+      logger.error('AuthContext', 'logout API call failed', error)
     } finally {
       // 清除本地状态
       storeLogout()
-      localStorage.removeItem('auth_token')
+      clearStoredAuthToken()
     }
   }
 
@@ -125,7 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       if (!token) return
 
-      const response = await fetch('/api/v1/auth/verify', {
+      const response = await fetch(`${API_BASE_URL}/auth/verify`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -140,7 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Token仍然有效，无需刷新
       // 如果需要实现真正的token刷新逻辑，在这里处理
     } catch (error) {
-      console.error('Token refresh failed:', error)
+      logger.error('AuthContext', 'token refresh failed', error)
       logout()
     }
   }
@@ -167,14 +170,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return
       }
 
-      const storedToken = localStorage.getItem('auth_token')
+      const storedToken = getStoredAuthToken()
 
       if (storedToken) {
         try {
           await login(storedToken)
         } catch (error) {
-          console.error('Failed to restore auth session:', error)
-          localStorage.removeItem('auth_token')
+          logger.error('AuthContext', 'restore auth session failed', error)
+          clearStoredAuthToken()
           setLoading(false) // 恢复会话失败后设置loading为false
         }
       } else {

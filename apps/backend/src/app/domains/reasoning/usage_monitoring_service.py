@@ -96,15 +96,12 @@
 
 import logging
 import json
-import time
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from enum import Enum
 import asyncio
 from collections import defaultdict, deque
-
-from src.app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +237,6 @@ class UsageTracker:
             self.real_time_usage[tenant_id][f"{provider.value}_{model.value if hasattr(model, 'value') else model}_{usage_type.value}"] += amount
 
             # 更新小时统计
-            current_hour = datetime.utcnow().hour
             if len(self.hourly_usage[tenant_id]) <= 24:
                 self.hourly_usage[tenant_id].append(0)
             self.hourly_usage[tenant_id][-1] += amount

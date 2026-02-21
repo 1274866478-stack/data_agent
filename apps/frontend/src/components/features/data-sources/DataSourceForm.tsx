@@ -76,6 +76,7 @@ import type { CreateDataSourceRequest } from '@/types/api/dataSource'
 import { Database, FileUp, Server } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
+import logger from '@/lib/logger'
 
 // 支持的数据库类型配置
 const SUPPORTED_DATABASE_TYPES = {
@@ -292,10 +293,10 @@ function DatabaseConnectionFormContent({
         create_db_if_not_exists: data.create_db_if_not_exists,
       }
 
-      const result = await createDataSource(tenantId, createData)
+      await createDataSource(tenantId, createData)
       onSubmit?.(createData)
     } catch (err) {
-      console.error('创建数据源失败:', err)
+      logger.error('DataSourceForm', 'create data source failed', err)
       setLocalError(err instanceof Error ? err.message : '创建数据源失败')
     } finally {
       setIsLocalLoading(false)

@@ -18,7 +18,6 @@ SQL Security Middleware - SQL 安全校验中间件
 import re
 import logging
 from typing import Any, Dict, Optional, Callable, Awaitable
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ class SQLSecurityMiddleware(AgentMiddleware):
     使用示例:
     ```python
     from deepagents import create_deep_agent
-    from AgentV2.middleware import SQLSecurityMiddleware
+    from agent.middleware import SQLSecurityMiddleware
 
     middleware = [SQLSecurityMiddleware()]
     agent = create_deep_agent(model, tools, middleware)
@@ -202,12 +201,6 @@ class SQLSecurityMiddleware(AgentMiddleware):
 
                 # 🔥 趋势查询必须有聚合，否则就是错误的
                 if not has_group_by or not has_aggregate:
-                    # 检测是否是 SELECT * 模式
-                    has_select_star = bool(re.search(r'SELECT\s+\*\s+FROM', sql, re.IGNORECASE))
-                    select_pattern = r'SELECT\s+(.+?)\s+FROM'
-                    select_match = re.search(select_pattern, sql, re.IGNORECASE)
-                    selected_columns = select_match.group(1).strip() if select_match else ""
-
                     error_msg = "🚫 趋势查询错误：必须使用聚合函数和 GROUP BY。\n\n"
                     error_msg += "用户问的是'趋势'，需要按时间维度聚合数据。\n\n"
                     error_msg += "❌ 当前SQL缺少聚合，会返回数千行原始数据！\n\n"

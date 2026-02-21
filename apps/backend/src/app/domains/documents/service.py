@@ -91,7 +91,7 @@
 """
 
 import uuid
-from typing import List, Optional, Dict, Any, BinaryIO
+from typing import Optional, Dict, Any, BinaryIO
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -99,10 +99,8 @@ from sqlalchemy import and_, desc, func
 import logging
 
 from src.app.data.models import KnowledgeDocument, DocumentStatus, Tenant
-from src.app.data.database import get_db
 from src.app.integrations.storage_minio.client import minio_service
 from src.app.shared.rag_sql import query_optimization_service
-from src.app.core.config import settings
 
 logger = logging.getLogger(__name__)
 

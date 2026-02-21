@@ -16,9 +16,13 @@
 """
 
 import json
+import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -27,7 +31,9 @@ from typing import List, Dict, Any, Optional
 
 DEFAULT_LOG_DIR = Path("backend/logs")
 AI_ACCESSIBLE_LOG = Path("logs/ai_accessible_logs.jsonl")
-AGENT_KNOWLEDGE_DIR = Path("AgentV2/knowledge/logs")
+AGENT_KNOWLEDGE_DIR = Path(
+    os.getenv("AGENT_KNOWLEDGE_LOG_DIR", "agent/knowledge/logs")
+)
 
 
 # ============================================================================
@@ -73,7 +79,7 @@ def parse_agent_log_file(file_path: Path) -> List[Dict[str, Any]]:
                 if log:
                     logs.append(log)
     except Exception as e:
-        print(f"[ERROR] 解析日志文件失败: {e}")
+        logger.error("解析日志文件失败: %s", e)
 
     return logs
 
@@ -351,7 +357,7 @@ def append_to_ai_accessible_log(log_entries: List[Dict[str, Any]]) -> int:
                 f.write(json.dumps(log, ensure_ascii=False) + '\n')
                 written += 1
     except Exception as e:
-        print(f"[ERROR] 写入AI可访问日志失败: {e}")
+        logger.error("写入AI可访问日志失败: %s", e)
 
     return written
 
@@ -379,7 +385,7 @@ def write_to_knowledge_log(
             for log in log_entries:
                 f.write(json.dumps(log, ensure_ascii=False, default=str) + '\n')
     except Exception as e:
-        print(f"[ERROR] 写入知识库日志失败: {e}")
+        logger.error("写入知识库日志失败: %s", e)
 
 
 # ============================================================================

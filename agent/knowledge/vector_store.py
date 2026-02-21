@@ -14,12 +14,11 @@
 版本: 1.0.0
 """
 
-import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from langchain_core.documents import Document
 
@@ -138,7 +137,6 @@ class ChromaVectorStore:
         class SimpleEmbeddingService:
             def encode_texts(self, texts: List[str]) -> List[List[float]]:
                 """简单字符级编码"""
-                import numpy as np
                 embeddings = []
                 for text in texts:
                     # 简单的字符哈希编码
@@ -422,7 +420,6 @@ class ChromaVectorStore:
         """
         try:
             # 删除并重建集合
-            import chromadb
             ChromaVectorStore._client.delete_collection(self.collection_name)
             self._collection = ChromaVectorStore._client.create_collection(
                 name=self.collection_name,

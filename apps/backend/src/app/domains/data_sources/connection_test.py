@@ -127,7 +127,7 @@ def _adapt_connection_string_for_docker(connection_string: str) -> str:
     pg_match = re.search(pg_pattern, connection_string)
     if pg_match:
         result = re.sub(pg_pattern, r'\1host.docker.internal\3', connection_string)
-        logger.info(f"Docker环境: PostgreSQL连接字符串已适配 (localhost -> host.docker.internal)")
+        logger.info("Docker环境: PostgreSQL连接字符串已适配 (localhost -> host.docker.internal)")
         return result
 
     # MySQL: mysql://user:pass@localhost:3306/db
@@ -135,7 +135,7 @@ def _adapt_connection_string_for_docker(connection_string: str) -> str:
     mysql_match = re.search(mysql_pattern, connection_string)
     if mysql_match:
         result = re.sub(mysql_pattern, r'\1host.docker.internal\3', connection_string)
-        logger.info(f"Docker环境: MySQL连接字符串已适配 (localhost -> host.docker.internal)")
+        logger.info("Docker环境: MySQL连接字符串已适配 (localhost -> host.docker.internal)")
         return result
 
     return connection_string
@@ -626,7 +626,7 @@ class ConnectionTestService:
         logger.warning(f"File not found: {connection_string}")
         return ConnectionTestResult(
             success=False,
-            message=f"文件不存在或无法访问",
+            message="文件不存在或无法访问",
             error_code="FILE_NOT_FOUND",
             details={"path": connection_string, "resolved_path": resolved_path}
         )

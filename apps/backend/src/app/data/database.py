@@ -110,7 +110,7 @@ def check_database_connection() -> bool:
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
-        logger.info("Database connection: OK")
+        logger.debug("Database connection: OK")
         return True
     except Exception as e:
         logger.error(f"Database connection failed: {e}")
@@ -128,6 +128,17 @@ def create_tables():
             TenantConfig, QueryLog, ExplanationLog,
             FusionResult, ReasoningPath, TenantStatus,
             SQLErrorMemory, SQLErrorType  # SQL错误记忆系统
+        )
+        _ = (
+            DataSourceConnection,
+            KnowledgeDocument,
+            TenantConfig,
+            QueryLog,
+            ExplanationLog,
+            FusionResult,
+            ReasoningPath,
+            SQLErrorMemory,
+            SQLErrorType,
         )
 
         Base.metadata.create_all(bind=engine)
@@ -258,13 +269,22 @@ def log_pool_health():
         }
 
         emoji = status_emoji.get(pool_status["status"], "[?]")
-        logger.info(
-            "%s Database Pool - Size: %s, Active: %s, Status: %s",
-            emoji,
-            pool_status.get("total_connections", "N/A"),
-            pool_status.get("checked_out", "N/A"),
-            pool_status["status"],
-        )
+        if pool_status["status"] == "healthy":
+            logger.debug(
+                "%s Database Pool - Size: %s, Active: %s, Status: %s",
+                emoji,
+                pool_status.get("total_connections", "N/A"),
+                pool_status.get("checked_out", "N/A"),
+                pool_status["status"],
+            )
+        else:
+            logger.warning(
+                "%s Database Pool - Size: %s, Active: %s, Status: %s",
+                emoji,
+                pool_status.get("total_connections", "N/A"),
+                pool_status.get("checked_out", "N/A"),
+                pool_status["status"],
+            )
 
     except Exception as e:
         logger.error(f"Failed to log pool health: {e}")

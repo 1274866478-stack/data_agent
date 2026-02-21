@@ -16,10 +16,9 @@
 import json
 import logging
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
 from pathlib import Path
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +115,7 @@ class BusinessGlossary:
             "退款": "refunded",
             "已发货": "shipped",
             "发货": "shipped",
-            "已完成": "delivered",
+            "已送达": "delivered",
         },
         "Customers": {
             "活跃": "active",

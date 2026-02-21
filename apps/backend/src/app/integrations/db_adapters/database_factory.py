@@ -1,83 +1,11 @@
-﻿"""
-# [DATABASE_FACTORY] 鏁版嵁搴撻€傞厤鍣ㄥ伐鍘?
+"""
+Database adapter factory and connection manager.
 
-## [HEADER]
-**鏂囦欢鍚?*: database_factory.py
-**鑱岃矗**: 鎻愪緵缁熶竴鐨勬暟鎹簱杩炴帴绠＄悊銆侀€傞厤鍣ㄥ垱寤恒€侀獙璇佸拰娴嬭瘯鍔熻兘锛屾敮鎸丳ostgreSQL/MySQL/SQLite
-**浣滆€?*: Data Agent Team
-**鐗堟湰**: 1.0.0
-**鍙樻洿璁板綍**:
-- v1.0.0 (2026-01-01): 鍒濆鐗堟湰 - 鏁版嵁搴撻€傞厤鍣ㄥ伐鍘?
-
-## [INPUT]
-- **connection_string: str** - 鏁版嵁搴撹繛鎺ュ瓧绗︿覆
-- **connection_id: str** - 杩炴帴ID
-- **query: str** - SQL鏌ヨ璇彞
-- **db_type: DatabaseType** - 鏁版嵁搴撶被鍨嬫灇涓?
-- **adapter_class: Type[DatabaseInterface]** - 閫傞厤鍣ㄧ被
-- **kwargs: Dict[str, Any]** - 棰濆閰嶇疆鍙傛暟
-
-## [OUTPUT]
-- **bool**: 楠岃瘉缁撴灉锛坴alidate_connection_string, add_connection, remove_connection锛?
-- **Optional[DatabaseCredentials]**: 瑙ｆ瀽鍚庣殑杩炴帴鍑嵁锛坧arse_connection_string锛?
-- **tuple[bool, Optional[str]]**: (鏄惁瀹夊叏, 閿欒淇℃伅)锛坴alidate_sql_safety, test_connection锛?
-- **DatabaseInterface**: 鏁版嵁搴撻€傞厤鍣ㄥ疄渚嬶紙create_adapter, create_and_connect, get_connection锛?
-- **List[DatabaseType]**: 鏀寔鐨勬暟鎹簱绫诲瀷鍒楄〃锛坓et_supported_types锛?
-- **List[str]**: 杩炴帴ID鍒楄〃锛坙ist_connections锛?
-- **Dict[str, tuple[bool, Optional[str]]]**: 娴嬭瘯缁撴灉瀛楀吀锛坱est_all_connections锛?
-- **Optional[Dict[str, Any]]]**: 杩炴帴淇℃伅锛坓et_connection_info锛?
-- **DatabaseManager**: 鏁版嵁搴撶鐞嗗櫒瀹炰緥锛坕nitialize_database_manager锛?
-
-**涓婃父渚濊禆** (宸茶鍙栨簮鐮?:
-- Python鏍囧噯搴? urllib.parse锛坲rlparse锛? re锛堟鍒欙級, logging, dataclasses, typing
-- 椤圭洰鎺ュ彛: DatabaseInterface, DatabaseType, PostgreSQLAdapter, MySQLAdapter, SQLiteDatabaseAdapter锛堜粠database_interface瀵煎叆锛?
-
-**涓嬫父渚濊禆** (闇€瑕佸弽鍚戠储寮曞垎鏋?:
-- [data_source_service.py](./data_source_service.py) - 鏁版嵁婧愭湇鍔′娇鐢ㄥ伐鍘傚垱寤鸿繛鎺?
-- [connection_test_service.py](./connection_test_service.py) - 杩炴帴娴嬭瘯鏈嶅姟浣跨敤宸ュ巶
-
-**璋冪敤鏂?*:
-- 鏁版嵁婧愬垱寤烘椂楠岃瘉杩炴帴瀛楃涓?
-- 鏁版嵁婧愯繛鎺ユ祴璇?
-- Agent鏌ヨ鏃跺垱寤烘暟鎹簱杩炴帴
-- 鏁版嵁搴撹繛鎺ョ鐞?
-
-## [STATE]
-- **鏀寔鏁版嵁搴?*: PostgreSQL锛堥粯璁ょ鍙?432锛? MySQL锛堥粯璁ょ鍙?306锛? SQLite锛堟枃浠惰矾寰勶級
-- **杩炴帴瀛楃涓茶В鏋?*: urlparse瑙ｆ瀽scheme, hostname, port, path, username, password, query鍙傛暟
-- **杩炴帴楠岃瘉**: validate_connection_string妫€鏌cheme, hostname, path鏄惁瀛樺湪
-- **鍑嵁瑙ｆ瀽**: parse_connection_string鎻愬彇杩炴帴鍙傛暟锛岀敓鎴怐atabaseCredentials瀵硅薄
-- **SQL瀹夊叏楠岃瘉**: validate_sql_safety妫€鏌?
-  - 鍙厑璁窼ELECT鏌ヨ
-  - 绂佹鍗遍櫓鍏抽敭璇嶏紙DROP, DELETE, UPDATE, INSERT, ALTER, CREATE, TRUNCATE, EXEC, EXECUTE锛?
-  - 妫€鏌NION娉ㄥ叆
-  - 妫€鏌ュ璇彞娉ㄥ叆锛?锛?
-  - 闄愬埗澶嶆潅搴︼紙SELECT<=5, JOIN<=10锛?
-- **閫傞厤鍣ㄦ敞鍐?*: _adapters瀛楀吀娉ㄥ唽DatabaseType鍒伴€傞厤鍣ㄧ被鐨勬槧灏?
-- **宸ュ巶妯″紡**: create_adapter鏍规嵁connection_string鐨剆cheme閫夋嫨閫傞厤鍣ㄧ被
-- **绠＄悊鍣ㄦā寮?*: DatabaseManager绠＄悊澶氫釜鏁版嵁搴撹繛鎺ワ紙_connections瀛楀吀锛?
-- **寮傛杩炴帴**: create_and_connect鍒涘缓骞惰繛鎺ユ暟鎹簱
-- **杩炴帴娴嬭瘯**: test_connection寮傛娴嬭瘯杩炴帴
-- **杩炴帴淇℃伅鑾峰彇**: get_connection_info鑾峰彇schema_info锛坉atabase_name, table_count, version锛?
-
-## [SIDE-EFFECTS]
-- **URL瑙ｆ瀽**: urlparse(connection_string)瑙ｆ瀽杩炴帴瀛楃涓?
-- **瀛楀吀鏌ヨ**: parsed.query.split('&')鍒嗗壊鏌ヨ鍙傛暟锛宬ey=value鍒嗗壊鍙傛暟鍊?
-- **瀛楃涓叉搷浣?*: parsed.path.lstrip('/')绉婚櫎鍓嶅鏂滄潬锛宲arsed.hostname鎻愬彇涓绘満鍚?
-- **瀵硅薄鍒涘缓**: DatabaseCredentials(...)鍒涘缓鍑嵁瀵硅薄
-- **姝ｅ垯鍖归厤**: re.search(pattern, query_upper)妫€娴嬪嵄闄㏒QL妯″紡
-- **瀛楀吀鎿嶄綔**: cls._adapters[db_type] = adapter_class娉ㄥ唽閫傞厤鍣?
-- **鍒楄〃杞崲**: list(cls._adapters.keys())杩斿洖鏀寔鐨勬暟鎹簱绫诲瀷
-- **寮傚父鎶涘嚭**: ValueError("鏃犳晥鐨勬暟鎹簱杩炴帴瀛楃涓?)
-- **瀛楀吀璇诲啓**: self._connections[connection_id] = adapter娣诲姞杩炴帴锛宒el self._connections[connection_id]鍒犻櫎杩炴帴
-- **寮傛璋冪敤**: await adapter.connect()杩炴帴鏁版嵁搴擄紝await adapter.test_connection()娴嬭瘯杩炴帴
-- **寮傚父澶勭悊**: try-except鎹曡幏杩炴帴澶辫触寮傚父
-- **鍏ㄥ眬鍗曚緥**: _db_manager鍏ㄥ眬鏁版嵁搴撶鐞嗗櫒瀹炰緥
-
-## [POS]
-**璺緞**: backend/src/app/services/database_factory.py
-**妯″潡灞傜骇**: Level 1 (鏈嶅姟灞?
-**渚濊禆娣卞害**: 渚濊禆database_interface妯″潡
+Responsibilities:
+- Parse/validate DB connection strings
+- Build the proper adapter (PostgreSQL/MySQL/SQLite)
+- Enforce read-only SQL safety checks
+- Manage named adapter instances in memory
 """
 
 from typing import Dict, Any, Optional, List, Type
@@ -96,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DatabaseCredentials:
-    """鏁版嵁搴撹繛鎺ュ嚟鎹?""
+    """鏁版嵁搴撹繛鎺ュ嚟鎹?"""
     host: str
     port: int
     database_name: str
@@ -126,7 +54,7 @@ class DatabaseConnectionValidator:
             parsed = urlparse(connection_string)
 
             if not parsed.scheme:
-                logger.error("杩炴帴瀛楃涓茬己灏戝崗璁?)
+                logger.error("Connection string missing scheme")
                 return False
 
             if not parsed.hostname:
@@ -134,7 +62,7 @@ class DatabaseConnectionValidator:
                 return False
 
             if not parsed.path or not parsed.path.lstrip('/'):
-                logger.error("杩炴帴瀛楃涓茬己灏戞暟鎹簱鍚?)
+                logger.error("Connection string missing database name")
                 return False
 
             return True
@@ -264,7 +192,7 @@ class DatabaseConnectionValidator:
 
 
 class DatabaseAdapterFactory:
-    """鏁版嵁搴撻€傞厤鍣ㄥ伐鍘?""
+    """鏁版嵁搴撻€傞厤鍣ㄥ伐鍘?"""
 
     # 娉ㄥ唽鐨勯€傞厤鍣ㄧ被鍨?
     _adapters: Dict[DatabaseType, Type[DatabaseInterface]] = {
@@ -304,7 +232,7 @@ class DatabaseAdapterFactory:
         """
         # 楠岃瘉杩炴帴瀛楃涓?
         if not DatabaseConnectionValidator.validate_connection_string(connection_string):
-            raise ValueError("鏃犳晥鐨勬暟鎹簱杩炴帴瀛楃涓?)
+            raise ValueError("Invalid database connection string")
 
         # 瑙ｆ瀽杩炴帴瀛楃涓?
         credentials = DatabaseConnectionValidator.parse_connection_string(connection_string)
@@ -511,5 +439,5 @@ def initialize_database_manager() -> DatabaseManager:
     """鍒濆鍖栧叏灞€鏁版嵁搴撶鐞嗗櫒"""
     global _db_manager
     _db_manager = DatabaseManager()
-    logger.info("鏁版嵁搴撶鐞嗗櫒鍒濆鍖栧畬鎴?)
+    logger.info("鏁版嵁搴撶鐞嗗櫒鍒濆鍖栧畬鎴?")
     return _db_manager

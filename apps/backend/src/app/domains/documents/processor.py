@@ -82,16 +82,13 @@
 """
 
 import uuid
-import io
 import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-import json
 
 from src.app.data.models import KnowledgeDocument, DocumentStatus
 from src.app.integrations.storage_minio.client import minio_service
-from .service import document_service
 
 logger = logging.getLogger(__name__)
 

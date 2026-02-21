@@ -34,6 +34,7 @@ import { DocumentStatus } from '@/types/store/document'
 import DocumentCard from './DocumentCard'
 import { Button } from '@/components/ui/button'
 import { Alert } from '@/components/ui/alert'
+import logger from '@/lib/logger'
 
 interface DocumentListProps {
   showSelection?: boolean
@@ -115,7 +116,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
       try {
         await deleteSelectedDocuments()
       } catch (error) {
-        console.error('Batch delete failed:', error)
+        logger.error('DocumentList', 'batch delete failed', error)
       }
     }
   }

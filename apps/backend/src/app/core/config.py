@@ -158,7 +158,7 @@ class Settings(BaseSettings):
     enable_multi_agent: bool = False  # 启用多智能体框架
 
     # 向后兼容配置
-    fallback_to_legacy_on_error: bool = True  # 出错时回退到旧 Agent
+    fallback_to_legacy_on_error: bool = True  # 出错时回退到兼容路径（保持 API 兼容）
 
     @validator("database_url")
     def validate_database_url(cls, v):
@@ -221,7 +221,7 @@ class Settings(BaseSettings):
         weak_patterns = ["password", "admin", "demo", "default", "changeme"]
         if any(pattern in v.lower() for pattern in weak_patterns):
             raise ValueError(
-                f"MINIO_ACCESS_KEY contains weak password pattern. "
+                "MINIO_ACCESS_KEY contains weak password pattern. "
                 "Use 'python scripts/generate_keys.py' to generate a strong key."
             )
 
@@ -252,9 +252,10 @@ class Settings(BaseSettings):
             "example", "demo", "test", "placeholder", "fake", "123456",
             "password", "secret", "key", "token", "sample", "default"
         ]
-        if any(pattern in v.lower() for pattern in weak_patterns):
+        matched_pattern = next((p for p in weak_patterns if p in v.lower()), None)
+        if matched_pattern:
             raise ValueError(
-                f"ZHIPUAI_API_KEY contains weak pattern: '{pattern}'. "
+                f"ZHIPUAI_API_KEY contains weak pattern: '{matched_pattern}'. "
                 "Please use a valid API key from https://open.bigmodel.cn/"
             )
 
@@ -304,7 +305,7 @@ class Settings(BaseSettings):
         weak_patterns = ["password", "admin", "demo", "default", "changeme"]
         if any(pattern in v.lower() for pattern in weak_patterns):
             raise ValueError(
-                f"MINIO_SECRET_KEY contains weak password pattern. "
+                "MINIO_SECRET_KEY contains weak password pattern. "
                 "Use 'python scripts/generate_keys.py' to generate a strong key."
             )
 
@@ -340,7 +341,7 @@ class Settings(BaseSettings):
         ]
         if any(pattern in v.lower() for pattern in weak_patterns):
             raise ValueError(
-                f"OPENROUTER_API_KEY contains weak pattern. "
+                "OPENROUTER_API_KEY contains weak pattern. "
                 "Please use a valid API key from https://openrouter.ai/"
             )
 
@@ -376,7 +377,7 @@ class Settings(BaseSettings):
         ]
         if any(pattern in v.lower() for pattern in weak_patterns):
             raise ValueError(
-                f"DEEPSEEK_API_KEY contains weak pattern. "
+                "DEEPSEEK_API_KEY contains weak pattern. "
                 "Please use a valid API key from https://platform.deepseek.com/"
             )
 

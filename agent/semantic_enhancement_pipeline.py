@@ -28,7 +28,6 @@ from typing import Any, Dict, List, Optional
 from .entity_linking import (
     EntityLinkingService,
     EntityLinkingMiddleware,
-    EntityType
 )
 from .context.business_glossary import BusinessGlossary
 from .schema_pruning import (
@@ -37,7 +36,6 @@ from .schema_pruning import (
 )
 from .cube_joins import (
     CubeJoinsMiddleware,
-    CubeJoinsParser
 )
 
 logger = logging.getLogger(__name__)
@@ -460,8 +458,6 @@ def enhance_query(
 # ============================================================================
 
 if __name__ == "__main__":
-    import sys
-
     # 配置日志
     logging.basicConfig(
         level=logging.INFO,

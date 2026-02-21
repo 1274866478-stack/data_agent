@@ -2,20 +2,20 @@
 动态系统提示词生成器
 根据数据库类型生成特定的系统提示词
 """
-from typing import Dict, Any
-import sys
-from pathlib import Path
 import re
 import logging
 
 logger = logging.getLogger(__name__)
 
-# 导入数据库规范
-backend_path = Path(__file__).parent.parent / "backend" / "src"
-sys.path.insert(0, str(backend_path))
+try:
+    from .core.backend_runtime import import_backend_module
+except ImportError:
+    # 兼容直接运行（非包方式）
+    from core.backend_runtime import import_backend_module
 
 try:
-    from app.services.database_spec import get_database_spec
+    database_spec_module = import_backend_module("app.services.database_spec")
+    get_database_spec = getattr(database_spec_module, "get_database_spec")
 except ImportError:
     # 如果导入失败，提供一个简化版本
     logger.warning("无法导入 database_spec，使用简化版本")
@@ -68,7 +68,7 @@ def generate_database_aware_system_prompt(db_type: str, base_system_prompt: str 
         db_specific_instructions += f"{i}. {note}\n"
 
     # 添加函数禁止使用说明
-    db_specific_instructions += f"""
+    db_specific_instructions += """
 
 ### 🚫 禁止使用的函数（此数据库不支持）
 """

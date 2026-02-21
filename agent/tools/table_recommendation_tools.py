@@ -16,7 +16,6 @@ Table Recommendation Tools - 智能表推荐工具
 
 import json
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +23,8 @@ logger = logging.getLogger(__name__)
 try:
     from ..table_config.table_descriptions import (
         TABLE_DESCRIPTIONS,
-        get_recommended_tables,
         get_table_description,
         get_all_high_priority_tables,
-        TERM_TO_TABLE_MAPPING
     )
     TABLE_CONFIG_AVAILABLE = True
     logger.info("✅ [table_recommendation_tools] 表描述配置加载成功")
@@ -81,7 +78,6 @@ def get_recommended_tables_for_query(query: str) -> str:
 
         # 获取实际表列表（connection_id 会从上下文中获取）
         list_tables_result = json.loads(list_tables())
-        actual_tables = list_tables_result.get("tables", [])
         enhanced_tables = list_tables_result.get("tables_enhanced", [])
 
         # 🔧 关键修改：基于实际表名进行推荐

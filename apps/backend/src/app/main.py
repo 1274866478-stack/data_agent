@@ -60,10 +60,9 @@ from datetime import datetime
 from .core.config import settings
 from .core.auth import create_api_key_auth
 from .core.logging import setup_logging, get_logger, request_logger, performance_logger
-from .core.monitoring import init_sentry, capture_exception, monitor_performance
+from .core.monitoring import init_sentry
 from .core.config_validator import config_validator
-from .core.config_audit import generate_audit_report
-from .core.key_rotation import setup_key_rotation, get_rotation_status
+from .core.key_rotation import setup_key_rotation
 from .data.database import check_database_connection, create_tables, log_pool_health
 from .integrations.storage_minio.client import minio_service
 from .integrations.vectordb_chroma.client import chromadb_service
@@ -77,6 +76,16 @@ logger = get_logger(__name__)
 
 # 初始化Sentry监控
 init_sentry()
+
+
+def _compute_health_status(services_status: dict) -> bool:
+    """
+    计算整体健康状态。
+    None 表示主动跳过（例如 DeepSeek 已配置时跳过 Zhipu 检查），
+    不应被当作 unhealthy。
+    """
+    effective_values = [value for value in services_status.values() if value is not None]
+    return all(effective_values) if effective_values else True
 
 
 @asynccontextmanager
@@ -509,11 +518,10 @@ async def check_all_services():
             services_status["chromadb"] = await asyncio.to_thread(chromadb_service.check_connection)
 
         # 🔥 修复：优先检查DeepSeek，如果配置了DeepSeek就跳过Zhipu AI健康检查
-        from src.app.core.config import settings
         deepseek_api_key = getattr(settings, "DEEPSEEK_API_KEY", None) or getattr(settings, "deepseek_api_key", None)
         if deepseek_api_key:
             # 如果配置了DeepSeek，跳过Zhipu AI健康检查（避免余额不足错误）
-            logger.info("检测到DeepSeek API密钥，跳过Zhipu AI健康检查")
+            logger.debug("检测到DeepSeek API密钥，跳过Zhipu AI健康检查")
             services_status["zhipu_ai"] = None  # 标记为跳过
             services_status["deepseek"] = True  # 假设DeepSeek可用（实际查询时会验证）
         else:
@@ -525,12 +533,12 @@ async def check_all_services():
         log_pool_health()
 
         # 记录服务状态
-        logger.info(
+        logger.debug(
             "Service health check completed",
             extra={
                 "event_type": "health_check",
                 "services": services_status,
-                "all_healthy": all(services_status.values()),
+                "all_healthy": _compute_health_status(services_status),
             },
         )
 
@@ -546,7 +554,7 @@ async def health_check():
     services_status = await check_all_services()
 
     # 计算整体健康状态
-    all_healthy = all(services_status.values())
+    all_healthy = _compute_health_status(services_status)
 
     return {
         "status": "healthy" if all_healthy else "unhealthy",

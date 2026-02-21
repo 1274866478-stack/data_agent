@@ -35,7 +35,6 @@
 
 import functools
 import time
-import inspect
 from typing import Callable, Dict, Any, Optional, TypeVar
 from contextvars import ContextVar
 import logging

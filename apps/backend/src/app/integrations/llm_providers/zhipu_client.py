@@ -91,7 +91,6 @@
 GLM API 调用封装
 """
 
-import zhipuai
 from zhipuai import ZhipuAI
 from typing import Dict, Any, Optional, List, AsyncGenerator
 import logging
@@ -104,8 +103,8 @@ from datetime import datetime
 from functools import wraps
 
 from src.app.core.config import settings
-from src.app.core.performance_optimizer import performance_monitor, resource_monitor
-from src.app.core.security_monitor import security_monitor, SensitiveDataFilter
+from src.app.core.performance_optimizer import performance_monitor
+from src.app.core.security_monitor import security_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +284,7 @@ class ZhipuAIService:
         检查智谱AI API连接状态
         """
         try:
-            logger.info("正在测试智谱AI API连接...")
+            logger.debug("正在测试智谱AI API连接...")
 
             # 发送一个简单的测试请求来验证API连接
             response = await self._call_api_with_retry(
@@ -300,7 +299,7 @@ class ZhipuAIService:
 
             if response and hasattr(response, 'choices') and response.choices:
                 content = response.choices[0].message.content
-                logger.info(f"ZhipuAI API connection: OK - Response: {content[:50]}...")
+                logger.debug(f"ZhipuAI API connection: OK - Response: {content[:50]}...")
                 return True
             else:
                 logger.error("ZhipuAI API connection failed: Invalid response structure")

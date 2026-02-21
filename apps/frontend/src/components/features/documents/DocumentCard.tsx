@@ -54,6 +54,7 @@ import { useDocuments } from '@/hooks/useDocuments'
 import { DocumentStatus, KnowledgeDocument } from '@/types/store/document'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import logger from '@/lib/logger'
 
 interface DocumentCardProps {
   document: KnowledgeDocument
@@ -141,7 +142,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
     try {
       openPreviewModal(document)
     } catch (error) {
-      console.error('Preview failed:', error)
+      logger.error('DocumentCard', 'preview failed', error)
     } finally {
       setIsLoading(false)
     }
@@ -150,8 +151,9 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   // 处理下载
   const handleDownload = async () => {
     setIsLoading(true)
+    let downloadUrl: string | null = null
     try {
-      const downloadUrl = await getDocumentDownloadUrl(document.id)
+      downloadUrl = await getDocumentDownloadUrl(document.id)
       const link = window.document.createElement('a')
       link.href = downloadUrl
       link.download = document.file_name
@@ -159,8 +161,11 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
       link.click()
       window.document.body.removeChild(link)
     } catch (error) {
-      console.error('Download failed:', error)
+      logger.error('DocumentCard', 'download failed', error)
     } finally {
+      if (downloadUrl) {
+        window.setTimeout(() => URL.revokeObjectURL(downloadUrl as string), 1000)
+      }
       setIsLoading(false)
     }
   }
@@ -175,7 +180,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
     try {
       await deleteDocument(document.id)
     } catch (error) {
-      console.error('Delete failed:', error)
+      logger.error('DocumentCard', 'delete failed', error)
     } finally {
       setIsLoading(false)
     }
@@ -187,7 +192,7 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
     try {
       await processDocument(document.id)
     } catch (error) {
-      console.error('Process failed:', error)
+      logger.error('DocumentCard', 'process failed', error)
     } finally {
       setIsLoading(false)
     }

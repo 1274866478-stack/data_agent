@@ -170,7 +170,6 @@ class ExcelToSQLiteService:
                 df = pd.read_excel(excel_file, sheet_name=sheet_name, engine='openpyxl')
 
                 # 清理列名（移除特殊字符，转小写）
-                original_columns = df.columns.tolist()
                 df.columns = self._sanitize_column_names(df.columns)
 
                 # 处理空值
