@@ -1,4 +1,4 @@
-from .client import llm_service, zhipu_service
+from .client import ZhipuAIService as zhipu_service
 
-__all__ = ["llm_service", "zhipu_service"]
+__all__ = ["zhipu_service"]
 
