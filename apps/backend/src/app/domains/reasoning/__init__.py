@@ -3,7 +3,7 @@ Reasoning domain facade.
 """
 
 from .service import (
-    enhanced_reasoning_engine,
+    reasoning_engine,
     QueryType,
     ReasoningMode,
     QueryAnalysis,
