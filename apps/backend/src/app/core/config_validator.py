@@ -119,7 +119,8 @@ except ImportError:
     CHROMADB_AVAILABLE = False
 
 from src.app.core.config import settings
-from src.app.integrations.llm_providers.zhipu_client import zhipu_service
+from src.app.integrations.llm_providers.zhipu_client import ZhipuAIService
+zhipu_service = ZhipuAIService()
 from src.app.core.config_audit import log_config_change
 
 logger = logging.getLogger(__name__)
