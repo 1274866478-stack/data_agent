@@ -13,13 +13,6 @@ from .service import (
     usage_monitoring_service,
     ProviderType,
     UsageType,
-    ReasoningStep,
-    ReasoningSource,
-    reasoning_engine_impl,
-    fusion_engine,
-    FusionResult,
-    ConflictInfo,
-    xai_service,
 )
 
 from .reasoning_service import (
@@ -31,11 +24,10 @@ from .reasoning_service import (
     FusionResult,
     ConflictInfo,
     xai_service,
-    enhanced_reasoning_engine,
 )
 
 __all__ = [
-    "enhanced_reasoning_engine",
+    "reasoning_engine",
     "QueryType",
     "ReasoningMode",
     "QueryAnalysis",
