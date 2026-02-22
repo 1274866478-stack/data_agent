@@ -691,7 +691,8 @@ function normalizeEChartsOption(option: any): any {
 
 // 渲染图表
 function renderChart(chart: StepChartData, description?: string) {
-  // 🔧 新增：调试日�?
+  // 🔧 调试日志
+  console.log({
     has_echarts_option: !!chart.echarts_option,
     has_chart_image: !!chart.chart_image,
     chart_type: chart.chart_type,
