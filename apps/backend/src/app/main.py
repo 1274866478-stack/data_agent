@@ -67,7 +67,7 @@ from .data.database import check_database_connection, create_tables, log_pool_he
 from .integrations.storage_minio.client import minio_service
 from .integrations.vectordb_chroma.client import chromadb_service
 from .integrations.llm_providers.zhipu_client import zhipu_service
-from .domains.monitoring.query_performance import query_perf_monitor
+# from .domains.monitoring.query_performance import query_perf_monitor  # 已删除 - 性能监控已禁用
 from .api.v1 import api_router
 from .api.v2 import api_router_v2
 
@@ -205,12 +205,12 @@ async def lifespan(app: FastAPI):
     # 关闭时执行
     logger.info("Shutting down Data Agent Backend...")
 
-    # 停止性能监控服务
-    try:
-        query_perf_monitor.stop_monitoring()
-        logger.info("Performance monitoring service stopped")
-    except Exception as e:
-        logger.error(f"Failed to stop performance monitoring: {e}")
+    # 停止性能监控服务 - 已删除
+    # try:
+    #     query_perf_monitor.stop_monitoring()
+    #     logger.info("Performance monitoring service stopped")
+    # except Exception as e:
+    #     logger.error(f"Failed to stop performance monitoring: {e}")
 
     # 记录应用关闭事件
     try:
@@ -438,33 +438,13 @@ async def request_logging_middleware(request: Request, call_next):
         raise
 
     finally:
-        # 记录到性能监控服务（仅对API请求）
+        # 记录到性能监控服务（仅对API请求）- 已禁用
         if path.startswith("/api/"):
             try:
-                from .domains.monitoring.query_performance import QueryMetrics
-
-                process_time = time.time() - start_time
-                end_memory = psutil.Process().memory_info().rss / 1024 / 1024
-
-                metrics = QueryMetrics(
-                    query_id=request_id,
-                    tenant_id=tenant_id,
-                    query_type=query_type,
-                    query_hash=f"{request.method}:{path}",
-                    execution_time=process_time,
-                    sql_generation_time=0.0,
-                    sql_validation_time=0.0,
-                    result_processing_time=0.0,
-                    total_time=process_time,
-                    row_count=0,
-                    cache_hit=False,
-                    error=error_occurred,
-                    error_message=error_message,
-                    memory_usage=max(0, end_memory - start_memory),
-                    cpu_usage=psutil.cpu_percent(interval=None)
-                )
-
-                query_perf_monitor._record_query_metrics(metrics)
+                # from .domains.monitoring.query_performance import QueryMetrics  # 已删除
+                # metrics = QueryMetrics(...)
+                # query_perf_monitor._record_query_metrics(metrics)
+                pass  # 性能监控已禁用
             except Exception as perf_error:
                 logger.debug(f"性能指标记录失败: {perf_error}")
 
