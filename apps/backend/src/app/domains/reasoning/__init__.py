@@ -1,9 +1,9 @@
-﻿"""
+"""
 Reasoning domain facade.
 """
 
 from .service import (
-    reasoning_engine,
+    enhanced_reasoning_engine,
     QueryType,
     ReasoningMode,
     QueryAnalysis,
@@ -13,18 +13,29 @@ from .service import (
     usage_monitoring_service,
     ProviderType,
     UsageType,
+    ReasoningStep,
+    ReasoningSource,
+    reasoning_engine_impl,
+    fusion_engine,
+    FusionResult,
+    ConflictInfo,
+    xai_service,
 )
+
 from .reasoning_service import (
     ReasoningStep,
     ReasoningSource,
     ReasoningEngine,
     reasoning_engine as reasoning_engine_impl,
+    fusion_engine,
+    FusionResult,
+    ConflictInfo,
+    xai_service,
+    enhanced_reasoning_engine,
 )
-from .fusion_service import fusion_engine, FusionResult, ConflictInfo
-from .xai_service import xai_service
 
 __all__ = [
-    "reasoning_engine",
+    "enhanced_reasoning_engine",
     "QueryType",
     "ReasoningMode",
     "QueryAnalysis",
@@ -36,7 +47,6 @@ __all__ = [
     "UsageType",
     "ReasoningStep",
     "ReasoningSource",
-    "ReasoningEngine",
     "reasoning_engine_impl",
     "fusion_engine",
     "FusionResult",
