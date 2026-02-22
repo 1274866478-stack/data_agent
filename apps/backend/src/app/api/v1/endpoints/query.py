@@ -97,7 +97,7 @@ from src.app.data.models import QueryStatus
 from src.app.middleware.tenant_context import get_current_tenant_from_request
 from src.app.domains.rag_sql.service import QueryContextService
 from src.app.domains.query.service import QueryService
-from src.app.domains.query.agent import (
+from src.app.domains.query.agent_service import (
     run_agent_query,
     convert_agent_response_to_query_response,
     is_agent_available
