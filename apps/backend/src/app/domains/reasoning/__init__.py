@@ -17,13 +17,8 @@ from .service import (
 
 from .reasoning_service import (
     ReasoningStep,
-    ReasoningSource,
     ReasoningEngine,
     reasoning_engine as reasoning_engine_impl,
-    fusion_engine,
-    FusionResult,
-    ConflictInfo,
-    xai_service,
 )
 
 __all__ = [
@@ -38,10 +33,5 @@ __all__ = [
     "ProviderType",
     "UsageType",
     "ReasoningStep",
-    "ReasoningSource",
     "reasoning_engine_impl",
-    "fusion_engine",
-    "FusionResult",
-    "ConflictInfo",
-    "xai_service",
 ]
