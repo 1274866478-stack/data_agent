@@ -779,7 +779,8 @@ function renderVisualization(
   table: StepTableData | null,
   description?: string
 ) {
-  // 🔧 新增：调试日�?
+  // 🔧 调试日志
+  console.log({
     has_chart: !!chart,
     has_table: !!table,
     chart_has_echarts_option: !!chart?.echarts_option,
