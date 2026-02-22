@@ -92,7 +92,6 @@ from pydantic import BaseModel
 from src.app.data.database import get_db, SessionLocal
 from src.app.data.models import DocumentStatus
 from src.app.domains.documents.service import document_service
-from src.app.domains.documents.service import document_processor
 
 router = APIRouter()
 
