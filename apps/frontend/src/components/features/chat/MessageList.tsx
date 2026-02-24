@@ -432,15 +432,8 @@ export const MessageList = forwardRef<MessageListRef, MessageListProps>(
                 <>
                   <InsightBanner insight={message.metadata.insight} />
                   <ProcessingSteps
-                    key={`${message.id}-${message.metadata.progress || 0}`}
-                    steps={(() => {
-                      const kw =
-                        (message.metadata.context_info as any)?.focus_keyword ||
-                        extractFocusKeyword(message.content || '')
-                      return kw
-                        ? message.metadata.processing_steps.map(s => filterStepTable(s, kw))
-                        : message.metadata.processing_steps
-                    })()}
+                    key={message.id}
+                    steps={message.metadata.processing_steps}
                     defaultExpanded={false}
                   />
                 </>

@@ -1440,6 +1440,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
   // 找到最后一个包含表格数据的步骤
   const tableDataStep = useMemo(() => {
     const tableSteps = filteredSteps.filter(s => s.content_type === 'table' && s.content_data?.table)
+    console.log({
       allSteps: filteredSteps.map(s => ({ step: s.step, title: s.title, content_type: s.content_type, hasTable: !!s.content_data?.table })),
       tableSteps: tableSteps.length,
     })
