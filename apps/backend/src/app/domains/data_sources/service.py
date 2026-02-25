@@ -230,8 +230,8 @@ class DataSourceService:
         new_connection = DataSourceConnection(
             tenant_id=tenant_id,
             name=name,
-            connection_type=db_type,
-            connection_string=encrypted_connection_string,
+            db_type=db_type,
+            _connection_string=encrypted_connection_string,
             host=host,
             port=port,
             database_name=database_name,
@@ -361,21 +361,23 @@ class DataSourceService:
             connection.name = update_data["name"]
 
         if "connection_string" in update_data:
-            # 加密新的连接字符串
-            encrypted_string = self._encrypt_connection_string(update_data["connection_string"])
-            connection.connection_string = encrypted_string
+            # Setter handles encryption; do not pass pre-encrypted values.
+            connection.connection_string = update_data["connection_string"]
 
             # 解析新连接字符串更新连接信息
             parsed_info = self._parse_connection_string(
                 update_data["connection_string"],
-                connection.connection_type
+                update_data.get("db_type", update_data.get("connection_type", connection.db_type))
             )
             connection.host = parsed_info.get("host")
             connection.port = parsed_info.get("port")
             connection.database_name = parsed_info.get("database")
 
         if "connection_type" in update_data:
-            connection.connection_type = update_data["connection_type"]
+            connection.db_type = update_data["connection_type"]
+
+        if "db_type" in update_data:
+            connection.db_type = update_data["db_type"]
 
         if "is_active" in update_data:
             if update_data["is_active"]:

@@ -61,6 +61,8 @@
 import base64
 import os
 import logging
+import hashlib
+import re
 from typing import Optional
 
 try:
@@ -73,6 +75,7 @@ except ImportError:
     logging.warning("cryptography package not available, encryption will be disabled")
 
 logger = logging.getLogger(__name__)
+FERNET_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
 
 
 class EncryptionService:
@@ -110,6 +113,11 @@ class EncryptionService:
                 return key_bytes
             except Exception as e:
                 logger.warning(f"Failed to load encryption key from environment: {e}")
+                # Keep behavior deterministic for non-Fernet env values (e.g. passphrases).
+                # This avoids generating a random key on every restart.
+                derived_key = base64.urlsafe_b64encode(hashlib.sha256(key.encode("utf-8")).digest())
+                logger.warning("Using deterministic derived key from ENCRYPTION_KEY")
+                return derived_key
 
         # 如果环境变量中没有，生成新的密钥
         logger.warning("No encryption key found in environment, generating new key")
@@ -185,13 +193,17 @@ class EncryptionService:
         if not value:
             return False
 
+        # Fernet tokens are URL-safe base64 strings and usually start with "gAAAA".
+        # Avoid false positives for plain paths/URLs.
+        if not value.startswith("gAAAA"):
+            return False
+        if not FERNET_TOKEN_PATTERN.fullmatch(value):
+            return False
+
         try:
-            # 尝试Base64解码
             base64.urlsafe_b64decode(value.encode('utf-8'))
-            # 如果解码成功，可能是加密的
             return True
         except Exception:
-            # 解码失败，说明不是加密的
             return False
 
     def generate_key_from_password(self, password: str, salt: Optional[bytes] = None) -> bytes:

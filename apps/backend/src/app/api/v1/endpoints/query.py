@@ -210,6 +210,20 @@ async def handle_chart_merge_request(
     )
 
 
+def _safe_connection_preview(selected_source: Any) -> str:
+    """Build connection preview without failing the request when decrypt errors occur."""
+    try:
+        value = selected_source.connection_string
+        return f"{str(value)[:50]}..." if value else "N/A"
+    except Exception as exc:
+        logger.warning(
+            "Unable to preview data source connection string",
+            data_source_id=str(getattr(selected_source, "id", "")),
+            error=str(exc),
+        )
+        return "UNAVAILABLE"
+
+
 @router.post("/query", response_model=None)
 async def create_query(
     request: QueryRequest,
@@ -314,7 +328,8 @@ async def create_query(
             )
         
         # 🔍 最终确认使用的数据源
-        logger.info(f"🎯 [数据源诊断] 最终使用的数据源: ID={selected_source.id}, 名称={selected_source.name}, 类型={selected_source.db_type}, 连接字符串预览={str(selected_source.connection_string)[:50] if selected_source.connection_string else 'N/A'}...")
+        connection_preview = _safe_connection_preview(selected_source)
+        logger.info(f"🎯 [数据源诊断] 最终使用的数据源: ID={selected_source.id}, 名称={selected_source.name}, 类型={selected_source.db_type}, 连接字符串预览={connection_preview}")
 
         # 尝试使用 Agent 处理查询（如果可用且有数据源）
         use_agent = is_agent_available() and data_source_id is not None
@@ -333,11 +348,23 @@ async def create_query(
             try:
                 # 获取数据源连接字符串
                 data_source_service = DataSourceService()
-                database_url = await data_source_service.get_decrypted_connection_string(
-                    data_source_id=data_source_id,
-                    tenant_id=tenant.id,
-                    db=db
-                )
+                try:
+                    database_url = await data_source_service.get_decrypted_connection_string(
+                        data_source_id=data_source_id,
+                        tenant_id=tenant.id,
+                        db=db
+                    )
+                except Exception as decrypt_error:
+                    logger.error(
+                        "Data source decrypt failed for query request",
+                        tenant_id=tenant.id,
+                        data_source_id=str(data_source_id),
+                        error=str(decrypt_error),
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="数据源连接信息解密失败，请重新配置数据源或检查 ENCRYPTION_KEY"
+                    )
                 
                 # 生成线程ID（用于会话管理）
                 # 🔧 图表拆分修复：使用 session_id 保持多轮对话上下文
@@ -454,6 +481,8 @@ async def create_query(
                     agent_success = False
                     use_agent = False
             
+            except HTTPException:
+                raise
             except Exception as e:
                 # 获取完整的堆栈跟踪
                 tb_str = traceback.format_exc()

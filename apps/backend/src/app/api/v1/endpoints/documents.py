@@ -474,7 +474,7 @@ async def get_document_preview(
     }
 
 
-@router.get("/{document_id}/status", summary="获取文档处理状态")
+@router.get("/{document_id:uuid}/status", summary="获取文档处理状态")
 async def get_document_processing_status(
     document_id: str,
     db: Session = Depends(get_db)

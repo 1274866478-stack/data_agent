@@ -821,8 +821,8 @@ async def create_data_source(
         try:
             logger.info(f"Auto-testing connection for data source '{request.name}'...")
             test_result = await connection_test_service.test_connection(
-                connection_string=request.connection_string,
-                db_type=request.db_type
+                connection_string=final_connection_string,
+                db_type=final_db_type
             )
 
             # 更新连接的测试结果和状态
@@ -946,16 +946,13 @@ async def update_data_source(
             connection.name = update_data["name"]
 
         if "connection_string" in update_data:
-            # 加密新的连接字符串
-            encrypted_string = data_source_service.encryption_service.encrypt_connection_string(
-                update_data["connection_string"]
-            )
-            connection.connection_string = encrypted_string
+            # Setter handles encryption; pass plaintext only.
+            connection.connection_string = update_data["connection_string"]
 
             # 解析新连接字符串
             parsed_info = data_source_service._parse_connection_string(
                 update_data["connection_string"],
-                connection.db_type
+                update_data.get("db_type", connection.db_type)
             )
             connection.host = parsed_info.get("host")
             connection.port = parsed_info.get("port")

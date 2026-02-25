@@ -73,10 +73,18 @@
 
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from datetime import datetime
 from fastapi import Depends
 
-from src.app.data.models import Tenant, TenantStatus, DataSourceConnection, KnowledgeDocument, DataSourceConnectionStatus
+from src.app.data.models import (
+    Tenant,
+    TenantStatus,
+    DataSourceConnection,
+    KnowledgeDocument,
+    DataSourceConnectionStatus,
+    DocumentStatus,
+)
 from src.app.data.database import get_db
 
 
@@ -292,14 +300,14 @@ class TenantService:
         # 统计已处理文档数量
         processed_documents = self.db.query(KnowledgeDocument).filter(
             KnowledgeDocument.tenant_id == tenant_id,
-            KnowledgeDocument.processing_status == "completed"
+            KnowledgeDocument.status == DocumentStatus.READY
         ).count()
 
         # 计算存储使用量（这里简化计算，实际应该从MinIO获取）
         storage_used_mb = self.db.query(KnowledgeDocument).filter(
             KnowledgeDocument.tenant_id == tenant_id
         ).with_entities(
-            self.db.func.sum(KnowledgeDocument.file_size)
+            func.sum(KnowledgeDocument.file_size)
         ).scalar() or 0
 
         storage_used_mb = storage_used_mb // (1024 * 1024)  # 转换为MB

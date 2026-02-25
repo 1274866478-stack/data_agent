@@ -437,6 +437,19 @@ def _convert_chat_messages(messages: List[ChatMessage]) -> List[LLMMessage]:
     return llm_messages
 
 
+def _resolve_tenant_id(current_user: Any) -> str:
+    """兼容开发/生产两种 current_user 结构，统一提取 tenant_id。"""
+    if isinstance(current_user, dict):
+        tenant_id = current_user.get("tenant_id")
+    else:
+        tenant_id = getattr(current_user, "tenant_id", None) or getattr(current_user, "id", None)
+
+    if not tenant_id:
+        tenant_id = "default_tenant"
+
+    return tenant_id
+
+
 def _get_column_type(dtype_str: str) -> str:
     """将pandas数据类型转换为友好的类型描述"""
     if 'int' in dtype_str:
@@ -4227,7 +4240,7 @@ async def chat_completion(
     """
     try:
         # 获取tenant_id，支持开发环境下的默认租户
-        tenant_id = getattr(current_user, 'tenant_id', None) or current_user.get('tenant_id', 'default_tenant')
+        tenant_id = _resolve_tenant_id(current_user)
         logger.debug(f"Chat completion request for tenant: {tenant_id}, stream={request.stream}, data_source_ids={request.data_source_ids}")
         logger.debug(f"Chat completion request debug - stream={request.stream}, data_source_ids={request.data_source_ids}")
         # 转换提供商
@@ -4521,7 +4534,7 @@ async def get_provider_status(
     获取LLM提供商状态
     """
     try:
-        tenant_id = current_user.tenant_id
+        tenant_id = _resolve_tenant_id(current_user)
         status = await llm_service.validate_providers(tenant_id)
 
         return ProviderStatusResponse(
@@ -4543,7 +4556,7 @@ async def get_available_models(
     获取可用模型列表
     """
     try:
-        tenant_id = current_user.tenant_id
+        tenant_id = _resolve_tenant_id(current_user)
         models = await llm_service.get_available_models(tenant_id)
 
         return AvailableModelsResponse(providers=models)
@@ -4563,7 +4576,7 @@ async def test_llm_service(
     测试LLM服务
     """
     try:
-        tenant_id = current_user.tenant_id
+        tenant_id = _resolve_tenant_id(current_user)
 
         # 转换提供商
         llm_provider = None
@@ -4619,7 +4632,7 @@ async def test_multimodal(
     测试多模态功能（需要OpenRouter）
     """
     try:
-        tenant_id = current_user.tenant_id
+        tenant_id = _resolve_tenant_id(current_user)
 
         # 创建多模态测试消息
         multimodal_content = [
@@ -4692,7 +4705,7 @@ async def test_stream_thinking(
             try:
                 # 必须先 await 获取 AsyncGenerator 对象
                 response_generator = await llm_service.chat_completion(
-                    tenant_id=current_user.id,
+                    tenant_id=_resolve_tenant_id(current_user),
                     messages=messages,
                     stream=True,
                     enable_thinking=None  # 自动判断
@@ -4758,7 +4771,7 @@ async def test_intelligent_params(
 
             # 使用智能参数调用
             response = await llm_service.chat_completion(
-                tenant_id=current_user.id,
+                tenant_id=_resolve_tenant_id(current_user),
                 messages=case["messages"],
                 enable_thinking=None,  # 自动判断
                 temperature=complexity.get("recommend_temperature", 0.7),
@@ -4817,12 +4830,12 @@ async def test_multimodal_upload(
         # 测试多模态处理
         processed_content = await multimodal_processor.process_content_list(
             messages[0].content,
-            current_user.id
+            _resolve_tenant_id(current_user)
         )
 
         # 尝试调用OpenRouter（支持多模态）
         response = await llm_service.chat_completion(
-            tenant_id=current_user.id,
+            tenant_id=_resolve_tenant_id(current_user),
             messages=messages,
             provider=LLMProvider.OPENROUTER,
             stream=False
@@ -4852,7 +4865,7 @@ async def test_tenant_isolation(
         from src.app.domains.tenants.config_manager import tenant_config_manager, ProviderType
 
         # 测试租户配置获取
-        test_tenant_id = current_user.id
+        test_tenant_id = _resolve_tenant_id(current_user)
         providers = []
 
         for provider in [ProviderType.ZHIPU, ProviderType.OPENROUTER]:
@@ -4892,7 +4905,7 @@ async def test_data_sources_context(
     """
     测试数据源上下文获取
     """
-    tenant_id = current_user.get("tenant_id", "")
+    tenant_id = _resolve_tenant_id(current_user)
     context = await _get_data_sources_context(tenant_id, db)
     return {
         "tenant_id": tenant_id,
@@ -4924,7 +4937,7 @@ async def test_all_features(
 
         # 调用聊天完成（启用智能思考模式）
         response = await llm_service.chat_completion(
-            tenant_id=current_user.id,
+            tenant_id=_resolve_tenant_id(current_user),
             messages=messages,
             stream=False,
             enable_thinking=None,  # 自动启用思考模式
@@ -4933,10 +4946,10 @@ async def test_all_features(
         )
 
         # 获取可用模型列表
-        available_models = await llm_service.get_available_models(current_user.id)
+        available_models = await llm_service.get_available_models(_resolve_tenant_id(current_user))
 
         # 验证提供商状态
-        provider_status = await llm_service.validate_providers(current_user.id)
+        provider_status = await llm_service.validate_providers(_resolve_tenant_id(current_user))
 
         return {
             "success": True,

@@ -58,9 +58,9 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from src.app.data.database import get_db
-from src.app.data.models import Tenant
 from src.app.domains.tenants.service import get_tenant_service, get_tenant_setup_service, TenantService, TenantSetupService
-from src.app.middleware.tenant_context import get_current_tenant, get_current_tenant_id
+from src.app.middleware.tenant_context import get_current_tenant_id
+from src.app.core.config import settings
 
 router = APIRouter()
 
@@ -82,15 +82,29 @@ class TenantSetupRequest(BaseModel):
 
 
 @router.get("/me", summary="获取当前租户信息")
-async def get_current_tenant(
-    current_tenant: Tenant = Depends(get_current_tenant)
+async def get_current_tenant_info(
+    tenant_service: TenantService = Depends(get_tenant_service),
+    tenant_id: str = Depends(get_current_tenant_id)
 ) -> Dict[str, Any]:
     """
     获取当前租户信息（Story要求：GET /api/v1/tenants/me）
     """
     try:
-        return current_tenant.to_dict()
+        # 寮€鍙戠幆澧冩棤璁よ瘉璺緞涓嬶紝tenant context 鍙兘鏈敞鍏?
+        if not tenant_id and settings.environment == "development":
+            tenant_id = "default_tenant"
 
+        tenant = await tenant_service.get_tenant_by_id(tenant_id) if tenant_id else None
+        if not tenant:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Tenant not found"
+            )
+
+        return tenant.to_dict()
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -109,6 +123,8 @@ async def update_current_tenant(
     """
     try:
         # 只传递非None字段
+        if not tenant_id and settings.environment == "development":
+            tenant_id = "default_tenant"
         update_dict = {k: v for k, v in update_data.dict().items() if v is not None}
 
         tenant = await tenant_service.update_tenant(tenant_id, update_dict)
@@ -125,6 +141,8 @@ async def update_current_tenant(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -141,6 +159,8 @@ async def get_current_tenant_stats(
     获取租户统计信息（Story要求：GET /api/v1/tenants/me/stats）
     """
     try:
+        if not tenant_id and settings.environment == "development":
+            tenant_id = "default_tenant"
         stats = await tenant_service.get_tenant_stats(tenant_id)
         if not stats:
             raise HTTPException(
@@ -154,6 +174,8 @@ async def get_current_tenant_stats(
             "last_updated": datetime.now().isoformat()
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
