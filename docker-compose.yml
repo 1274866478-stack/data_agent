@@ -70,6 +70,7 @@ services:
       # 挂载 Agent 目录到容器根目录，供 agent_service.py 导入 sql_agent 等模块
       # 修复：挂载到 /agent (小写) 以匹配代码中的 import agent
       - ./agent:/agent
+      - ./cube_schema:/cube_schema
       # 🔧 修复：使用本地目录映射，确保上传文件持久化且易于访问
       # 如果使用命名卷 backend_uploads，文件会存储在Docker内部，不易访问
       # 改为本地目录映射后，文件直接存储在 ./data_storage 目录中
