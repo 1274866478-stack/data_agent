@@ -47,6 +47,7 @@ export const { v1: API_BASE_URL, v2: API_V2_BASE_URL } = resolveApiBases(rawApiB
 class APIClient {
   private baseURL: string
   private static supportsV2Stream: boolean | null = null
+  private static v2StreamProbePromise: Promise<boolean> | null = null
 
   constructor(baseURL: string = API_BASE_URL) {
     this.baseURL = baseURL
@@ -62,6 +63,40 @@ class APIClient {
    */
   static getV2Client(): APIClient {
     return new APIClient(API_V2_BASE_URL)
+  }
+
+  private static async probeV2StreamSupport(): Promise<boolean> {
+    if (APIClient.supportsV2Stream !== null) {
+      return APIClient.supportsV2Stream
+    }
+    if (APIClient.v2StreamProbePromise) {
+      return APIClient.v2StreamProbePromise
+    }
+
+    APIClient.v2StreamProbePromise = (async () => {
+      try {
+        const apiRoot = API_V2_BASE_URL.replace(/\/api\/v2\/?$/, '')
+        const response = await fetch(`${apiRoot}/openapi.json`, {
+          headers: { Accept: 'application/json' },
+        })
+        if (!response.ok) {
+          APIClient.supportsV2Stream = false
+          return false
+        }
+
+        const openapi = await response.json()
+        const hasStreamEndpoint = Boolean(openapi?.paths?.['/api/v2/query/stream'])
+        APIClient.supportsV2Stream = hasStreamEndpoint
+        return hasStreamEndpoint
+      } catch {
+        APIClient.supportsV2Stream = false
+        return false
+      } finally {
+        APIClient.v2StreamProbePromise = null
+      }
+    })()
+
+    return APIClient.v2StreamProbePromise
   }
 
   private async fallbackToNonStreamQuery(
@@ -347,7 +382,8 @@ class APIClient {
   ): Promise<AbortController> {
     // 使用 V2 专用客户端，确保请求发送到正确的 URL
     const v2Client = APIClient.getV2Client()
-    if (APIClient.supportsV2Stream === false) {
+    const supportsV2Stream = await APIClient.probeV2StreamSupport()
+    if (!supportsV2Stream) {
       return v2Client.fallbackToNonStreamQuery(request, callbacks, abortSignal)
     }
     return v2Client.streamQuery('/query/stream', request, callbacks, abortSignal)
