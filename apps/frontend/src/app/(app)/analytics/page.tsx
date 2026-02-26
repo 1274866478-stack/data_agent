@@ -81,6 +81,7 @@ import { useDashboardStore } from '@/store/dashboardStore'
 import { useDataSourceStore } from '@/store/dataSourceStore'
 import { useDocuments } from '@/hooks/useDocuments'
 import { useEffect, useMemo, useState } from 'react'
+import { useShallow } from 'zustand/shallow'
 
 /**
  * 数据分析页面
@@ -88,8 +89,14 @@ import { useEffect, useMemo, useState } from 'react'
  * Tiffany 玻璃态风格的数据分析控制台
  */
 export default function AnalyticsPage() {
-  const { overview, fetchOverview } = useDashboardStore()
-  const { dataSources, fetchDataSources } = useDataSourceStore()
+  const { overview, fetchOverview } = useDashboardStore(useShallow((state) => ({
+    overview: state.overview,
+    fetchOverview: state.fetchOverview,
+  })))
+  const { dataSources, fetchDataSources } = useDataSourceStore(useShallow((state) => ({
+    dataSources: state.dataSources,
+    fetchDataSources: state.fetchDataSources,
+  })))
   const { documents, fetchDocuments } = useDocuments()
   const tenantId = useTenantId()
 

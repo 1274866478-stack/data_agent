@@ -1,7 +1,8 @@
 import { useDocumentStore } from '@/store/documentStore'
+import { useShallow } from 'zustand/shallow'
 
 export const useDocuments = () => {
-  return useDocumentStore((state) => ({
+  return useDocumentStore(useShallow((state) => ({
     documents: state.documents,
     stats: state.stats,
     isLoading: state.isLoading,
@@ -31,5 +32,5 @@ export const useDocuments = () => {
     setPage: state.setPage,
     clearError: state.clearError,
     refreshDocuments: state.refreshDocuments,
-  }))
+  })))
 }
