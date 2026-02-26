@@ -1,7 +1,8 @@
 import { useChatStore } from '@/store/chatStore'
+import { useShallow } from 'zustand/shallow'
 
 export const useChat = () => {
-  return useChatStore((state) => ({
+  return useChatStore(useShallow((state) => ({
     sessions: state.sessions,
     currentSession: state.currentSession,
     isLoading: state.isLoading,
@@ -10,5 +11,5 @@ export const useChat = () => {
     sendMessage: state.sendMessage,
     createSession: state.createSession,
     switchSession: state.switchSession,
-  }))
+  })))
 }

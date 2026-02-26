@@ -26,6 +26,7 @@ import { useDataSourceStore } from '@/store/dataSourceStore'
 import { removeChartMarkers } from '@/utils/chartParser'
 import { AlertCircle, AlertTriangle, Bot, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, Database, FileText, History, Loader2, MessageSquare, Paperclip, Plus, Search, Send, Sparkles, Square, Trash2, User, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/shallow'
 
 interface UploadedFile {
   file: File
@@ -68,7 +69,11 @@ export default function AIAssistantPage() {
     dataSources,
     isLoading: isLoadingDataSources,
     fetchDataSources
-  } = useDataSourceStore()
+  } = useDataSourceStore(useShallow((state) => ({
+    dataSources: state.dataSources,
+    isLoading: state.isLoading,
+    fetchDataSources: state.fetchDataSources,
+  })))
 
   // 加载数据源列表
   useEffect(() => {

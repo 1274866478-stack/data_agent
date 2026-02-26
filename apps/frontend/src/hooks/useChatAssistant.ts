@@ -1,7 +1,8 @@
 import { useChatStore } from '@/store/chatStore'
+import { useShallow } from 'zustand/shallow'
 
 export const useChatAssistant = () => {
-  return useChatStore((state) => ({
+  return useChatStore(useShallow((state) => ({
     sendMessage: state.sendMessage,
     currentSession: state.currentSession,
     createSession: state.createSession,
@@ -16,5 +17,5 @@ export const useChatAssistant = () => {
     streamingStatus: state.streamingStatus,
     outputFormat: state.outputFormat,
     setOutputFormat: state.setOutputFormat,
-  }))
+  })))
 }

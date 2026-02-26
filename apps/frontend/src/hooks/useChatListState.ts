@@ -1,7 +1,8 @@
 import { useChatStore } from '@/store/chatStore'
+import { useShallow } from 'zustand/shallow'
 
 export const useChatListState = () => {
-  return useChatStore((state) => ({
+  return useChatStore(useShallow((state) => ({
     streamingStatus: state.streamingStatus,
     streamingMessageId: state.streamingMessageId,
     selectedCharts: state.selectedCharts,
@@ -10,5 +11,5 @@ export const useChatListState = () => {
     clearChartSelection: state.clearChartSelection,
     mergeCharts: state.mergeCharts,
     stopStreaming: state.stopStreaming,
-  }))
+  })))
 }
