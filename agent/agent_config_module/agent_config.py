@@ -15,9 +15,12 @@ Agent Configuration - Agent 配置系统
 版本: 2.0.0
 """
 
+import logging
 import os
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -27,25 +30,27 @@ from dataclasses import dataclass, field
 @dataclass
 class LLMConfig:
     """LLM 模型配置"""
-    model: str = "glm-4-flash"  # 🔧 改用智谱 GLM API（无内容审查问题）
+    model: str = "deepseek-chat"
     temperature: float = 0.1
     max_tokens: int = 2000
     api_key: Optional[str] = None
     base_url: Optional[str] = None
 
     def __post_init__(self):
-        """初始化后处理"""
-        # 优先使用智谱 API（无内容审查问题）
+        """Post-init hook."""
+        self.refresh_provider_settings()
+
+    def refresh_provider_settings(self, *, force: bool = False):
+        """Refresh provider credentials based on current model."""
         if "glm" in self.model.lower() or "zhipuai" in self.model.lower():
-            if self.api_key is None:
+            if force or self.api_key is None:
                 self.api_key = os.environ.get("ZHIPUAI_API_KEY", "")
-            if self.base_url is None:
+            if force or self.base_url is None:
                 self.base_url = os.environ.get("ZHIPUAI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
         else:
-            # DeepSeek 或其他 OpenAI 兼容 API
-            if self.api_key is None:
+            if force or self.api_key is None:
                 self.api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-            if self.base_url is None:
+            if force or self.base_url is None:
                 self.base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
 
@@ -129,9 +134,17 @@ def load_config_from_env() -> AgentConfig:
     """
     config = AgentConfig()
 
-    # LLM 配置
-    if model := os.environ.get("LLM_MODEL"):
-        config.llm.model = model
+    # LLM 配置：Agent V2 仅使用 LLM_MODEL 作为模型入口
+    env_model = os.environ.get("LLM_MODEL")
+    if env_model and env_model.strip():
+        config.llm.model = env_model.strip()
+        # Model was overridden after dataclass init; refresh provider settings.
+        config.llm.refresh_provider_settings(force=True)
+    else:
+        logger.warning(
+            "LLM_MODEL is not set; using default model '%s'. Set LLM_MODEL explicitly to avoid provider drift.",
+            config.llm.model,
+        )
     if temp := os.environ.get("LLM_TEMPERATURE"):
         config.llm.temperature = float(temp)
 
@@ -146,6 +159,14 @@ def load_config_from_env() -> AgentConfig:
     # 调试配置
     if debug := os.environ.get("DEBUG_MODE"):
         config.debug_mode = debug.lower() in ("true", "1", "yes")
+
+    provider_name = "zhipuai" if ("glm" in config.llm.model.lower() or "zhipuai" in config.llm.model.lower()) else "deepseek"
+    logger.info(
+        "Resolved LLM config: model=%s provider=%s base_url=%s",
+        config.llm.model,
+        provider_name,
+        config.llm.base_url or "",
+    )
 
     return config
 
