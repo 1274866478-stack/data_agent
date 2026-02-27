@@ -623,7 +623,7 @@ class ConfigValidator:
         logger.info("开始全面配置验证")
 
         # 首先进行安全配置验证（同步方法）
-        security_result = self.validate_security_configuration()
+        security_result = await self.validate_security_configuration()
 
         validation_tasks = [
             self.validate_required_env_vars(),
@@ -736,7 +736,7 @@ async def validate_all() -> Dict[str, Any]:
 
 async def validate_security() -> ValidationResult:
     """验证安全配置的便捷函数"""
-    return config_validator.validate_security_configuration()
+    return await config_validator.validate_security_configuration()
 
 
 def validate_defaults() -> ValidationResult:

@@ -22,6 +22,10 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+def _excel_engine_for_path(file_path: Path) -> str:
+    return "xlrd" if str(file_path).lower().endswith(".xls") else "openpyxl"
+
+
 class ExcelToSQLiteService:
     """
     Excel 到 SQLite 转换服务
@@ -151,7 +155,7 @@ class ExcelToSQLiteService:
 
         try:
             # 读取 Excel 文件
-            excel_file = pd.ExcelFile(excel_path, engine='openpyxl')
+            excel_file = pd.ExcelFile(excel_path, engine=_excel_engine_for_path(excel_path))
             sheet_names = excel_file.sheet_names
 
             logger.info(f"Found {len(sheet_names)} sheets: {sheet_names}")
@@ -167,7 +171,7 @@ class ExcelToSQLiteService:
                 logger.info(f"Converting sheet: {sheet_name}")
 
                 # 读取工作表数据
-                df = pd.read_excel(excel_file, sheet_name=sheet_name, engine='openpyxl')
+                df = pd.read_excel(excel_file, sheet_name=sheet_name)
 
                 # 清理列名（移除特殊字符，转小写）
                 df.columns = self._sanitize_column_names(df.columns)

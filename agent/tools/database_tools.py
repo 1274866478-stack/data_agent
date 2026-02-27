@@ -657,10 +657,10 @@ def _import_data_source_connection_model():
 
 def _import_data_source_service():
     """导入后端 data_source_service（按需）。"""
-    service_module = import_backend_module("app.services.data_source_service")
+    service_module = import_backend_module("app.domains.data_sources.service")
     service = getattr(service_module, "data_source_service", None)
     if service is None:
-        raise ImportError("data_source_service not found in app.services.data_source_service")
+        raise ImportError("data_source_service not found in app.domains.data_sources.service")
     return service
 
 # ============================================================================
@@ -846,6 +846,21 @@ def create_db_connection(database_url: str):
 def _get_excel_file_path(database_url: str) -> str:
     """从 Excel 连接 URL 中提取文件路径"""
     return database_url[8:]  # 去掉 "excel://" 前缀
+def _get_excel_engine(file_path: str) -> str:
+    """Choose pandas engine by Excel extension."""
+    return "xlrd" if str(file_path).lower().endswith(".xls") else "openpyxl"
+
+
+def _open_excel_file(file_path: str):
+    """Open Excel file with extension-aware engine."""
+    import pandas as pd
+    return pd.ExcelFile(file_path, engine=_get_excel_engine(file_path))
+
+
+def _read_excel_file(file_path: str, **kwargs):
+    """Read Excel with extension-aware engine."""
+    import pandas as pd
+    return pd.read_excel(file_path, engine=_get_excel_engine(file_path), **kwargs)
 
 
 # ============================================================================
@@ -1130,13 +1145,13 @@ def _find_sheets_with_column(file_path: str, column_name: str) -> list[str]:
     import pandas as pd
 
     try:
-        excel_file = pd.ExcelFile(file_path, engine='openpyxl')
+        excel_file = _open_excel_file(file_path)
         column_lower = column_name.lower()
 
         matching_sheets = []
         for sheet in excel_file.sheet_names:
             try:
-                df_sample = pd.read_excel(file_path, sheet_name=sheet, nrows=0, engine='openpyxl')
+                df_sample = _read_excel_file(file_path, sheet_name=sheet, nrows=0)
                 columns_lower = [col.lower() for col in df_sample.columns]
                 if column_lower in columns_lower:
                     matching_sheets.append(sheet)
@@ -1173,10 +1188,10 @@ def execute_excel_query(
 
         # 读取 Excel 文件
         if sheet_name:
-            df = pd.read_excel(file_path, sheet_name=sheet_name, engine='openpyxl')
+            df = _read_excel_file(file_path, sheet_name=sheet_name)
         else:
             # 读取第一个工作表
-            df = pd.read_excel(file_path, engine='openpyxl')
+            df = _read_excel_file(file_path)
             sheet_name = "Sheet1"
 
         logger.debug(f"Excel 文件已读取: shape={df.shape}, columns={list(df.columns)}")
@@ -2126,7 +2141,7 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
                 available_sheets = []
                 try:
                     import pandas as pd
-                    excel_file = pd.ExcelFile(file_path, engine='openpyxl')
+                    excel_file = _open_excel_file(file_path)
                     available_sheets = excel_file.sheet_names
                 except Exception:
                     pass
@@ -2157,7 +2172,7 @@ def execute_query(query: str, connection_id: Optional[str] = None) -> str:
         valid_sheets = []
         try:
             import pandas as pd
-            excel_file = pd.ExcelFile(file_path, engine='openpyxl')
+            excel_file = _open_excel_file(file_path)
             valid_sheets = excel_file.sheet_names
             logger.debug(f"Excel 文件包含工作表: {valid_sheets}")
         except Exception as e:
@@ -2923,7 +2938,7 @@ def _try_split_join_query(query: str, file_path: str) -> Optional[str]:
         logger.debug(f"[JOIN拆分] 尝试拆分 JOIN 查询: {query[:100]}...")
 
         # 加载 Excel 文件获取所有工作表
-        excel_file = pd.ExcelFile(file_path, engine='openpyxl')
+        excel_file = _open_excel_file(file_path)
         available_sheets = excel_file.sheet_names
         logger.debug(f"[JOIN拆分] Excel 工作表: {available_sheets}")
 
@@ -2961,7 +2976,7 @@ def _try_split_join_query(query: str, file_path: str) -> Optional[str]:
         sheet_columns_map = {}  # 记录每个工作表的列
 
         for sheet in available_sheets:
-            df = pd.read_excel(file_path, sheet_name=sheet, nrows=0, engine='openpyxl')
+            df = _read_excel_file(file_path, sheet_name=sheet, nrows=0)
             columns_lower = [col.lower() for col in df.columns]
             sheet_columns_map[sheet] = list(df.columns)
 
@@ -2988,7 +3003,7 @@ def _try_split_join_query(query: str, file_path: str) -> Optional[str]:
         logger.debug(f"[JOIN拆分] 构建新查询: {new_query}")
 
         # 执行新查询
-        df = pd.read_excel(file_path, sheet_name=target_sheet, engine='openpyxl')
+        df = _read_excel_file(file_path, sheet_name=target_sheet)
 
         # 使用现有的 SQL 解析逻辑
         result_df = _parse_sql_to_pandas(new_query, df)
@@ -3143,7 +3158,7 @@ def list_tables(connection_id: Optional[str] = None) -> str:
             file_path = _get_excel_file_path(database_url)
             import pandas as pd
 
-            excel_file = pd.ExcelFile(file_path, engine='openpyxl')
+            excel_file = _open_excel_file(file_path)
             sheets = excel_file.sheet_names
 
             # 🔧 新增：为 Excel 工作表也添加描述（如果配置中存在）
@@ -3376,7 +3391,7 @@ def get_schema(table_name: str, connection_id: Optional[str] = None) -> str:
             import pandas as pd
 
             # 读取 Excel 工作表
-            df = pd.read_excel(file_path, sheet_name=table_name, engine='openpyxl', nrows=0)
+            df = _read_excel_file(file_path, sheet_name=table_name, nrows=0)
 
             # 获取列信息
             columns = []

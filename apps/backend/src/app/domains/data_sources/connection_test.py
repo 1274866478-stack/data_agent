@@ -718,7 +718,8 @@ class ConnectionTestService:
                         message="pandas未安装，无法验证Excel文件",
                         error_code="PANDAS_NOT_AVAILABLE"
                     )
-                pd.ExcelFile(file_path, engine='openpyxl')
+                engine = 'xlrd' if file_path.lower().endswith('.xls') else 'openpyxl'
+                pd.ExcelFile(file_path, engine=engine)
             elif db_type == 'csv':
                 if not PANDAS_AVAILABLE:
                     return ConnectionTestResult(

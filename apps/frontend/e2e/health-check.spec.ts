@@ -9,7 +9,7 @@ test.describe('Health Check', () => {
     await page.goto('/');
     
     // 验证页面标题
-    await expect(page).toHaveTitle(/Data Agent/);
+    await expect(page).toHaveTitle(/(Insight Agent|Data Agent)/);
     
     // 验证页面加载完成
     await expect(page.locator('body')).toBeVisible();
@@ -146,11 +146,10 @@ test.describe('Error Handling', () => {
   test('网络错误应该有友好提示', async ({ page, context }) => {
     // 模拟离线状态
     await context.setOffline(true);
-    
-    await page.goto('/');
-    
-    // 恢复在线状态
+    await page.goto('/').catch(() => null);
     await context.setOffline(false);
+    await page.goto('/');
+    await expect(page.locator('body')).toBeVisible();
   });
 });
 

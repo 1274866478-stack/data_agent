@@ -149,12 +149,16 @@ async def process_excel_file(file_path: str, table_name: str) -> pd.DataFrame:
         raise HTTPException(status_code=400, detail=error_msg)
     
     try:
-        # 2. 尝试读取 (显式指定 engine='openpyxl')
-        df = pd.read_excel(file_path, sheet_name=0, engine='openpyxl')
+        # 2. 尝试读取（.xls 使用 xlrd，.xlsx 使用 openpyxl）
+        engine = 'xlrd' if file_path.lower().endswith('.xls') else 'openpyxl'
+        df = pd.read_excel(file_path, sheet_name=0, engine=engine)
         logger.info(f"成功读取Excel文件，行数: {len(df)}")
         return df
     except ImportError as e:
-        error_msg = f"System Error: Missing dependency 'openpyxl'. Please install it: pip install openpyxl. Original error: {str(e)}"
+        error_msg = (
+            f"System Error: Missing dependency for Excel engine '{engine}'. "
+            f"Please install required packages (openpyxl/xlrd). Original error: {str(e)}"
+        )
         logger.error(error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
     except Exception as e:

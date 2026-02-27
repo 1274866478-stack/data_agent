@@ -617,6 +617,11 @@ class DataSourceService:
         self._download_file_to_local(storage_path, local_path)
         return local_path
 
+    @staticmethod
+    def _excel_engine_for_file(file_path: str) -> str:
+        extension = os.path.splitext(file_path)[1].lower()
+        return "xlrd" if extension == ".xls" else "openpyxl"
+
     async def _get_excel_connection_info(
         self,
         connection: DataSourceConnection
@@ -641,8 +646,8 @@ class DataSourceService:
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"Excel file not found: {file_path}")
 
-            # 读取 Excel 工作表列表
-            excel_file = pd.ExcelFile(file_path, engine='openpyxl')
+            # 读取 Excel 工作表列表（.xls 使用 xlrd，.xlsx 使用 openpyxl）
+            excel_file = pd.ExcelFile(file_path, engine=self._excel_engine_for_file(file_path))
             sheet_names = excel_file.sheet_names
 
             logger.info(f"Excel file loaded: {file_path}, sheets: {sheet_names}")

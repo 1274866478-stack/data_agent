@@ -84,9 +84,53 @@ class KeyRotationManager:
     """密钥轮换管理器"""
 
     def __init__(self, data_file: str = None):
-        self.data_file = Path(data_file or "data/key_rotation.json")
+        configured_path = data_file or os.getenv("KEY_ROTATION_DATA_FILE") or "data/key_rotation.json"
+        self.data_file = self._resolve_writable_data_file(configured_path)
         self.keys_info: Dict[str, KeyInfo] = {}
         self._load_keys_info()
+
+    @staticmethod
+    def _normalize_path(path_value: str) -> Path:
+        path = Path(path_value)
+        if not path.is_absolute():
+            path = (Path.cwd() / path).resolve()
+        return path
+
+    @staticmethod
+    def _is_parent_writable(parent: Path) -> bool:
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+            probe = parent / ".key_rotation_write_probe"
+            with open(probe, "w", encoding="utf-8") as f:
+                f.write("ok")
+            probe.unlink(missing_ok=True)
+            return True
+        except Exception:
+            return False
+
+    def _resolve_writable_data_file(self, configured_path: str) -> Path:
+        candidate = self._normalize_path(configured_path)
+        if self._is_parent_writable(candidate.parent):
+            return candidate
+
+        fallback_candidates = [
+            Path("/app/temp/key_rotation.json"),
+            Path("/tmp/dataagent/key_rotation.json"),
+        ]
+        for fallback in fallback_candidates:
+            if self._is_parent_writable(fallback.parent):
+                logger.warning(
+                    "key_rotation path %s is not writable, falling back to %s",
+                    candidate,
+                    fallback,
+                )
+                return fallback
+
+        logger.warning(
+            "No writable fallback found for key_rotation path %s, write attempts may fail",
+            candidate,
+        )
+        return candidate
 
     def _load_keys_info(self) -> None:
         """加载密钥信息"""
