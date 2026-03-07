@@ -1,0 +1,150 @@
+# 腾讯云 CVM 生产环境部署配置
+# 使用方式: docker-compose -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  # Backend FastAPI Application
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: dataagent-backend
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/dataagent
+      - MINIO_ENDPOINT=storage:9000
+      - MINIO_SECURE=false
+      - CHROMA_HOST=vector_db
+      - CHROMA_PORT=8000
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - PYTHONPATH=/app:/
+      - ENVIRONMENT=production
+      - DEBUG=false
+    volumes:
+      - ./backend:/app
+      - ./Agent:/Agent
+      - ./AgentV2:/AgentV2
+      - /data/uploads:/app/uploads
+      - ./scripts:/app/data
+    # 不暴露端口，仅内网访问
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      storage:
+        condition: service_started
+      qdrant:
+        condition: service_healthy
+    networks:
+      - dataagent-network
+
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: dataagent-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dataagent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - /data/postgres:/var/lib/postgresql/data
+      - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    # 不暴露到公网
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dataagent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dataagent-network
+
+  # MinIO Storage Service
+  storage:
+    image: minio/minio:latest
+    container_name: dataagent-minio
+    restart: unless-stopped
+    command: server /data --console-address ':9001'
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    volumes:
+      - /data/minio:/data
+    # MinIO 控制台可通过 Nginx 代理访问
+    expose:
+      - "9000"
+      - "9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - dataagent-network
+
+  # Qdrant 向量数据库
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: dataagent-qdrant
+    restart: unless-stopped
+    volumes:
+      - /data/qdrant:/qdrant/storage
+    expose:
+      - "6333"
+      - "6334"
+    networks:
+      - dataagent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Cube.js 语义层
+  cube:
+    image: cubejs/cube:latest
+    container_name: dataagent-cube
+    restart: unless-stopped
+    environment:
+      - CUBEJS_DB_TYPE=postgres
+      - CUBEJS_DB_HOST=db
+      - CUBEJS_DB_PORT=5432
+      - CUBEJS_DB_NAME=dataagent
+      - CUBEJS_DB_USER=postgres
+      - CUBEJS_DB_PASS=${POSTGRES_PASSWORD}
+      - CUBEJS_API_SECRET=${CUBEJS_API_SECRET}
+      - CUBEJS_DEV_MODE=false
+    volumes:
+      - ./cube_schema:/cube/schema
+    expose:
+      - "4000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - dataagent-network
+
+  # MCP ECharts Server
+  mcp_echarts:
+    build:
+      context: ./Agent
+      dockerfile: Dockerfile.mcp
+    container_name: dataagent-mcp-echarts
+    restart: unless-stopped
+    expose:
+      - "3033"
+    networks:
+      - dataagent-network
+
+networks:
+  dataagent-network:
+    driver: bridge

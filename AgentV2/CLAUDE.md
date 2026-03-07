@@ -1,289 +1,165 @@
-# Agent 模块 - LangGraph SQL 智能代理
+# AgentV2 - SOTA Multi-Agent SQL Intelligence System
 
-**模块**: 独立SQL智能代理与图表可视化服务
-**版本**: V1.0
-**技术栈**: LangGraph + DeepSeek + MCP + PyEcharts
-**最后更新**: 2025-12-05 11:43:00
+**模块**: 高级多代理SQL智能系统
+**版本**: V2.0
+**技术栈**: LangGraph + DeepSeek + Qdrant + Cube.js + MCP
+**最后更新**: 2026-03-07
 
 ---
 
 ## 模块概述
 
-Agent 模块是基于 LangGraph 和 MCP (Model Context Protocol) 的 SQL 智能查询代理，提供自然语言数据库查询和自动图表可视化功能。
+AgentV2 是基于 **Swarm Architecture** 的高级多代理系统，通过中间件管道实现智能 SQL 查询、语义层集成和企业级知识管理。
 
 ---
 
-## 核心功能
+## 核心架构
 
-### 🤖 智能SQL查询
-- **自然语言理解**: 使用 DeepSeek LLM 解析用户查询意图
-- **Schema 自动发现**: 自动获取数据库表结构和字段信息
-- **安全查询执行**: 仅执行 SELECT 查询，确保数据安全
-- **错误处理**: 智能SQL错误修复和重试机制
-
-### 📊 图表可视化
-- **自动图表选择**: 根据数据类型智能选择合适的图表类型
-- **多种图表支持**: 柱状图、折线图、饼图、散点图、雷达图、漏斗图
-- **ECharts集成**: 生成高质量的交互式HTML图表
-- **本地图表生成**: 支持本地文件系统图表保存
-
-### 🔄 LangGraph工作流
-- **状态管理**: 基于MessagesState的多轮对话状态
-- **工具编排**: 智能工具调用和流程控制
-- **记忆功能**: 内置MemorySaver支持对话历史
-
----
-
-## 文件结构
-
-```
-Agent/
-├── sql_agent.py              # 🎯 主程序入口 - LangGraph Agent实现
-├── config.py                 # ⚙️ 配置管理 - API密钥和数据库连接
-├── models.py                 # 📋 数据模型 - Pydantic模型定义
-├── chart_service.py          # 📊 图表服务 - ECharts生成接口
-├── data_transformer.py       # 🔄 数据转换 - SQL结果到图表数据
-├── terminal_viz.py           # 🖥️ 终端可视化 - Rich库终端输出
-├── run_query.py              # 🏃 查询执行器 - 独立查询脚本
-├── setup_test_db.py          # 🧪 测试数据库设置
-├── requirements.txt          # 📦 Python依赖管理
-├── .env.example              # 🔧 环境变量模板
-├── run.py                    # 🚀 快速启动脚本
-├── run.sh / run.bat          # 🖥️ 平台启动脚本
-├── start-echarts-mcp.bat     # 📈 ECharts MCP服务启动
-├── charts/                   # 📁 图表输出目录
-│   ├── *.html               # 生成的HTML图表文件
-│   └── output.png           # 示例图表输出
-└── README.md                # 📖 模块说明文档
-```
-
----
-
-## 技术架构
-
-### 依赖栈
-| 技术类别 | 具体技术 | 版本要求 | 用途描述 |
-|---------|----------|----------|----------|
-| **AI框架** | LangGraph | >=0.2.0 | 智能体工作流编排 |
-| **LLM** | DeepSeek API | OpenAI兼容 | 自然语言理解 |
-| **MCP协议** | langchain-mcp-adapters | >=0.1.0 | 数据库连接协议 |
-| **数据库** | PostgreSQL | >=12 | 主数据存储 |
-| **可视化** | PyEcharts | >=2.0.0 | 图表生成引擎 |
-| **终端** | Rich | >=13.0.0 | 美化终端输出 |
-
-### MCP工具集成
+### Swarm Graph (`graphs/swarm_graph.py`)
 ```python
-# PostgreSQL MCP服务器
-postgres_tools = [
-    "list_tables",      # 列出数据库表
-    "get_schema",       # 获取表结构
-    "query"            # 执行SQL查询
-]
+# 多代理编排系统
+- 动态代理选择基于查询复杂度
+- 跨代理交互的状态管理
+- 支持代理并行和串行执行
+```
 
-# ECharts MCP服务器
-chart_tools = [
-    "generate_bar_chart",      # 柱状图
-    "generate_line_chart",     # 折线图
-    "generate_pie_chart",      # 饼图
-    "generate_scatter_chart",  # 散点图
-    "generate_radar_chart",    # 雷达图
-    "generate_funnel_chart",   # 漏斗图
-    "generate_echarts"         # 通用图表
-]
+### 中间件管道 (`middleware/`)
+
+| 中间件 | 功能 |
+|--------|------|
+| `loop_detection.py` | 检测并打破无限循环 |
+| `time_aggregation.py` | 智能时态 SQL 生成（自动处理日期截断、周月聚合） |
+| `tenant_isolation.py` | 强制多租户数据隔离 |
+| `sql_security.py` | SQL 注入防护 |
+| `error_tracker.py` | 错误分类与恢复 |
+| `chart_guidance.py` | 图表类型推荐 |
+| `knowledge_middleware.py` | 知识库集成 |
+| `semantic_priority.py` | 语义层优先级 |
+| `xai_logger.py` | 可解释性日志 |
+| `table_cache_middleware.py` | 表结构缓存 |
+
+### 子代理系统 (`subagents/`)
+
+```python
+# 专门化的子代理
+planner_agent.py     # 查询规划和任务分解
+generator_agent.py   # SQL 生成
+critic_agent.py      # 结果验证和质量评估
+repair_agent.py      # 错误修复
+router_agent.py      # 路由和代理选择
+```
+
+### 节点系统 (`nodes/`)
+
+```python
+planning_node.py         # 查询理解与规划
+clarification_node.py    # 用户澄清请求
+analysis_node.py         # 数据分析执行
+reflection_node.py       # 结果反思与改进
+learning_node.py         # 从错误中学习
 ```
 
 ---
 
-## 使用方式
+## SOTA 功能
 
-### 1. 独立运行Agent
+### 🧠 知识增强
+- **Qdrant 向量存储**: 业务术语和表关系的语义检索
+- **业务词汇表** (`context/business_glossary.py`): 领域知识管理
+- **实体链接** (`entity_linking.py`): 智能实体识别和关联
+
+### 📊 语义层集成
+- **Cube.js 集成**: 预聚合指标和语义查询
+- **语义层工具** (`tools/semantic_layer_tools.py`): Cube.js API 封装
+- **Join 推理** (`cube_joins.py`): 自动表关联推断
+
+### 🔧 工具系统 (`tools/`)
+
+```python
+database_tools.py         # 数据库查询工具
+chart_tools.py            # 图表生成工具
+mcp_tools.py              # MCP 协议集成
+semantic_layer_tools.py   # Cube.js 语义层
+schema_metadata.py        # Schema 元数据管理
+general_tools.py          # 通用工具集
+python_sandbox_tools.py   # Python 沙箱执行
+```
+
+---
+
+## 测试
+
 ```bash
-# 进入Agent目录
-cd Agent
+# 单元测试
+pytest AgentV2/tests/unit/ -v
 
-# 安装依赖
-pip install -r requirements.txt
+# E2E 测试
+pytest AgentV2/tests/e2e_complete_test.py -v
 
-# 配置环境变量
-cp .env.example .env
-# 编辑 .env 设置 DEEPSEEK_API_KEY 和 DATABASE_URL
+# 性能基准测试
+pytest AgentV2/tests/performance_benchmark.py -v
 
-# 启动Agent
-python sql_agent.py
-```
+# 特定测试
+pytest AgentV2/tests/test_time_aggregation_sql.py -v
+pytest AgentV2/tests/unit/test_tenant_isolation.py -v
 
-### 2. 集成到主项目
-```python
-# 在FastAPI中使用Agent
-from Agent.sql_agent import run_agent
-
-@app.post("/api/v1/natural-query")
-async def natural_language_query(
-    question: str,
-    tenant_id: str,
-    user_id: str
-):
-    result = await run_agent(question)
-    return {
-        "tenant_id": tenant_id,
-        "user_id": user_id,
-        "result": result
-    }
-```
-
-### 3. 使用示例对话
-```
-📝 请输入你的问题: 数据库里有哪些表？
-
-🔧 调用工具: ['list_tables']
-💬 回答: 数据库中包含以下表：users, orders, products...
-
-📝 请输入你的问题: 画出每个月的订单数量趋势图
-
-🔧 调用工具: ['get_schema', 'query', 'generate_line_chart']
-💬 回答: 已生成订单数量趋势图，保存至 charts/chart_line_*.html
+# SQL 清理测试
+pytest AgentV2/tests/unit/test_sql_cleaning.py -v
 ```
 
 ---
 
-## 配置说明
+## 配置
 
 ### 环境变量
 ```env
-# DeepSeek API配置
-DEEPSEEK_API_KEY=your_api_key_here
-DEEPSEEK_BASE_URL=https://api.deepseek.com
+# SOTA 功能开关
+USE_SOTA_AGENT=true
+ENABLE_SEMANTIC_LAYER=true
+ENABLE_FEW_SHOT_RAG=true
+ENABLE_SELF_HEALING=true
 
-# 数据库连接
-DATABASE_URL=postgresql://user:password@localhost:5432/your_database
+# Qdrant 配置
+QDRANT_HOST=qdrant
+QDRANT_PORT=6333
 
-# 图表输出配置
-CHART_OUTPUT_DIR=./charts
+# Cube.js 配置
+CUBE_API_URL=http://cube:4000
+CUBEJS_API_SECRET=your_secret
 ```
 
-### Agent配置
+---
+
+## 与 Agent/ 的区别
+
+| 特性 | Agent/ | AgentV2/ |
+|------|--------|----------|
+| 架构 | 单一 Agent | Swarm 多代理 |
+| 中间件 | 无 | 14 个中间件组件 |
+| 知识库 | 无 | Qdrant + 业务词汇表 |
+| 语义层 | 无 | Cube.js 集成 |
+| 错误恢复 | 基础 | 自愈 + 学习 |
+| 时间聚合 | 手动 | 智能自动 |
+| 租户隔离 | 手动 | 强制中间件 |
+
+---
+
+## 使用示例
+
 ```python
-# config.py 主要配置项
-class Config:
-    # LLM配置
-    model="deepseek-chat",
-    temperature=0.1,
-    max_tokens=2000
+# 在后端使用 AgentV2
+from AgentV2.sql_agent import SQLAgent as SQLAgentV2
 
-    # MCP服务器配置
-    mcp_servers = {
-        "postgres": {
-            "command": "npx",
-            "args": ["@modelcontextprotocol/server-postgres", DATABASE_URL],
-        },
-        "echarts": {
-            "command": "npx",
-            "args": ["@modelcontextprotocol/server-echarts"]
-        }
-    }
+agent = SQLAgentV2(
+    tenant_id="tenant_123",
+    use_sota_features=True
+)
+
+result = await agent.query("显示最近三个月的销售趋势")
+# 自动应用 time_aggregation 中间件处理时态
+# 自动使用 semantic_layer 获取预聚合数据
 ```
 
 ---
 
-## 开发指南
-
-### 添加新的图表类型
-1. 在 `chart_service.py` 中添加新的图表生成函数
-2. 更新 `data_transformer.py` 中的数据转换逻辑
-3. 在Agent的system prompt中添加新工具说明
-
-### 扩展数据库支持
-1. 安装对应数据库的MCP服务器
-2. 更新 `config.py` 中的mcp_servers配置
-3. 修改SQL生成模板以适配新数据库方言
-
-### 自定义Agent行为
-```python
-# 修改system prompt自定义Agent行为
-SYSTEM_PROMPT = """
-你是一个专业的数据分析助手...
-新增功能描述...
-"""
-```
-
----
-
-## 测试与调试
-
-### 单元测试
-```bash
-# 运行测试（需添加pytest配置）
-pytest tests/ -v
-```
-
-### 调试模式
-```python
-# 启用详细日志
-import logging
-logging.basicConfig(level=logging.DEBUG)
-
-# 查看LangGraph执行流程
-agent.get_graph().print_ascii()
-```
-
-### 常见问题排查
-1. **MCP服务器连接失败**: 检查Node.js和npx安装
-2. **数据库连接错误**: 验证DATABASE_URL格式和权限
-3. **DeepSeek API错误**: 确认API Key有效性和网络连接
-4. **图表生成失败**: 检查数据格式和ECharts MCP服务状态
-
----
-
-## 性能优化
-
-### 查询优化
-- 添加查询超时控制
-- 实现结果缓存机制
-- 限制查询返回行数
-
-### 图表优化
-- 控制数据点数量避免性能问题
-- 使用数据采样处理大数据集
-- 图表懒加载和按需生成
-
----
-
-## 安全考虑
-
-### 数据安全
-- ✅ 只读模式，仅允许SELECT查询
-- ✅ 查询结果大小限制
-- ✅ 敏感字段自动脱敏（可扩展）
-
-### API安全
-- 🔐 API密钥环境变量管理
-- 🚫 避免SQL注入（参数化查询）
-- 📝 查询日志记录和审计
-
----
-
-## 与主项目集成点
-
-### 1. API集成
-- 在 `backend/src/app/api/v1/endpoints/` 中添加新的查询端点
-- 复用现有的租户隔离和认证机制
-
-### 2. 前端集成
-- 在 `frontend/src/components/` 中添加自然语言查询组件
-- 集成图表展示组件，支持ECharts渲染
-
-### 3. 数据源集成
-- 连接到现有的数据源管理系统
-- 支持多租户数据库连接配置
-
----
-
-## 版本历史
-
-| 版本 | 日期 | 变更内容 |
-|------|------|----------|
-| V1.0 | 2025-12-05 | 🎉 初始版本发布，支持基础SQL查询和图表生成 |
-
----
-
-**👋 开发者提示：这个模块设计为独立可插拔的组件，可以单独开发测试，也可以无缝集成到主Data Agent平台中。**
+**🚀 SOTA 提示**: AgentV2 是生产就绪的企业级系统，优先使用它而不是 Agent/ 用于新功能开发。
