@@ -1,9 +1,38 @@
 # 腾讯云 CVM 生产环境部署配置
 # 使用方式: docker-compose -f docker-compose.prod.yml up -d
+#
+# 端口映射说明 (避免与现有服务冲突):
+# - frontend: 容器 3000 -> 宿主机 3001 (避开现有 3000)
+# - backend:  容器 8000 -> 宿主机 8004 (避开现有 8000, 8001)
 
 version: '3.8'
 
 services:
+  # Frontend Next.js Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+    container_name: dataagent-frontend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=https://your-domain.com/api/v1
+      - NEXT_PUBLIC_MINIO_ENDPOINT=https://your-domain.com/minio
+      - NEXT_PUBLIC_MINIO_BUCKET=dataagent-files
+      - PORT=3000
+    ports:
+      - "3001:3000"  # 映射到宿主机 3001，避开现有 3000
+    networks:
+      - dataagent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   # Backend FastAPI Application
   backend:
     build:
@@ -31,9 +60,8 @@ services:
       - ./AgentV2:/AgentV2
       - /opt/bichat_data/uploads:/app/uploads
       - ./scripts:/app/data
-    # 不暴露端口，仅内网访问
-    expose:
-      - "8000"
+    ports:
+      - "8004:8000"  # 映射到宿主机 8004，避开现有 8000, 8001
     depends_on:
       db:
         condition: service_healthy
@@ -56,7 +84,7 @@ services:
     volumes:
       - /opt/bichat_data/postgres:/var/lib/postgresql/data
       - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
-    # 不暴露到公网
+    # 不暴露到公网，仅容器内部访问
     expose:
       - "5432"
     healthcheck:
@@ -78,7 +106,6 @@ services:
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     volumes:
       - /opt/bichat_data/minio:/data
-    # MinIO 控制台可通过 Nginx 代理访问
     expose:
       - "9000"
       - "9001"
