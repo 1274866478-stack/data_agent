@@ -29,7 +29,7 @@ services:
       - ./backend:/app
       - ./Agent:/Agent
       - ./AgentV2:/AgentV2
-      - /data/uploads:/app/uploads
+      - /opt/bichat_data/uploads:/app/uploads
       - ./scripts:/app/data
     # 不暴露端口，仅内网访问
     expose:
@@ -54,7 +54,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - /data/postgres:/var/lib/postgresql/data
+      - /opt/bichat_data/postgres:/var/lib/postgresql/data
       - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     # 不暴露到公网
     expose:
@@ -77,7 +77,7 @@ services:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     volumes:
-      - /data/minio:/data
+      - /opt/bichat_data/minio:/data
     # MinIO 控制台可通过 Nginx 代理访问
     expose:
       - "9000"
@@ -96,7 +96,7 @@ services:
     container_name: dataagent-qdrant
     restart: unless-stopped
     volumes:
-      - /data/qdrant:/qdrant/storage
+      - /opt/bichat_data/qdrant:/qdrant/storage
     expose:
       - "6333"
       - "6334"

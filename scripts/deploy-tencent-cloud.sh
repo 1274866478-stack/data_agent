@@ -38,9 +38,9 @@ fi
 
 # 2. 创建数据目录
 echo "[2/8] 创建数据存储目录..."
-mkdir -p /data/{postgres,minio,qdrant,uploads}
-chown -R 999:999 /data/postgres  # PostgreSQL 容器用户
-chown -R 1000:1000 /data/minio   # MinIO 容器用户
+mkdir -p /opt/bichat_data/{postgres,minio,qdrant,uploads}
+chown -R 999:999 /opt/bichat_data/postgres  # PostgreSQL 容器用户
+chown -R 1000:1000 /opt/bichat_data/minio   # MinIO 容器用户
 
 # 3. 生成安全密钥
 echo "[3/8] 生成安全密钥..."
