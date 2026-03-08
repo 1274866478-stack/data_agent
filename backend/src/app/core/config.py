@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     clerk_secret_key: Optional[str] = None  # Clerk Secret Key（可选）
     clerk_webhook_secret: Optional[str] = None  # Clerk Webhook Secret（可选）
 
+    # 认证模式配置
+    auth_mode: str = "clerk"  # clerk | selfhost - 认证模式选择
+
     # API 配置
     api_v1_prefix: str = "/api/v1"
     api_key: Optional[str] = None  # API密钥，如果设置则所有API需要认证

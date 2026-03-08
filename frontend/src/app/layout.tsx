@@ -83,6 +83,13 @@ export default function RootLayout({
   const isDevelopmentMode = process.env.NODE_ENV === 'development' ||
                             process.env.NEXT_PUBLIC_ENVIRONMENT === 'development'
 
+  // 获取认证模式：clerk | selfhost
+  const authMode = process.env.NEXT_PUBLIC_AUTH_MODE || 'clerk'
+
+  // 判断使用哪种认证方式
+  const useClerk = authMode === 'clerk' && clerkPublishableKey
+  const useAuthProvider = authMode === 'selfhost' || (authMode === 'clerk' && !clerkPublishableKey && isDevelopmentMode)
+
   return (
     <html lang="zh-CN" suppressHydrationWarning className={`${firaSans.variable} ${firaCode.variable}`}>
       <head>
@@ -93,25 +100,28 @@ export default function RootLayout({
       </head>
       <body className="font-sans antialiased">
         <ThemeProvider>
-          {clerkPublishableKey ? (
+          {useClerk ? (
+            // Clerk 模式：使用 Clerk 认证
             <ClerkProviderWrapper publishableKey={clerkPublishableKey}>
               {children}
             </ClerkProviderWrapper>
-          ) : isDevelopmentMode ? (
-            // 开发模式：不需要 Clerk 认证
+          ) : useAuthProvider ? (
+            // 自托管模式 或开发模式：使用 AuthProvider
             <AuthProvider>
               {children}
             </AuthProvider>
           ) : (
-            // 生产模式：必须配置 Clerk
+            // 配置错误：既没有 Clerk 也不是自托管模式
             <div className="min-h-screen flex items-center justify-center bg-background">
               <div className="text-center space-y-4">
                 <h1 className="text-2xl font-bold text-destructive">配置错误</h1>
                 <p className="text-muted-foreground">
-                  缺少 Clerk 配置，请设置 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY 环境变量
+                  请配置认证方式：
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  如需开发模式，请联系开发团队
+                  1. 设置 NEXT_PUBLIC_AUTH_MODE=selfhost 使用自托管认证<br/>
+                  2. 或设置 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY 使用 Clerk 认证<br/>
+                  3. 或在开发环境下运行（自动使用模拟用户）
                 </p>
               </div>
             </div>

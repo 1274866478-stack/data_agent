@@ -395,6 +395,10 @@ async def validate_api_key_and_token(
     """
     验证API密钥或JWT Token
 
+    根据 AUTH_MODE 环境变量选择验证方式：
+    - clerk: 使用 Clerk JWT 验证
+    - selfhost: 使用自托管 JWT 验证 (HS256)
+
     Args:
         api_key: API密钥
         authorization: Authorization header值
@@ -405,11 +409,14 @@ async def validate_api_key_and_token(
     Raises:
         JWTValidationError: 验证失败
     """
+    # 获取认证模式（默认为 clerk）
+    auth_mode = getattr(settings, 'auth_mode', 'clerk')
+
     # 开发模式：接受dev-mock-token
     if authorization:
         # authorization参数可能包含"Bearer "前缀，也可能不包含
         token = authorization.replace('Bearer ', '').strip()
-        logger.info(f"🔍 DEBUG: token='{token}', environment='{settings.environment}'")
+        logger.info(f"🔍 DEBUG: token='{token}', environment='{settings.environment}', auth_mode='{auth_mode}'")
         if token == 'dev-mock-token' and settings.environment == 'development':
             logger.info("🔧 开发模式：接受mock token")
             return {
@@ -429,7 +436,12 @@ async def validate_api_key_and_token(
 
     # 优先使用JWT Token
     if authorization:
-        user_info = await get_current_user_from_token(authorization)
+        # 根据认证模式选择验证方式
+        if auth_mode == "selfhost":
+            user_info = await validate_selfhost_token(authorization, settings.secret_key)
+        else:  # clerk 模式（默认）
+            user_info = await get_current_user_from_token(authorization)
+
         return {
             "auth_type": "jwt",
             "user_info": user_info,
@@ -460,3 +472,154 @@ async def extract_user_from_request(authorization: str) -> Dict[str, Any]:
         Dict: 用户信息
     """
     return await get_current_user_from_token(authorization)
+
+
+# ============================================================================
+# 自托管认证相关函数 (Self-Hosted Authentication)
+# ============================================================================
+
+def create_selfhost_jwt(
+    user_id: str,
+    email: str,
+    tenant_id: str,
+    secret_key: str,
+    expires_delta: Optional[timedelta] = None
+) -> str:
+    """
+    创建自托管JWT Token (HS256算法)
+
+    使用对称密钥生成JWT，适用于自托管部署场景。
+
+    Args:
+        user_id: 用户ID
+        email: 用户邮箱
+        tenant_id: 租户ID
+        secret_key: JWT签名密钥（来自settings.secret_key）
+        expires_delta: 过期时间增量，默认7天
+
+    Returns:
+        str: JWT Token字符串
+
+    Example:
+        >>> token = create_selfhost_jwt(
+        ...     user_id="user-123",
+        ...     email="user@example.com",
+        ...     tenant_id="tenant-456",
+        ...     secret_key=settings.secret_key
+        ... )
+    """
+    if expires_delta is None:
+        expires_delta = timedelta(days=7)
+
+    now = datetime.utcnow()
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "tenant_id": tenant_id,
+        "iat": now,
+        "exp": now + expires_delta,
+        "iss": "insight-agent",  # 自定义发行者
+        "type": "selfhost"  # 标识为自托管token
+    }
+
+    token = jwt.encode(
+        payload,
+        secret_key,
+        algorithm="HS256"
+    )
+
+    logger.info(f"Created selfhost JWT for user: {user_id}, tenant: {tenant_id}")
+    return token
+
+
+async def validate_selfhost_token(
+    token: str,
+    secret_key: str
+) -> Dict[str, Any]:
+    """
+    验证自托管JWT Token (HS256算法)
+
+    Args:
+        token: JWT Token字符串
+        secret_key: JWT签名密钥
+
+    Returns:
+        Dict: 包含用户信息的payload
+
+    Raises:
+        JWTValidationError: 验证失败
+
+    Example:
+        >>> user_info = await validate_selfhost_token(
+        ...     token=request.headers["Authorization"].replace("Bearer ", ""),
+        ...     secret_key=settings.secret_key
+        ... )
+    """
+    try:
+        # 移除Bearer前缀
+        if token.startswith('Bearer '):
+            token = token[7:]
+
+        # 验证token
+        payload = jwt.decode(
+            token,
+            secret_key,
+            algorithms=["HS256"],
+            issuer="insight-agent",
+            options={
+                "verify_signature": True,
+                "verify_exp": True,
+                "verify_iat": True,
+                "verify_iss": True
+            }
+        )
+
+        # 验证token类型
+        if payload.get("type") != "selfhost":
+            raise JWTValidationError("Token is not a selfhost token")
+
+        # 验证必要字段
+        required_fields = ['sub', 'email', 'tenant_id']
+        for field in required_fields:
+            if field not in payload:
+                raise JWTValidationError(f"Token missing required field: {field}")
+
+        # 提取用户信息（与Clerk格式兼容）
+        user_info = {
+            "user_id": payload.get('sub'),
+            "email": payload.get('email'),
+            "tenant_id": payload.get('tenant_id'),
+            "first_name": None,
+            "last_name": None,
+            "phone": None,
+            "is_verified": True,  # 自托管用户默认已验证
+            "token_payload": payload,
+            "auth_mode": "selfhost"
+        }
+
+        logger.info(f"Validated selfhost token for user: {user_info['user_id']}")
+        return user_info
+
+    except jwt.ExpiredSignatureError:
+        raise JWTValidationError("Token has expired")
+    except jwt.InvalidTokenError as e:
+        raise JWTValidationError(f"Invalid token: {str(e)}")
+    except Exception as e:
+        raise JWTValidationError(f"Token validation failed: {str(e)}")
+
+
+async def get_current_user_from_token_auto(token: str, auth_mode: str = "clerk") -> Dict[str, Any]:
+    """
+    根据认证模式自动选择验证方式
+
+    Args:
+        token: JWT Token
+        auth_mode: 认证模式 ("clerk" 或 "selfhost")
+
+    Returns:
+        Dict: 用户信息
+    """
+    if auth_mode == "selfhost":
+        return await validate_selfhost_token(token, settings.secret_key)
+    else:
+        return await validate_clerk_token(token)

@@ -70,8 +70,15 @@ import logging
 from datetime import datetime
 
 from src.app.core.auth import get_current_user_with_tenant, get_current_user_optional
-from src.app.core.jwt_utils import validate_clerk_token, JWTValidationError, get_token_expiration
-from src.app.data.models import Tenant
+from src.app.core.jwt_utils import (
+    validate_clerk_token,
+    validate_selfhost_token,
+    create_selfhost_jwt,
+    get_token_expiration,
+    JWTValidationError
+)
+from src.app.core.config import settings
+from src.app.data.models import Tenant, User
 from src.app.data.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -402,4 +409,178 @@ async def test_token_validation(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Token validation test failed"
+        )
+
+
+# ============================================================================
+# 自托管认证端点 (Self-Hosted Authentication Endpoints)
+# ============================================================================
+
+class RegisterRequest(BaseModel):
+    """用户注册请求模型"""
+    email: EmailStr
+    password: str
+    display_name: Optional[str] = None
+
+
+class RegisterResponse(BaseModel):
+    """用户注册响应模型"""
+    user_id: str
+    email: str
+    tenant_id: str
+    message: str
+
+
+class LoginRequest(BaseModel):
+    """用户登录请求模型"""
+    email: EmailStr
+    password: str
+
+
+class LoginResponse(BaseModel):
+    """用户登录响应模型"""
+    access_token: str
+    token_type: str = "bearer"
+    user_id: str
+    email: str
+    tenant_id: str
+    expires_at: str
+
+
+@router.post("/register", response_model=RegisterResponse)
+async def register(
+    request: RegisterRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    用户注册（自托管模式）
+
+    创建新用户和关联的租户记录。
+    密码使用 bcrypt 加密存储。
+    """
+    try:
+        # 检查邮箱是否已注册
+        existing_user = db.query(User).filter(User.email == request.email).first()
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+
+        # 生成用户ID和租户ID
+        import uuid
+        user_id = str(uuid.uuid4())
+        tenant_id = str(uuid.uuid4())
+
+        # 创建租户
+        new_tenant = Tenant(
+            id=tenant_id,
+            email=request.email,
+            display_name=request.display_name or request.email.split('@')[0],
+            status="active"
+        )
+        db.add(new_tenant)
+
+        # 创建用户（密码会在 User.set_password() 中自动哈希）
+        new_user = User(
+            id=user_id,
+            email=request.email,
+            tenant_id=tenant_id,
+            display_name=request.display_name,
+            is_active=True
+        )
+        new_user.set_password(request.password)
+        db.add(new_user)
+
+        db.commit()
+        db.refresh(new_user)
+
+        logger.info(f"New user registered: {user_id}, tenant: {tenant_id}")
+
+        return RegisterResponse(
+            user_id=user_id,
+            email=request.email,
+            tenant_id=tenant_id,
+            message="Registration successful"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Registration failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Registration failed"
+        )
+
+
+@router.post("/login", response_model=LoginResponse)
+async def login(
+    request: LoginRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    用户登录（自托管模式）
+
+    验证邮箱和密码，返回JWT token。
+    """
+    try:
+        # 查找用户
+        user = db.query(User).filter(User.email == request.email).first()
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password"
+            )
+
+        # 验证密码
+        if not user.verify_password(request.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password"
+            )
+
+        # 检查账户状态
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is disabled"
+            )
+
+        # 更新最后登录时间
+        from datetime import timezone
+        user.last_login_at = datetime.now(timezone.utc)
+        db.commit()
+
+        # 生成JWT token
+        token = create_selfhost_jwt(
+            user_id=user.id,
+            email=user.email,
+            tenant_id=user.tenant_id,
+            secret_key=settings.secret_key
+        )
+
+        # 计算过期时间
+        from datetime import timedelta
+        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+
+        logger.info(f"User logged in: {user.id}")
+
+        return LoginResponse(
+            access_token=token,
+            user_id=user.id,
+            email=user.email,
+            tenant_id=user.tenant_id,
+            expires_at=expires_at.isoformat()
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Login failed"
         )

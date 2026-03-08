@@ -108,6 +108,7 @@ class Tenant(Base):
     # 关系
     data_source_connections = relationship("DataSourceConnection", back_populates="tenant")
     knowledge_documents = relationship("KnowledgeDocument", back_populates="tenant")
+    user = relationship("User", back_populates="tenant", uselist=False)  # 一对一关系
 
     def __repr__(self):
         return f"<Tenant(id={self.id}, email='{self.email}', status={self.status.value if self.status else 'unknown'})>"
@@ -147,6 +148,95 @@ class Tenant(Base):
             "storage_quota_mb": self.storage_quota_mb,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
+        }
+
+
+class UserStatus(str, enum.Enum):
+    """用户状态枚举"""
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    SUSPENDED = "suspended"
+
+
+class User(Base):
+    """
+    自建认证用户模型
+
+    存储用户登录凭据和基本信息
+    与 Clerk 用户模型分离，支持自建认证
+    """
+    __tablename__ = "users"
+
+    # 用户唯一标识符（UUID）
+    id = Column(String(255), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+
+    # 登录凭据
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    password_hash = Column(String(255), nullable=False)  # bcrypt 哈希
+
+    # 租户关联（一对一：注册时自动创建 Tenant）
+    tenant_id = Column(String(255), ForeignKey("tenants.id"), nullable=False, unique=True, index=True)
+
+    # 用户状态
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    status = Column(
+        Enum(UserStatus, values_callable=lambda x: [e.value for e in x]),
+        default=UserStatus.ACTIVE,
+        nullable=False,
+        index=True
+    )
+
+    # 用户基本信息
+    display_name = Column(String(255), nullable=True)
+
+    # 时间戳
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+
+    # 关系
+    tenant = relationship("Tenant", back_populates="user")
+
+    def __repr__(self):
+        return f"<User(id={self.id}, email='{self.email}', is_active={self.is_active})>"
+
+    def set_password(self, password: str):
+        """
+        设置密码（自动哈希）
+
+        Args:
+            password: 明文密码
+        """
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        self.password_hash = pwd_context.hash(password)
+
+    def verify_password(self, password: str) -> bool:
+        """
+        验证密码
+
+        Args:
+            password: 明文密码
+
+        Returns:
+            bool: 密码是否匹配
+        """
+        from passlib.context import CryptContext
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        return pwd_context.verify(password, self.password_hash)
+
+    def to_dict(self) -> dict:
+        """转换为字典格式（不包含敏感信息）"""
+        return {
+            "id": self.id,
+            "email": self.email,
+            "tenant_id": self.tenant_id,
+            "is_active": self.is_active,
+            "status": self.status.value if self.status else "active",
+            "display_name": self.display_name,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None
         }
 
 
