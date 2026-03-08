@@ -1246,7 +1246,7 @@ function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex
                               contentChart.legend || contentChart.grid ||
                               contentChart.tooltip || contentChart.dataset
       if (hasEChartsFields) {
-        chartToRender.echarts_option = { ...contentChart }  // 浅拷贝打破循�?
+        chartToRender.echarts_option = { ...contentChart } as any  // 浅拷贝打破循�?
       }
     }
 

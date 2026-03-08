@@ -170,12 +170,16 @@ class Settings(BaseSettings):
 
 
 
-    @validator("clerk_jwt_public_key")
+    @validator("clerk_jwt_public_key", pre=True)
     def validate_clerk_jwt_public_key(cls, v, values):
         """验证Clerk JWT公钥"""
+        # 移除可能的引号（Docker Compose env 文件可能添加引号）
+        if v and isinstance(v, str):
+            v = v.strip().strip('"').strip("'")
+
         # 在开发环境中允许为空
         environment = values.get('environment', 'development')
-        if environment == 'development' and v is None:
+        if environment == 'development' and not v:
             return v
         # 在测试环境中允许测试密钥
         if environment in ('testing',) and v in ('test_public_key_placeholder', 'test_key'):
@@ -252,9 +256,10 @@ class Settings(BaseSettings):
             "example", "demo", "test", "placeholder", "fake", "123456",
             "password", "secret", "key", "token", "sample", "default"
         ]
-        if any(pattern in v.lower() for pattern in weak_patterns):
+        matched_pattern = next((pattern for pattern in weak_patterns if pattern in v.lower()), None)
+        if matched_pattern:
             raise ValueError(
-                f"ZHIPUAI_API_KEY contains weak pattern: '{pattern}'. "
+                f"ZHIPUAI_API_KEY contains weak pattern: '{matched_pattern}'. "
                 "Please use a valid API key from https://open.bigmodel.cn/"
             )
 

@@ -71,6 +71,16 @@ export interface StepChartData {
   chart_type?: string;
   title?: string;
   chart_index?: number;  // 图表索引（用于支持多图表）
+  // ECharts 直接字段（用于后端直接返回 ECharts 配置的情况）
+  xAxis?: any;
+  yAxis?: any;
+  series?: any;
+  legend?: any;
+  grid?: any;
+  tooltip?: any;
+  dataset?: any;
+  // 允许任意其他属性
+  [key: string]: any;
 }
 
 // 步骤内容数据
