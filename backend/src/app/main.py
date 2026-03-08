@@ -133,12 +133,13 @@ async def lifespan(app: FastAPI):
         if config_summary.get("security_alert", False):
             logger.error(f"🚨 SECURITY ALERT: {config_summary.get('security_message', '发现安全问题')}")
 
-            # 在生产环境中，安全问题应该阻止启动
-            if settings.environment == "production":
+            # 自托管模式允许启动（使用 DeepSeek 作为主要 LLM）
+            # 生产环境且非自托管模式时，安全问题应该阻止启动
+            if settings.environment == "production" and settings.auth_mode != "selfhost":
                 logger.error("Critical security issues detected in production mode - startup blocked")
                 raise RuntimeError("Security validation failed in production")
             else:
-                logger.warning("Security issues detected, but continuing in development mode")
+                logger.warning(f"Security issues detected, but continuing in {settings.auth_mode} mode")
 
         if config_summary["overall_status"] == "success":
             logger.info("All configurations validated successfully")

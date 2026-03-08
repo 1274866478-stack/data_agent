@@ -49,6 +49,7 @@ services:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - PYTHONPATH=/app:/
+      - AUTH_MODE=selfhost
       - ENVIRONMENT=production
       - DEBUG=false
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}

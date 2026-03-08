@@ -116,6 +116,7 @@ class Settings(BaseSettings):
 
     # 认证模式配置
     auth_mode: str = "clerk"  # clerk | selfhost - 认证模式选择
+    secret_key: str  # JWT签名密钥（自托管模式必需）
 
     # API 配置
     api_v1_prefix: str = "/api/v1"
@@ -179,6 +180,11 @@ class Settings(BaseSettings):
         # 移除可能的引号（Docker Compose env 文件可能添加引号）
         if v and isinstance(v, str):
             v = v.strip().strip('"').strip("'")
+
+        # 自托管模式不需要 Clerk JWT 公钥
+        auth_mode = values.get('auth_mode', 'clerk')
+        if auth_mode == 'selfhost':
+            return v  # 允许为空
 
         # 在开发环境中允许为空
         environment = values.get('environment', 'development')

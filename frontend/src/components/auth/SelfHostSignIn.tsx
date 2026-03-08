@@ -11,10 +11,7 @@
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { BackgroundGrid } from './BackgroundGrid'
-import { ThemeToggle } from './ThemeToggle'
-import { Chrome, Github, Loader2, Eye, EyeOff } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { Loader2, Eye, EyeOff } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'
 
@@ -70,22 +67,22 @@ export function SelfHostSignIn() {
 
       const data = await response.json()
 
-      if (!response.ok) {
-        throw new Error(data.detail || '登录失败，请检查邮箱和密码')
+      if (response.ok) {
+        // 保存 JWT token
+        localStorage.setItem('auth_token', data.access_token)
+        localStorage.setItem('user_id', data.user_id)
+        localStorage.setItem('tenant_id', data.tenant_id)
+        localStorage.setItem('user_email', data.email)
+
+        // 触发存储事件以更新其他标签页
+        window.dispatchEvent(new Event('storage'))
+
+        // 跳转到目标页面或首页
+        const redirect = searchParams?.get('redirect') || '/'
+        router.push(redirect)
+      } else {
+        setError(data.detail || '登录失败，请检查邮箱和密码')
       }
-
-      // 存储token到localStorage
-      localStorage.setItem('auth_token', data.access_token)
-      localStorage.setItem('user_id', data.user_id)
-      localStorage.setItem('tenant_id', data.tenant_id)
-      localStorage.setItem('user_email', data.email)
-
-      // 触发存储事件以更新其他标签页
-      window.dispatchEvent(new Event('storage'))
-
-      // 跳转到目标页面或首页
-      const redirect = searchParams?.get('redirect') || '/'
-      router.push(redirect)
     } catch (err: any) {
       setError(err.message || '登录失败，请重试')
     } finally {
@@ -94,86 +91,60 @@ export function SelfHostSignIn() {
   }
 
   return (
-    <div className="min-h-screen lab-gradient flex items-center justify-center p-4 relative overflow-hidden">
-      {/* 背景网格 */}
-      <BackgroundGrid />
-
-      {/* 主题切换 */}
-      <ThemeToggle />
-
-      {/* 登录卡片容器 */}
-      <div className="relative z-10 w-full max-w-md">
-        {/* 登录卡片 */}
-        <div className="energy-card energy-glass-panel rounded-2xl p-8 shadow-2xl">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
           {/* 头部 */}
           <div className="mb-8 text-center">
-            <div className="w-16 h-16 bg-primary/20 border border-primary/50 rounded-xl
-                        flex items-center justify-center mx-auto microscope-aura mb-4">
-              <span className="material-symbols-outlined text-primary text-4xl">
-                biotech
-              </span>
-            </div>
-            <h1 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">
-              欢迎回来
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+              登录
             </h1>
-            <p className="text-slate-500 dark:text-primary/70 text-sm
-                       font-medium tracking-widest uppercase">
-              能量脉冲实验室 • Self-Hosted
+            <p className="text-gray-500 dark:text-gray-400 text-sm">
+              Insight Agent - 自托管模式
             </p>
           </div>
 
           {/* 登录表单 */}
-          <form onSubmit={handleLogin} className="w-full space-y-4">
+          <form onSubmit={handleLogin} className="space-y-4">
             {/* 邮箱输入框 */}
-            <div className="floating-label-group">
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                邮箱地址
+              </label>
               <input
                 type="email"
                 id="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder=" "
+                placeholder="your@email.com"
                 disabled={isLoading}
-                className={cn(
-                  'floating-label-input energy-input w-full h-12 px-3 rounded-md text-sm',
-                  'placeholder:text-transparent',
-                  'focus:outline-none',
-                  'disabled:cursor-not-allowed disabled:opacity-50'
-                )}
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                 autoComplete="email"
                 required
               />
-              <label htmlFor="email" className="floating-label">
-                邮箱地址
-              </label>
             </div>
 
             {/* 密码输入框 */}
-            <div className="floating-label-group relative">
+            <div className="relative">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                密码
+              </label>
               <input
                 type={showPassword ? 'text' : 'password'}
                 id="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder=" "
+                placeholder="•••••••••"
                 disabled={isLoading}
-                className={cn(
-                  'floating-label-input energy-input w-full h-12 px-3 rounded-md text-sm pr-10',
-                  'placeholder:text-transparent',
-                  'focus:outline-none',
-                  'disabled:cursor-not-allowed disabled:opacity-50'
-                )}
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 dark:bg-gray-700 dark:border-gray-600 dark:text-white pr-10"
                 autoComplete="current-password"
                 required
               />
-              <label htmlFor="password" className="floating-label">
-                密码
-              </label>
-              {/* 显示/隐藏密码按钮 */}
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 disabled={isLoading}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 disabled:cursor-not-allowed"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:cursor-not-allowed"
               >
                 {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
               </button>
@@ -181,7 +152,7 @@ export function SelfHostSignIn() {
 
             {/* 错误提示 */}
             {error && (
-              <p className="text-xs text-red-500 dark:text-red-400">
+              <p className="text-sm text-red-500 dark:text-red-400">
                 {error}
               </p>
             )}
@@ -190,54 +161,34 @@ export function SelfHostSignIn() {
             <button
               type="submit"
               disabled={isLoading || !email.trim() || !password.trim()}
-              className={cn(
-                'energy-btn w-full h-11 rounded-md font-medium text-sm',
-                'flex items-center justify-center',
-                'disabled:cursor-not-allowed disabled:opacity-50'
-              )}
+              className="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="flex items-center justify-center">
+                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                  登录中...
+                </span>
               ) : (
                 '登录'
               )}
             </button>
-          </form>
 
-          {/* 底部注册链接 */}
-          <div className="mt-8 pt-6 border-t border-slate-200/50 dark:border-slate-700/50">
-            <p className="text-slate-500 dark:text-slate-400 text-sm">
-              还没有账号？
-              <Link
-                href="/register"
-                className="text-primary hover:text-white
-                               hover:bg-primary/80 px-2 py-1 rounded transition-colors ml-1"
-              >
+            {/* 注册链接 */}
+            <p className="text-center text-sm text-gray-500 dark:text-gray-400">
+              还没有账号？{' '}
+              <Link href="/register" className="text-blue-600 hover:text-blue-500 font-medium">
                 立即注册
               </Link>
             </p>
-          </div>
+          </form>
         </div>
 
-        {/* 系统状态指示器 */}
-        <div className="mt-6 flex justify-between px-2">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-green-500 status-glow-green" />
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
-              系统状态：自托管模式
-            </span>
-          </div>
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
-            JWT认证: HS256
-          </div>
+        {/* 返回首页 */}
+        <div className="mt-4 text-center">
+          <Link href="/" className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300">
+            ← 返回首页
+          </Link>
         </div>
-      </div>
-
-      {/* 右下角 LAB 水印 */}
-      <div className="fixed bottom-0 left-0 p-8 pointer-events-none opacity-10">
-        <span className="text-[140px] font-black text-primary select-none leading-none">
-          LAB
-        </span>
       </div>
     </div>
   )

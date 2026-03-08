@@ -37,19 +37,21 @@ langchain-mcp-adapters>=0.1.0
 python-dotenv==1.0.1
 pydantic==2.9.1
 pydantic-settings>=2.3.4
+email-validator==2.1.1
 sentry-sdk[fastapi]==2.14.0
 tenacity==8.5.0
 
 # Authentication and Security
+passlib==1.7.4
+argon2-cffi==23.1.0
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
 python-multipart==0.0.9
 PyJWT==2.8.0
 cryptography==41.0.7
 
 # Storage and Vector Database
 minio==7.2.0
-chromadb>=0.5.0
+# chromadb>=0.5.0  # Disabled due to bcrypt conflict, using Qdrant instead
 redis==5.0.1
 
 # AI Services

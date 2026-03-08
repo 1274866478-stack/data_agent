@@ -190,7 +190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // 有完整的数据，直接设置用户信息
           const restoredUser = {
             id: userId,
-            email: userEmail,
+            email: userEmail || undefined,  // Convert null to undefined
             tenant_id: tenantId,
           }
           setUser(restoredUser)
