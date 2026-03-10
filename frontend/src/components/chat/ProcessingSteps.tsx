@@ -1217,12 +1217,13 @@ interface RenderStepContentOptions {
   step: ProcessingStep
   chartDescriptions: string[]
   chartIndex: number
+  isFirstChart?: boolean  // 🔧 是否是第一个图表，用于控制表格显示
   summary?: string  // 数据分析总结（非图表部分�?
   step6Table?: StepTableData | null  // 🔧 步骤6的表格数据，用于与图表合并显�?
   outputFormat?: 'markdown' | 'plain'
 }
 
-function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex, summary, step6Table, outputFormat = 'markdown' }: RenderStepContentOptions) {
+function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex, isFirstChart = false, summary, step6Table, outputFormat = 'markdown' }: RenderStepContentOptions) {
   if (!step.content_type || !step.content_data) return null
 
   // 🔧 修改：任何图表类型的步骤都使�?renderVisualization 合并表格和图表（不再检查固定步骤号�?
@@ -1266,8 +1267,10 @@ function renderStepContentWithDescriptions({ step, chartDescriptions, chartIndex
     }
 
     if (chartToRender && (chartToRender.echarts_option || chartToRender.chart_image)) {
+      // 🔧 修复：只在第一个图表时显示表格，避免多图表时重复显示相同表格
+      const tableToShow: StepTableData | null = isFirstChart ? (step6Table ?? null) : null
       // 使用新的 renderVisualization 函数合并图表和表�?
-      return renderVisualization(chartToRender, step6Table || null, description)
+      return renderVisualization(chartToRender, tableToShow, description)
     }
   }
 
@@ -1525,7 +1528,9 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
 
               // 🔧 修改：按内容类型计算图表索引（不再依赖固定步骤号�?
               let thisChartIndex = currentChartIndex
+              let isFirstChart = false  // 🔧 新增：标记是否是第一个图表
               if (step.content_type === 'chart') {
+                isFirstChart = (currentChartIndex === 0)  // 第一个图表
                 thisChartIndex = currentChartIndex
                 currentChartIndex++  // 为下一个图表递增索引
               }
@@ -1600,6 +1605,7 @@ export const ProcessingSteps = React.memo(function ProcessingSteps({ steps, clas
                       step,
                       chartDescriptions,
                       chartIndex: thisChartIndex,
+                      isFirstChart,  // 🔧 传入是否是第一个图表的标记
                       summary,
                       step6Table: tableData,
                       outputFormat
