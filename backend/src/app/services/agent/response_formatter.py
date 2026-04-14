@@ -80,15 +80,30 @@ def format_api_response(response: VisualizationResponse) -> Dict[str, Any]:
         result["sql"] = response.sql
     
     # 添加表格数据（如果有）
-    if response.data and response.data.row_count > 0:
-        result["table"] = {
-            "columns": response.data.columns,
-            "rows": [
-                {col: row[i] for i, col in enumerate(response.data.columns)}
-                for row in response.data.rows
-            ],
-            "row_count": response.data.row_count,
-        }
+    # 🔧 改进：即使 row_count == 0，也添加空 table 结构以便前端显示"查询结果为空"
+    if response.data:
+        if response.data.row_count > 0:
+            result["table"] = {
+                "columns": response.data.columns,
+                "rows": [
+                    {col: row[i] for i, col in enumerate(response.data.columns)}
+                    for row in response.data.rows
+                ],
+                "row_count": response.data.row_count,
+            }
+            logger.info(f"✅ [响应格式化] 添加表格数据: {response.data.row_count} 行, {len(response.data.columns)} 列")
+        else:
+            # 🔥 新增：空结果时也添加 table 结构，让前端显示"查询结果为空"
+            result["table"] = {
+                "columns": response.data.columns if response.data.columns else [],
+                "rows": [],
+                "row_count": 0,
+                "is_empty": True,  # 标记为空结果
+                "message": "查询执行成功，但未返回数据"
+            }
+            logger.info(f"ℹ️ [响应格式化] 添加空表格结构: {len(response.data.columns)} 列, 0 行")
+    else:
+        logger.debug(f"ℹ️ [响应格式化] response.data 为空，未添加 table 数据")
     
     # 🛡️ 安全添加图表配置（如果有）- 支持 Pydantic 模型
     if response.chart:

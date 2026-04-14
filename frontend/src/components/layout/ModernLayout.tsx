@@ -16,10 +16,12 @@ import { RightCategoryBar, RightCategoryBarToggle } from './RightCategoryBar'
 
 interface ModernLayoutProps {
   children: React.ReactNode
+  hideRightBar?: boolean
 }
 
-export function ModernLayout({ children }: ModernLayoutProps) {
+export function ModernLayout({ children, hideRightBar = false }: ModernLayoutProps) {
   const [rightBarCollapsed, setRightBarCollapsed] = useState(false)
+  const shouldHideBar = hideRightBar || rightBarCollapsed
 
   return (
     <div className="h-screen flex overflow-hidden bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
@@ -28,12 +30,12 @@ export function ModernLayout({ children }: ModernLayoutProps) {
 
       {/* 右侧分类栏 - 可折叠 0/240px */}
       <RightCategoryBar
-        collapsed={rightBarCollapsed}
+        collapsed={shouldHideBar}
         onToggle={() => setRightBarCollapsed(!rightBarCollapsed)}
       />
 
-      {/* 折叠时的展开按钮 */}
-      {rightBarCollapsed && (
+      {/* 折叠时的展开按钮 - 仅在用户手动折叠时显示 */}
+      {rightBarCollapsed && !hideRightBar && (
         <RightCategoryBarToggle onClick={() => setRightBarCollapsed(false)} />
       )}
 

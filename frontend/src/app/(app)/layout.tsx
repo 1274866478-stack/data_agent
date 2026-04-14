@@ -45,6 +45,7 @@
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
 import { Layout } from '@/components/layout/Layout'
 import { ModernLayout } from '@/components/layout/ModernLayout'
+import { usePathname } from 'next/navigation'
 
 // 通过环境变量控制布局切换，默认使用现代布局
 const useModernLayout = process.env.NEXT_PUBLIC_USE_MODERN_LAYOUT !== 'false'
@@ -54,12 +55,14 @@ export default function AppLayout({
 }: {
   children: React.ReactNode
 }) {
-  // 根据环境变量选择布局
+  const pathname = usePathname()
   const LayoutComponent = useModernLayout ? ModernLayout : Layout
+  // Agent 页面隐藏右侧分类栏，专注于对话体验
+  const hideRightBar = pathname === '/ai-assistant'
 
   return (
-    <ProtectedRoute>
-      <LayoutComponent>{children}</LayoutComponent>
+    <ProtectedRoute allowPublic>
+      <LayoutComponent hideRightBar={hideRightBar}>{children}</LayoutComponent>
     </ProtectedRoute>
   )
 }

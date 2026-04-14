@@ -1,6 +1,76 @@
-# CLAUDE.md
+# CLAUDE.md - Data Agent V4 项目配置
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+---
+
+## 🎯 Claude Code 工作协议
+
+### 核心原则
+
+| 原则 | 行为 |
+|------|------|
+| 代码是真理 | 文档与代码不一致时，以代码为准 |
+| 简洁优先 | 每个变更尽可能简单 |
+| 根因修复 | 不做临时补丁，找根本原因 |
+| 持续学习 | 纠正后提取规则，永不再犯 |
+
+### 工作流
+
+1. **Plan First** - 非平凡任务（3+步骤）必须进入 Plan 模式
+2. **代码前必问** - 需求模糊时问3个澄清问题，先描述方法等待确认
+3. **验证后完成** - 运行测试、检查日志、自问"Staff 工程师会批准吗？"
+4. **自主修复 Bug** - 先写复现测试，再修复
+
+### 🚫 禁止事项
+
+- 跳过 Plan 模式
+- 忽略影响范围
+- 临时补丁
+- 硬推出错方案
+
+---
+
+## 上下文工程规范
+
+### 文件头格式（新代码采用）
+
+```python
+"""
+[IDENTITY]: 核心职责（一句话）
+[PURPOSE]: 存在原因
+
+[CONTRACT]
+Input: (type) 描述
+Output: (type) | Error
+
+[DEPENDS_ON]
+- path [RISK: HIGH|MID|LOW]
+
+[CALLED_BY]
+- path [WHEN: 场景]
+"""
+```
+
+### 风险等级
+
+- **HIGH** → 修改前必须读完整源码
+- **MID** → 读 Header，必要时读源码
+- **LOW** → 仅读 Header
+
+### 修改规则
+
+- **修改前**: 读 Header → 读 HIGH RISK 依赖 → 校验一致性
+- **修改后**: 更新 Header → 更新 [CALLED_BY] → 更新 _folder.md
+
+---
+
+## 任务管理
+
+使用 `tasks/` 目录进行任务跟踪：
+
+- `tasks/todo.md` - 当前待办任务
+- `tasks/lessons.md` - 经验教训总结（被纠正后必填）
 
 ---
 

@@ -35,11 +35,81 @@
 def load_golden_examples() -> str:
     """
     加载黄金示例
-    
+
     Returns:
         示例字符串，如果为空则返回空字符串
     """
-    # 可以在这里添加示例，目前返回空字符串
-    # 未来可以扩展为从文件或数据库加载
-    return ""
+    return """
+## 📍 地址/籍贯查询示例
+
+### 示例1：查询用户地址信息
+**用户问题**: 张伟是哪里人？
+**分析**: 用户询问某人的地址/籍贯信息，需要关联用户表和地址表
+**预期SQL**:
+```sql
+SELECT u.username, a.province, a.city, a.district, a.detail_address
+FROM users u
+LEFT JOIN addresses a ON u.id = a.user_id
+WHERE u.username = '张伟'
+ORDER BY a.is_default DESC;
+```
+
+### 示例2：查询用户详细地址
+**用户问题**: 李明的地址是什么？
+**分析**: 用户询问某人的地址，需要关联地址表
+**预期SQL**:
+```sql
+SELECT u.username, a.province, a.city, a.district, a.detail_address
+FROM users u
+LEFT JOIN addresses a ON u.id = a.user_id
+WHERE u.username = '李明'
+ORDER BY a.is_default DESC;
+```
+
+### 示例3：查询用户来自哪里
+**用户问题**: 用户XXX来自哪里？
+**分析**: "来自哪里"、"哪里人"都是地址查询的关键词
+**预期SQL**:
+```sql
+SELECT u.username, a.province, a.city, a.district
+FROM users u
+LEFT JOIN addresses a ON u.id = a.user_id
+WHERE u.username = 'XXX';
+```
+
+### 示例4：批量查询用户地址
+**用户问题**: 各地用户的分布情况如何？
+**分析**: 需要按省份/城市统计用户分布
+**预期SQL**:
+```sql
+SELECT a.province, COUNT(DISTINCT u.id) as user_count
+FROM users u
+LEFT JOIN addresses a ON u.id = a.user_id
+GROUP BY a.province
+ORDER BY user_count DESC;
+```
+
+## 🔑 地址查询关键词识别
+
+当用户问题包含以下关键词时，应该识别为地址/籍贯查询：
+- "哪里人"、"哪里来的"、"来自哪里"
+- "地址是什么"、"住在哪里"、"居住地"
+- "籍贯"、"故乡"、"老家"
+- "省份"、"城市"、"地区"
+
+## 📋 地址表关联模式
+
+常见的地址表结构：
+```sql
+-- users 表（用户表）
+users (id, username, email, ...)
+
+-- addresses 表（地址表）
+addresses (id, user_id, province, city, district, detail_address, is_default, ...)
+```
+
+关联方式：`users.id = addresses.user_id`
+
+查询时使用 LEFT JOIN 以确保即使用户没有地址信息也能返回用户基本信息。
+"""
 

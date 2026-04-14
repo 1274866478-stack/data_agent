@@ -10,19 +10,17 @@
 
 'use client'
 
+import Image from 'next/image'
 import { cn } from '@/lib/utils'
 import {
-    BarChart3,
     Bot,
     ChevronLeft,
     ChevronRight,
     Crown,
     Database,
-    FileBarChart,
     FileText,
     Home,
     Settings,
-    Users,
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -51,14 +49,11 @@ const navGroups = [
     label: '分析工具',
     items: [
       { href: '/ai-assistant', icon: Bot, label: 'Insight Agent' },
-      { href: '/analytics', icon: BarChart3, label: '数据分析' },
-      { href: '/reports', icon: FileBarChart, label: '报告' },
     ],
   },
   {
     label: '系统',
     items: [
-      { href: '/users', icon: Users, label: '用户管理' },
       { href: '/settings', icon: Settings, label: '设置' },
     ],
   },
@@ -76,7 +71,12 @@ export function RightCategoryBar({ collapsed, onToggle }: RightCategoryBarProps)
     >
       {/* 标题栏 */}
       <div className="h-14 flex items-center justify-between px-4 border-b border-border">
-        <span className="font-semibold text-foreground">Insight Agent</span>
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg overflow-hidden flex items-center justify-center">
+            <Image src="/logo-icon-only.svg" alt="Insight Agent" width={28} height={28} className="object-contain" />
+          </div>
+          <span className="font-semibold text-foreground">Insight Agent</span>
+        </div>
         <button
           onClick={onToggle}
           className="w-6 h-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"

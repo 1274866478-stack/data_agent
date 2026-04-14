@@ -409,6 +409,17 @@ class Settings(BaseSettings):
             )
         return v
 
+    # ========== 企业微信配置 ==========
+    wechat_work_corp_id: Optional[str] = None  # 企业ID
+    wechat_work_corp_secret: Optional[str] = None  # 应用Secret
+    wechat_work_agent_id: Optional[int] = None  # 应用ID
+    wechat_work_token: Optional[str] = None  # 回调验证Token
+    wechat_work_encoding_aes_key: Optional[str] = None  # 消息加密密钥
+    wechat_work_enabled: bool = False  # 是否启用企业微信集成
+
+    # ========== 企业微信群机器人配置 ==========
+    wechat_webhook_url: Optional[str] = None  # 群机器人Webhook URL
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

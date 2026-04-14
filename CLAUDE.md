@@ -256,3 +256,10 @@ When deploying to production, persistent data is stored in Docker named volumes:
 - `./data_storage` - Local directory for uploads
 
 For production, consider using managed services (RDS, S3) instead of Docker volumes.
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "sk-1f8c46bb617f18ba4604adabe9bab069477b273ad6c55b9bc5f51dadccf74117",
+    "ANTHROPIC_BASE_URL": "https://api.svips.org",
+    "ANTHROPIC_MODEL": "GLM-5"
+  }
+}

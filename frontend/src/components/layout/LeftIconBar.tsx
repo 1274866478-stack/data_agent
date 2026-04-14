@@ -11,8 +11,8 @@
 'use client'
 
 import { cn } from '@/lib/utils'
+import Image from 'next/image'
 import {
-    BarChart3,
     Bot,
     Database,
     FileText,
@@ -29,7 +29,6 @@ const navItems = [
   { href: '/data-sources', icon: Database, label: '数据源' },
   { href: '/documents', icon: FileText, label: '文档' },
   { href: '/ai-assistant', icon: Bot, label: 'Insight Agent' },
-  { href: '/analytics', icon: BarChart3, label: '分析' },
 ]
 
 const bottomItems = [
@@ -42,9 +41,9 @@ export function LeftIconBar() {
   return (
     <div className="w-16 h-full bg-gradient-to-b from-slate-900 to-slate-800 flex flex-col items-center py-4 border-r border-slate-700/50">
       {/* Logo 区域 */}
-      <div className="w-10 h-10 rounded-xl bg-gradient-modern-primary flex items-center justify-center mb-6">
-        <span className="text-primary-foreground font-bold text-lg">D</span>
-      </div>
+      <Link href="/dashboard" className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center mb-6 overflow-hidden">
+        <Image src="/logo-icon-only.svg" alt="Insight Agent" width={40} height={40} className="object-contain" />
+      </Link>
 
       {/* 主导航 */}
       <nav className="flex-1 flex flex-col items-center gap-2">

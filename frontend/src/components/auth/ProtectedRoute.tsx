@@ -1,3 +1,5 @@
+'use client'
+
 /**
  * # ProtectedRoute 受保护路由组件
  *
@@ -5,57 +7,20 @@
  * **文件名**: ProtectedRoute.tsx
  * **职责**: 路由级别的认证和授权控制，支持普通用户、管理员和功能权限控制
  * **作者**: Data Agent Team
- * **版本**: 1.0.0
- *
- * ## [INPUT]
- * **ProtectedRoute组件**:
- * - **children**: ReactNode - 需要保护的路由内容
- * - **fallback**: ReactNode (可选) - 未认证时的备用UI
- * - **redirectTo**: string (可选) - 重定向路径，默认 '/sign-in'
- *
- * **AdminRoute组件**:
- * - **children**: ReactNode - 需要管理员权限的内容
- * - **fallback**: ReactNode (可选) - 权限不足时的备用UI
- *
- * **FeatureGate组件**:
- * - **children**: ReactNode - 需要功能权限的内容
- * - **feature**: string - 功能标识符
- * - **fallback**: ReactNode (可选) - 功能不可用时的备用UI
- *
- * ## [OUTPUT]
- * - **返回值**: JSX.Element - 受保护的内容或重定向/fallback UI
- * - **副作用**: 触发路由重定向，修改URL
- *
- * ## [LINK]
- * **上游依赖**:
- * - [react](https://react.dev) - React核心库
- * - [next/navigation](https://nextjs.org/docs/app/navigation) - Next.js导航
- * - [lucide-react](https://lucide.dev) - 图标库
- * - [./AuthContext.tsx](./AuthContext.tsx) - 认证上下文
- *
- * **下游依赖**:
- * - 无直接下游组件
- *
- * **调用方**:
- * - [../../app/(app)/layout.tsx](../../app/(app)/layout.tsx) - 应用受保护路由布局
- * - [../../app/(app)/settings/page.tsx](../../app/(app)/settings/page.tsx) - 设置页面（管理员）
- * - 任何需要权限控制的页面组件
- *
- * ## [STATE]
- * - **isAuthenticated**: boolean - 从AuthContext获取的认证状态
- * - **isAdmin**: boolean - 管理员权限标志
- * - **hasFeature()**: () => boolean - 功能权限检查函数
+ * **版本**: 1.1.0
  *
  * ## [SIDE-EFFECTS]
- * - ProtectedRoute: 未认证时自动重定向到登录页
+ * - ProtectedRoute: 未认证时自动重定向到登录页（公开路径除外）
  * - AdminRoute: 未授权时重定向到 /unauthorized
  * - FeatureGate: 功能不可用时显示fallback或提示信息
  * - 显示加载动画（Loader2）直到认证状态确定
  */
-'use client'
 
-import { useEffect, ReactNode } from 'react'
-import { useRouter } from 'next/navigation'
+// 公开路径白名单 - 不需要认证即可访问
+const PUBLIC_PATHS = ['/ai-assistant', '/sign-in', '/sign-up', '/forgot-password']
+
+import { useEffect, ReactNode, useMemo } from 'react'
+import { useRouter, usePathname } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { useAuth } from './AuthContext'
 
@@ -63,22 +28,33 @@ interface ProtectedRouteProps {
   children: ReactNode
   fallback?: ReactNode
   redirectTo?: string
+  allowPublic?: boolean
 }
 
 export function ProtectedRoute({
   children,
   fallback,
-  redirectTo = '/sign-in'
+  redirectTo = '/sign-in',
+  allowPublic = false
 }: ProtectedRouteProps) {
   const { isAuthenticated, loading } = useAuth()
   const router = useRouter()
+  const pathname = usePathname()
+
+  // 检查当前路径是否为公开路径
+  const isPublicPath = useMemo(() => {
+    return PUBLIC_PATHS.some(path => pathname === path || pathname.startsWith(path + '/'))
+  }, [pathname])
+
+  // 如果是公开路径且allowPublic=true，则跳过认证检查
+  const shouldSkipAuth = allowPublic && isPublicPath
 
   useEffect(() => {
-    if (!loading && !isAuthenticated) {
-      // 未认证，重定向到登录页面
+    if (!loading && !isAuthenticated && !shouldSkipAuth) {
+      // 未认证且不是公开路径，重定向到登录页面
       router.push(redirectTo)
     }
-  }, [isAuthenticated, loading, router, redirectTo])
+  }, [isAuthenticated, loading, router, redirectTo, shouldSkipAuth])
 
   // 加载中显示加载器
   if (loading) {
@@ -92,17 +68,12 @@ export function ProtectedRoute({
     )
   }
 
-  // 未认证且未提供fallback，则不渲染任何内容（等待重定向）
-  if (!isAuthenticated && !fallback) {
-    return null
-  }
-
   // 未认证但有fallback，显示fallback
-  if (!isAuthenticated && fallback) {
+  if (!isAuthenticated && fallback && !shouldSkipAuth) {
     return <>{fallback}</>
   }
 
-  // 已认证，渲染子组件
+  // 已认证或为公开路径，渲染子组件
   return <>{children}</>
 }
 

@@ -25,7 +25,7 @@
  * **下游依赖**: 无
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { BackgroundGrid } from './BackgroundGrid'
@@ -41,25 +41,11 @@ export function EnergyLabSignIn() {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [oAuthLoading, setOAuthLoading] = useState<'google' | 'github' | null>(null)
-  const [showPasswordInput, setShowPasswordInput] = useState(false)
-  const [clerkAvailable, setClerkAvailable] = useState(false)
 
   const router = useRouter()
   const searchParams = useSearchParams()
   const { login } = useAuth()
   const { setUser, setToken } = useAuthStore()
-
-  // 检查 Clerk 是否可用
-  useEffect(() => {
-    const checkClerk = () => {
-      const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
-      const isConfigured = publishableKey && !publishableKey.includes('xxx')
-      setClerkAvailable(!!isConfigured && typeof window !== 'undefined' && !!(window as any).Clerk)
-    }
-
-    const timer = setTimeout(checkClerk, 500)
-    return () => clearTimeout(timer)
-  }, [])
 
   // 邮箱验证
   const validateEmail = (email: string): boolean => {
@@ -67,26 +53,8 @@ export function EnergyLabSignIn() {
     return emailRegex.test(email)
   }
 
-  // 处理邮箱继续
-  const handleEmailContinue = (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-
-    if (!email.trim()) {
-      setError('请输入邮箱地址')
-      return
-    }
-
-    if (!validateEmail(email)) {
-      setError('请输入有效的邮箱地址')
-      return
-    }
-
-    setShowPasswordInput(true)
-  }
-
   // 处理邮箱密码登录
-  const handleEmailSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
@@ -107,8 +75,12 @@ export function EnergyLabSignIn() {
 
     setIsLoading(true)
 
+    const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+    const clerkAvailable = publishableKey && !publishableKey.includes('xxx') &&
+                           typeof window !== 'undefined' && !!(window as any).Clerk
+
     try {
-      if (clerkAvailable && typeof window !== 'undefined' && (window as any).Clerk) {
+      if (clerkAvailable) {
         const clerk = (window as any).Clerk
 
         await clerk.signIn.create({
@@ -154,48 +126,16 @@ export function EnergyLabSignIn() {
     }
   }
 
-  // 处理魔法链接登录
-  const handleMagicLink = async () => {
-    if (!email.trim() || !validateEmail(email)) {
-      setError('请输入有效的邮箱地址')
-      return
-    }
-
-    setIsLoading(true)
-    setError('')
-
-    try {
-      if (clerkAvailable && typeof window !== 'undefined' && (window as any).Clerk) {
-        const clerk = (window as any).Clerk
-
-        await clerk.signIn.create({
-          identifier: email,
-        })
-
-        await clerk.signIn.prepareFirstFactor({
-          strategy: 'email_link',
-          redirectUrl: `${window.location.origin}/verify`,
-        })
-
-        setError('请检查您的邮箱以继续登录')
-      } else {
-        await new Promise(resolve => setTimeout(resolve, 1000))
-        setError('开发模式：魔法链接功能需要配置 Clerk')
-      }
-    } catch (err: any) {
-      const clerkError = err?.errors?.[0]?.message || err?.message || '发送魔法链接失败'
-      setError(clerkError)
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
   // 处理 Google 登录
   const handleGoogleLogin = async () => {
     setOAuthLoading('google')
     setError('')
 
-    if (clerkAvailable && typeof window !== 'undefined' && (window as any).Clerk) {
+    const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+    const clerkAvailable = publishableKey && !publishableKey.includes('xxx') &&
+                           typeof window !== 'undefined' && !!(window as any).Clerk
+
+    if (clerkAvailable) {
       try {
         const clerk = (window as any).Clerk
         await clerk.authenticate({
@@ -219,7 +159,11 @@ export function EnergyLabSignIn() {
     setOAuthLoading('github')
     setError('')
 
-    if (clerkAvailable && typeof window !== 'undefined' && (window as any).Clerk) {
+    const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+    const clerkAvailable = publishableKey && !publishableKey.includes('xxx') &&
+                           typeof window !== 'undefined' && !!(window as any).Clerk
+
+    if (clerkAvailable) {
       try {
         const clerk = (window as any).Clerk
         await clerk.authenticate({
@@ -321,7 +265,7 @@ export function EnergyLabSignIn() {
           </div>
 
           {/* 邮箱登录表单 */}
-          <form onSubmit={showPasswordInput ? handleEmailSubmit : handleEmailContinue} className="w-full space-y-4">
+          <form onSubmit={handleSubmit} className="w-full space-y-4">
             {/* 邮箱输入框 */}
             <div className="floating-label-group">
               <input
@@ -345,28 +289,26 @@ export function EnergyLabSignIn() {
             </div>
 
             {/* 密码输入框 */}
-            {showPasswordInput && (
-              <div className="floating-label-group">
-                <input
-                  type="password"
-                  id="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder=" "
-                  disabled={isLoading}
-                  className={cn(
-                    'floating-label-input energy-input w-full h-12 px-3 rounded-md text-sm',
-                    'placeholder:text-transparent',
-                    'focus:outline-none',
-                    'disabled:cursor-not-allowed disabled:opacity-50'
-                  )}
-                  autoComplete="current-password"
-                />
-                <label htmlFor="password" className="floating-label">
-                  密码
-                </label>
-              </div>
-            )}
+            <div className="floating-label-group">
+              <input
+                type="password"
+                id="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder=" "
+                disabled={isLoading}
+                className={cn(
+                  'floating-label-input energy-input w-full h-12 px-3 rounded-md text-sm',
+                  'placeholder:text-transparent',
+                  'focus:outline-none',
+                  'disabled:cursor-not-allowed disabled:opacity-50'
+                )}
+                autoComplete="current-password"
+              />
+              <label htmlFor="password" className="floating-label">
+                密码
+              </label>
+            </div>
 
             {/* 内联错误提示 */}
             {error && (
@@ -380,78 +322,22 @@ export function EnergyLabSignIn() {
               </p>
             )}
 
-            {!showPasswordInput ? (
-              <div className="space-y-3">
-                {/* 继续访问按钮 (带光效) */}
-                <button
-                  type="submit"
-                  disabled={isLoading || !email.trim()}
-                  className={cn(
-                    'energy-btn w-full h-11 rounded-md font-medium text-sm',
-                    'flex items-center justify-center',
-                    'disabled:cursor-not-allowed disabled:opacity-50'
-                  )}
-                >
-                  {isLoading ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : (
-                    '继续访问'
-                  )}
-                </button>
-
-                {/* 发送魔力链接按钮 */}
-                <button
-                  type="button"
-                  onClick={handleMagicLink}
-                  disabled={isLoading || !email.trim()}
-                  className={cn(
-                    'energy-oauth-btn w-full h-11 rounded-md font-medium text-sm',
-                    'flex items-center justify-center',
-                    'transition-all duration-200',
-                    'disabled:cursor-not-allowed disabled:opacity-50'
-                  )}
-                >
-                  {isLoading ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : (
-                    '发送魔力链接'
-                  )}
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {/* 继续按钮 */}
-                <button
-                  type="submit"
-                  disabled={isLoading || !email.trim() || !password.trim()}
-                  className={cn(
-                    'energy-btn w-full h-11 rounded-md font-medium text-sm',
-                    'flex items-center justify-center',
-                    'disabled:cursor-not-allowed disabled:opacity-50'
-                  )}
-                >
-                  {isLoading ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : (
-                    '继续访问'
-                  )}
-                </button>
-
-                {/* 返回按钮 */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowPasswordInput(false)
-                    setPassword('')
-                    setError('')
-                  }}
-                  disabled={isLoading}
-                  className="w-full text-sm text-slate-500 hover:text-primary transition-colors"
-                >
-                  返回
-                </button>
-              </div>
-            )}
+            {/* 登录按钮 */}
+            <button
+              type="submit"
+              disabled={isLoading || !email.trim() || !password.trim()}
+              className={cn(
+                'energy-btn w-full h-11 rounded-md font-medium text-sm',
+                'flex items-center justify-center',
+                'disabled:cursor-not-allowed disabled:opacity-50'
+              )}
+            >
+              {isLoading ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                '登录'
+              )}
+            </button>
           </form>
 
           {/* 底部注册链接 */}

@@ -94,7 +94,11 @@ class DataConsistencyValidator:
     CATEGORY_KEYWORDS = [
         'name', 'category', 'type', 'status', 'region', 'department',
         'product', 'customer', 'supplier', 'city', 'country',
-        '名称', '类别', '类型', '状态', '地区', '部门', '产品'
+        # 地址相关关键词
+        'province', 'district', 'address', 'location', 'area',
+        'state', 'county', 'street', 'zip', 'postal',
+        '省份', '城市', '地区', '地址', '位置', '区域',
+        '名称', '类别', '类型', '状态', '部门', '产品'
     ]
 
     # 数值聚合关键词
@@ -389,6 +393,59 @@ class DataConsistencyValidator:
         return columns
 
     @classmethod
+    def _detect_percentage_data(
+        cls,
+        data: List[Dict[str, Any]]
+    ) -> bool:
+        """
+        检测数据是否为百分比格式
+
+        Args:
+            data: 查询结果数据
+
+        Returns:
+            True 如果检测到百分比数据特征
+        """
+        if not data or len(data) == 0:
+            return False
+
+        columns = list(data[0].keys())
+
+        # 1. 检查列名是否包含百分比关键词
+        percent_keywords = ['percent', 'percentage', 'ratio', 'proportion', 'rate',
+                            '占比', '比率', '百分比', '比例', '份额']
+        has_percent_column = any(
+            any(kw in col.lower() for kw in percent_keywords)
+            for col in columns
+        )
+        if has_percent_column:
+            return True
+
+        # 2. 检查数值特征：总和接近100，且所有值在0-100范围内
+        numeric_values = []
+        for row in data:
+            for col in columns:
+                val = row.get(col)
+                if val is not None:
+                    try:
+                        # 检查是否为字符串形式的百分比
+                        if isinstance(val, str) and '%' in val:
+                            return True
+                        num_val = float(str(val).replace('%', ''))
+                        if 0 <= num_val <= 100:
+                            numeric_values.append(num_val)
+                    except (ValueError, TypeError):
+                        pass
+
+        if numeric_values and len(numeric_values) > 1:
+            total = sum(numeric_values)
+            # 总和在 95-105 之间，认为是百分比数据
+            if 95 <= total <= 105:
+                return True
+
+        return False
+
+    @classmethod
     def recommend_chart(
         cls,
         query_results: List[Dict[str, Any]],
@@ -435,16 +492,21 @@ class DataConsistencyValidator:
                 chart_type = "bar"
                 reasoning.append("用户问题包含对比关键词")
 
-            # 占比类 -> 饼图
+            # 占比类 -> 饼图（移除类别数量限制）
             if any(kw in question_lower for kw in [
                 "占比", "分布", "比例", "份额"
             ]):
-                if len(query_results) <= 8:
-                    chart_type = "pie"
-                    reasoning.append("用户问题包含占比关键词，且类别数量适中")
+                chart_type = "pie"
+                reasoning.append("用户问题包含占比关键词")
 
         # 如果没有从问题推断出来，根据数据特征推断
         if chart_type == "table":
+            # 检测百分比数据自动推荐饼图
+            if cls._detect_percentage_data(query_results):
+                if len(query_results) <= 12:  # 饼图适合的类别数量
+                    chart_type = "pie"
+                    reasoning.append("检测到百分比数据，适合饼图展示")
+
             if field_mapping.x_type == ColumnType.TIME and len(query_results) >= 3:
                 chart_type = "line"
                 reasoning.append("检测到时间序列数据")

@@ -68,6 +68,15 @@ def supplement_proportion_data(
     if not sql_result or len(sql_result) != 1:
         return sql_result
 
+    # 🔧 新增：检查用户是否期望看到所有类别
+    # 如果用户查询包含"各"、"所有"、"全部"等词，说明应该返回多条记录
+    # 此时只有1条记录是SQL问题，不应该补全
+    if user_query:
+        all_categories_keywords = ['各', '所有', '全部', '每', 'each', 'all', 'every']
+        if any(kw in user_query for kw in all_categories_keywords):
+            # 用户期望看到所有类别，不补全
+            return sql_result
+
     # 检测是否为占比类查询
     proportion_keywords = ['占比', '比例', '分布', '多少']
     combined_text = (sql + " " + user_query).lower()
@@ -350,6 +359,56 @@ def sql_result_to_mcp_echarts_data(
     return data, actual_x, actual_y
 
 
+def detect_percentage_data(data: List[Dict[str, Any]]) -> bool:
+    """
+    检测数据是否为百分比格式
+
+    Args:
+        data: 查询结果数据
+
+    Returns:
+        True 如果检测到百分比数据特征
+    """
+    if not data or len(data) == 0:
+        return False
+
+    columns = list(data[0].keys())
+
+    # 1. 检查列名是否包含百分比关键词
+    percent_keywords = ['percent', 'percentage', 'ratio', 'proportion', 'rate',
+                        '占比', '比率', '百分比', '比例', '份额']
+    has_percent_column = any(
+        any(kw in col.lower() for kw in percent_keywords)
+        for col in columns
+    )
+    if has_percent_column:
+        return True
+
+    # 2. 检查数值特征：总和接近100，且所有值在0-100范围内
+    numeric_values = []
+    for row in data:
+        for col in columns:
+            val = row.get(col)
+            if val is not None:
+                try:
+                    # 检查是否为字符串形式的百分比
+                    if isinstance(val, str) and '%' in val:
+                        return True
+                    num_val = float(str(val).replace('%', ''))
+                    if 0 <= num_val <= 100:
+                        numeric_values.append(num_val)
+                except (ValueError, TypeError):
+                    pass
+
+    if numeric_values and len(numeric_values) > 1:
+        total = sum(numeric_values)
+        # 总和在 95-105 之间，认为是百分比数据
+        if 95 <= total <= 105:
+            return True
+
+    return False
+
+
 def infer_chart_type(sql: str, data: List[Dict[str, Any]], question: str = "") -> str:
     """
     根据 SQL 语句、数据特征和用户问题推断合适的图表类型
@@ -364,7 +423,12 @@ def infer_chart_type(sql: str, data: List[Dict[str, Any]], question: str = "") -
     """
     sql_lower = sql.lower()
     question_lower = question.lower() if question else ""
-    
+
+    # 0. 检测百分比数据（优先级最高）
+    if detect_percentage_data(data):
+        if len(data) <= 12:  # 饼图适合的类别数量
+            return "pie"
+
     # 优先从用户问题中推断（更准确）
     if question:
         # 趋势类关键词 -> 折线图

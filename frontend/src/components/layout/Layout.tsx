@@ -59,9 +59,10 @@ import { Sidebar } from './Sidebar'
 
 interface LayoutProps {
   children: React.ReactNode
+  hideRightBar?: boolean
 }
 
-export function Layout({ children }: LayoutProps) {
+export function Layout({ children, hideRightBar }: LayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   return (

@@ -7,6 +7,8 @@ from .endpoints import health, tenants, documents, data_sources, config, test, l
 from .endpoints import performance_monitoring
 from .endpoints import sql_error_memories
 from .endpoints import logs
+from .endpoints import wechat_work
+from .endpoints import wechat_webhook
 # 暂时禁用security端点，因为编码问题
 # from .endpoints import security
 # 启用query端点，Agent集成已完成
@@ -59,3 +61,9 @@ api_router.include_router(sql_error_memories.router, prefix="/sql-error-memories
 
 # 新增前端日志接收端点 - 全量埋点
 api_router.include_router(logs.router, prefix="/logs", tags=["Logging"])
+
+# 新增企业微信端点 - 双向通信集成
+api_router.include_router(wechat_work.router, prefix="/wechat-work", tags=["Wechat Work"])
+
+# 新增企业微信群机器人端点 - 简单Webhook发送
+api_router.include_router(wechat_webhook.router, prefix="/wechat-webhook", tags=["Wechat Webhook"])

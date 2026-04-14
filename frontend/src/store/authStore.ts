@@ -197,6 +197,16 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'auth-store',
+      version: 2, // 版本升级：清除旧的开发模式自动登录缓存
+      migrate: (persistedState: any, version: number) => {
+        // 版本 0/1 的缓存可能包含开发模式 mock 数据，清除认证状态
+        if (version < 2) {
+          persistedState.isAuthenticated = false
+          persistedState.token = null
+          persistedState.user = null
+        }
+        return persistedState
+      },
       partialize: (state) => ({
         token: state.token,
         user: state.user,

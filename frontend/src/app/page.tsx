@@ -3,7 +3,7 @@
  *
  * ## [MODULE]
  * **文件名**: page.tsx
- * **职责**: 应用根路径首页，自动重定向到主仪表板
+ * **职责**: 应用根路径首页，自动重定向到 Agent 界面
  *
  * ## [INPUT]
  * Props (无): Next.js页面组件无需props
@@ -15,7 +15,8 @@
  * - next/navigation - Next.js导航模块
  *
  * **下游依赖**:
- * - [dashboard/page.tsx](./(app)/dashboard/page.tsx) - 仪表板页面（重定向目标）
+ * - [dashboard/page.tsx](./(app)/dashboard/page.tsx) - 仪表板页面
+ * - [ai-assistant/page.tsx](./(app)/ai-assistant/page.tsx) - Agent 界面（重定向目标）
  *
  * **调用方**:
  * - Next.js App Router (访问根路径 / 时调用)
@@ -30,5 +31,5 @@
 import { redirect } from 'next/navigation'
 
 export default function Home() {
-  redirect('/dashboard')
+  redirect('/ai-assistant')
 }

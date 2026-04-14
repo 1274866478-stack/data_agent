@@ -169,19 +169,39 @@ def classify_question(question: str, has_data_source: bool = False) -> QuestionT
 
     # 4. 数据查询关键词（需要数据源）
     data_keywords = [
+        # 现有关键词
         "统计", "查询", "多少", "数量", "列表", "排行",
         "总数", "平均", "最大", "最小", "汇总", "count",
-        "select", "from", "top", "前", "排名"
+        "select", "from", "top", "前", "排名",
+        # 🆕 新增：买卖相关
+        "买", "卖", "购买", "销售", "进货", "出货",
+        "交易", "消费", "花费", "采购",
+        # 🆕 新增：常见疑问词
+        "什么", "谁", "哪个", "哪些", "怎么",
+        # 🆕 新增：数据相关
+        "数据", "记录", "详情", "信息", "明细",
+        # 🆕 新增：聚合相关
+        "合计", "总计", "累加", "一共"
     ]
     # 🆕 模糊业务查询关键词（生意、销售、业绩等）
     business_keywords = [
+        # 现有关键词
         "生意", "销售", "业绩", "营收", "收入", "利润",
         "订单", "客户", "用户", "产品", "怎么样", "如何",
-        "最近", "本月", "上月", "今年", "去年", "趋势"
+        "最近", "本月", "上月", "今年", "去年", "趋势",
+        # 🆕 新增：商品/人员相关
+        "商品", "货物", "员工", "人员", "供应商",
+        # 🆕 新增：动作相关
+        "买了", "卖了", "买了什么", "卖了什么"
     ]
+
+    # 🆕 诊断日志：记录关键词匹配情况
+    matched_data_kw = [kw for kw in data_keywords if kw in question]
+    matched_business_kw = [kw for kw in business_keywords if kw in question]
     has_data_query = any(kw in question for kw in data_keywords) or any(kw in question for kw in business_keywords)
+
     if has_data_source and has_data_query:
-        logger.info(f"[classify_question] ✓ DATA_QUERY: question='{question_stripped}', has_data_source=True")
+        logger.info(f"[classify_question] ✓ DATA_QUERY: question='{question_stripped}', matched_data={matched_data_kw}, matched_business={matched_business_kw}")
         return QuestionType.DATA_QUERY
 
     # 5. 默认为普通对话

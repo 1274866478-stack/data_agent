@@ -165,7 +165,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const hasClerkKey = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 
       // === 开发模式：自动设置模拟用户 ===
-      if (isDevelopmentMode && authMode === 'clerk' && !hasClerkKey) {
+      // 注意：只有在设置了 NEXT_PUBLIC_DEV_AUTO_LOGIN=true 时才自动登录
+      // 默认行为：让用户可以正常访问登录/注册页面
+      const devAutoLogin = process.env.NEXT_PUBLIC_DEV_AUTO_LOGIN === 'true'
+      if (isDevelopmentMode && authMode === 'clerk' && !hasClerkKey && devAutoLogin) {
         const mockUser = {
           id: 'anonymous',
           email: 'admin@dataagent.local',
@@ -175,7 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(mockUser)
         setToken('dev-mock-token')
         setLoading(false)
-        console.log('🔧 开发模式：使用模拟用户', mockUser)
+        console.log('🔧 开发模式：使用模拟用户 (DEV_AUTO_LOGIN=true)')
         return
       }
 

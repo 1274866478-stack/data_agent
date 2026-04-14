@@ -1,30 +1,31 @@
 'use client'
 
-import { ProcessingSteps } from '@/components/chat/ProcessingSteps'
-import { ThemeToggle } from '@/components/theme/ThemeToggle'
+import Link from 'next/link'
+import { useChatStore } from '@/store/chatStore'
+import { useDataSourceStore } from '@/store/dataSourceStore'
+import { useAuthStore } from '@/store/authStore'
+import { removeChartMarkers } from '@/utils/chartParser'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
-    DropdownMenu,
-    DropdownMenuCheckboxItem,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Markdown } from '@/components/ui/markdown'
 import { PlainText } from '@/components/ui/plain-text'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { ProcessingSteps } from '@/components/chat/ProcessingSteps'
 import { cn } from '@/lib/utils'
 import { fileUploadService, uploadFile, UploadProgress } from '@/services/fileUploadService'
-import { useChatStore } from '@/store/chatStore'
-import { useDataSourceStore } from '@/store/dataSourceStore'
-import { removeChartMarkers } from '@/utils/chartParser'
-import { AlertCircle, AlertTriangle, Bot, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, Database, FileText, History, Loader2, MessageSquare, Paperclip, Plus, Search, Send, Sparkles, Square, Trash2, User, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, Database, FileText, History, Loader2, MessageSquare, Paperclip, Plus, Search, Send, Square, Trash2, User, X } from 'lucide-react'
+import Image from 'next/image'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 interface UploadedFile {
@@ -43,8 +44,6 @@ export default function AIAssistantPage() {
   const [batchSelectMode, setBatchSelectMode] = useState(false)
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
   const [selectedDataSourceIds, setSelectedDataSourceIds] = useState<string[]>([])
-  const [pendingDataSourceIds, setPendingDataSourceIds] = useState<string[]>([])
-  const [dataSourceMenuOpen, setDataSourceMenuOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const {
     sendMessage,
@@ -62,6 +61,9 @@ export default function AIAssistantPage() {
     outputFormat,
     setOutputFormat
   } = useChatStore()
+
+  // 认证状态
+  const { isAuthenticated, user } = useAuthStore()
 
   // 数据源相关
   const {
@@ -319,153 +321,23 @@ export default function AIAssistantPage() {
   const completedUploads = uploadedFiles.filter(f => f.status === 'completed').length
 
   return (
-    <div className="h-screen flex flex-col bg-gradient-to-br from-slate-50 via-primary-50/20 to-slate-100 -m-6 font-inter">
-      {/* 顶部菜单栏 */}
-      <div className="h-14 border-b border-slate-200/60 bg-white/80 backdrop-blur-sm shadow-sm flex-shrink-0">
-        <div className="h-full max-w-7xl mx-auto px-6 flex items-center justify-between">
-          {/* Logo */}
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-semibold text-slate-800 flex items-center gap-1.5">
-              Insight <span className="text-primary">⚡</span> Agent
-            </h1>
+    <div className="h-screen flex flex-col bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
+      {/* 极简顶部栏 - 参考 ChatGPT */}
+      <header className="h-16 flex items-center justify-between px-6 border-b border-slate-200/50 dark:border-slate-700/50 bg-white/60 dark:bg-slate-900/60 backdrop-blur-sm flex-shrink-0">
+        {/* 左侧：Logo + 历史记录（已登录时） */}
+        <div className="flex items-center gap-2">
+          <div className="w-9 h-9 rounded-xl overflow-hidden flex items-center justify-center">
+            <Image src="/logo-icon-only.svg" alt="Insight Agent" width={36} height={36} className="object-contain" />
           </div>
-          
-          {/* 中间区域 - 数据源选择器 */}
-          <div className="flex items-center gap-2">
-            <Database className="w-4 h-4 text-slate-500" />
-            <DropdownMenu
-              open={dataSourceMenuOpen}
-              onOpenChange={(open) => {
-                setDataSourceMenuOpen(open)
-                if (open) {
-                  setPendingDataSourceIds(selectedDataSourceIds)
-                }
-              }}
-            >
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 min-w-[200px] justify-between text-slate-700 border-slate-300/50 hover:border-primary-400 hover:bg-primary-50/50"
-                >
-                  <div className="flex items-center gap-2 overflow-hidden">
-                    <span className="truncate text-sm">{selectedDataSourceLabel}</span>
-                    {selectedDataSources.length > 0 && (
-                      <div className="flex items-center gap-1">
-                        {selectedDataSources.slice(0, 2).map(ds => (
-                          <Badge key={ds.id} variant="outline" className="text-[10px] px-1 py-0">
-                            {ds.db_type.toUpperCase()}
-                          </Badge>
-                        ))}
-                        {selectedDataSources.length > 2 && (
-                          <Badge variant="outline" className="text-[10px] px-1 py-0">
-                            +{selectedDataSources.length - 2}
-                          </Badge>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <ChevronDown className="w-4 h-4 shrink-0" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-72" sideOffset={6} align="center">
-                <DropdownMenuLabel>选择数据源</DropdownMenuLabel>
-                <DropdownMenuCheckboxItem
-                  checked={pendingDataSourceIds.length === 0}
-                  onCheckedChange={() => setPendingDataSourceIds([])}
-                  className="pl-2"
-                  onSelect={(e) => e.preventDefault()}
-                >
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      checked={pendingDataSourceIds.length === 0}
-                      className="pointer-events-none h-3.5 w-3.5"
-                    />
-                    <span>所有数据源（自动）</span>
-                  </div>
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuSeparator />
-                {isLoadingDataSources ? (
-                  <DropdownMenuItem disabled className="flex items-center gap-2">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    加载中...
-                  </DropdownMenuItem>
-                ) : activeDataSources.length === 0 ? (
-                  <DropdownMenuItem disabled className="text-muted-foreground">
-                    暂无可用数据源
-                  </DropdownMenuItem>
-                ) : (
-                  activeDataSources.map((ds) => (
-                    <DropdownMenuCheckboxItem
-                      key={ds.id}
-                      checked={pendingDataSourceIds.includes(ds.id)}
-                      onCheckedChange={(checked) => {
-                        const isChecked = Boolean(checked)
-                        setPendingDataSourceIds((prev) => {
-                          const next = new Set(prev)
-                          if (isChecked) {
-                            next.add(ds.id)
-                          } else {
-                            next.delete(ds.id)
-                          }
-                          return Array.from(next)
-                        })
-                      }}
-                      onSelect={(e) => e.preventDefault()}
-                    >
-                      <div className="flex items-center justify-between gap-2 w-full">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Checkbox
-                            checked={pendingDataSourceIds.includes(ds.id)}
-                            className="pointer-events-none h-3.5 w-3.5"
-                          />
-                          <span className="truncate">{ds.name}</span>
-                        </div>
-                        <Badge variant="outline" className="text-[10px] px-1 py-0">
-                          {ds.db_type.toUpperCase()}
-                        </Badge>
-                      </div>
-                    </DropdownMenuCheckboxItem>
-                  ))
-                )}
-                <DropdownMenuSeparator />
-                <div className="flex items-center justify-end gap-2 px-2 pb-2 pt-1">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="h-7 text-xs"
-                    onClick={() => {
-                      setPendingDataSourceIds(selectedDataSourceIds)
-                      setDataSourceMenuOpen(false)
-                    }}
-                  >
-                    取消
-                  </Button>
-                  <Button
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => {
-                      setSelectedDataSourceIds(pendingDataSourceIds)
-                      setDataSourceMenuOpen(false)
-                    }}
-                  >
-                    确认
-                  </Button>
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-          
-          {/* 右侧按钮 */}
-          <div className="flex items-center gap-2">
-            {/* 主题切换 */}
-            <ThemeToggle />
-            
+          <h1 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
+            Insight Agent
+          </h1>
+          {isAuthenticated && (
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setShowHistory(!showHistory)}
-              className="gap-2 text-slate-700 hover:text-primary hover:bg-primary-50/50"
+              className="gap-2 ml-2 text-slate-700 dark:text-slate-300"
             >
               <History className="w-4 h-4" />
               History
@@ -475,23 +347,40 @@ export default function AIAssistantPage() {
                 </span>
               )}
             </Button>
-            <Button
-              onClick={handleStartNewConversation}
-              size="sm"
-              className="gap-2 bg-primary text-slate-900 hover:opacity-90 shadow-sm"
-            >
-              <Plus className="w-4 h-4" />
-              New Chat
-            </Button>
-          </div>
+          )}
         </div>
-      </div>
 
-      {/* 主容器 */}
+        {/* 右侧：登录/注册（未登录）或 New Chat（已登录） */}
+        {isAuthenticated ? (
+          <Button
+            onClick={handleStartNewConversation}
+            size="sm"
+            className="gap-2 bg-primary text-slate-900 hover:opacity-90"
+          >
+            <Plus className="w-4 h-4" />
+            New Chat
+          </Button>
+        ) : (
+          <div className="flex items-center gap-3">
+            <Link href="/sign-in">
+              <Button variant="ghost" size="sm" className="text-slate-700 dark:text-slate-300">
+                登录
+              </Button>
+            </Link>
+            <Link href="/sign-up">
+              <Button size="sm" className="bg-black dark:bg-white text-white dark:text-black hover:bg-slate-800 dark:hover:bg-slate-200">
+                免费注册
+              </Button>
+            </Link>
+          </div>
+        )}
+      </header>
+
+      {/* 主内容区 */}
       <div className="flex-1 flex min-h-0">
         {/* 历史对话侧边栏 */}
         <div className={cn(
-          "h-full bg-white/60 backdrop-blur-sm border-r border-slate-200/60 shadow-lg transition-all duration-300 flex flex-col",
+          "h-full bg-white/60 dark:bg-slate-900/60 backdrop-blur-sm border-r border-slate-200/60 dark:border-slate-700/60 shadow-lg transition-all duration-300 flex flex-col",
           showHistory ? "w-80" : "w-0 overflow-hidden"
         )}>
         {showHistory && (
@@ -641,44 +530,37 @@ export default function AIAssistantPage() {
         )}
       </div>
 
-        {/* 主内容区 */}
-        <div className="flex-1 flex flex-col p-6 min-h-0">
-          <div className="flex-1 max-w-6xl mx-auto w-full flex flex-col min-h-0 overflow-hidden">
+        {/* 主内容区 - 居中布局 */}
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 max-w-3xl mx-auto w-full flex flex-col min-h-0 overflow-hidden px-4">
 
-          {/* Chat Area */}
-          <Card className="flex-1 flex flex-col glass shadow-2xl border-slate-200/40 min-h-0 overflow-hidden">
-            <CardContent className="flex-1 flex flex-col p-6 min-h-0">
-              {/* Messages */}
-              <div className="flex-1 overflow-y-auto mb-4 space-y-4 min-h-0">
-              {messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center">
-                  <div className="p-4 bg-gradient-to-br from-primary/10 to-primary/20 rounded-full mb-4">
-                    <Bot className="w-16 h-16 text-primary" />
-                  </div>
-                  <h3 className="text-xl font-semibold mb-2">欢迎使用 Insight Agent</h3>
-                  <p className="text-muted-foreground mb-6 max-w-md">
-                    我可以帮助您分析数据、回答问题、生成报告。请输入您的问题开始对话。
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl">
-                    {[
-                      '介绍一下你的功能',
-                      '分析我的数据源',
-                      '生成数据报告',
-                      '查看数据洞察'
-                    ].map((question, index) => (
-                      <Button
-                        key={index}
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setInput(question)}
-                        className="text-left justify-start"
-                      >
-                        <Sparkles className="w-4 h-4 mr-2" />
-                        {question}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
+          {/* 消息区域 */}
+          <div className="flex-1 overflow-y-auto space-y-4 py-6">
+          {messages.length === 0 ? (
+            /* 极简欢迎界面 */
+            <div className="h-full flex flex-col items-center justify-center text-center px-4">
+              <h2 className="text-2xl font-semibold text-foreground mb-3">
+                准备好了，随时开始
+              </h2>
+              <p className="text-muted-foreground mb-8 max-w-md">
+                我可以帮助您分析数据、回答问题、生成报告。
+              </p>
+              <div className="flex flex-wrap justify-center gap-2 max-w-lg">
+                {[
+                  '介绍一下你的功能',
+                  '分析我的数据源',
+                  '生成数据报告',
+                ].map((question) => (
+                  <button
+                    key={question}
+                    onClick={() => setInput(question)}
+                    className="text-sm px-4 py-2 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-foreground transition-colors"
+                  >
+                    {question}
+                  </button>
+                ))}
+              </div>
+            </div>
               ) : (
                 <>
                   {messages.map((message) => (
@@ -696,7 +578,16 @@ export default function AIAssistantPage() {
                         {message.role === 'user' ? (
                           <User className="w-5 h-5" />
                         ) : (
-                          <Bot className="w-5 h-5 text-foreground" />
+                          <div className="w-5 h-5 flex items-center justify-center text-foreground">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                              <path d="M12 8V4H8" />
+                              <rect width="16" height="12" x="4" y="8" rx="2" />
+                              <path d="M2 14h2" />
+                              <path d="M20 14h2" />
+                              <path d="M15 13v2" />
+                              <path d="M9 13v2" />
+                            </svg>
+                          </div>
                         )}
                       </div>
                       <div className={`flex-1 max-w-[75%] ${
@@ -805,117 +696,187 @@ export default function AIAssistantPage() {
               )}
             </div>
 
-            {/* Input Area */}
-            <div className="border-t pt-4">
-              {/* 隐藏的文件输入 */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                multiple
-                onChange={handleFileInputChange}
-              />
+            {/* 输入框区域 */}
+          <div className="pb-6 pt-4 flex-shrink-0">
+            {/* 隐藏的文件输入 */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              multiple
+              onChange={handleFileInputChange}
+            />
 
-              {/* 文件上传进度 */}
-              {uploadProgress && (
-                <div className="mb-3 p-2 bg-muted rounded-lg">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium">{uploadProgress.message}</span>
-                    {uploadProgress.status === 'error' && (
+            {/* 文件上传进度 */}
+            {uploadProgress && (
+              <div className="mb-3 max-w-2xl mx-auto p-2 bg-muted rounded-lg">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium">{uploadProgress.message}</span>
+                  {uploadProgress.status === 'error' && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setUploadProgress(null)}
+                      className="h-auto p-0 text-xs"
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+                {uploadProgress.status === 'uploading' && (
+                  <div className="w-full bg-background rounded-full h-1.5">
+                    <div
+                      className="bg-primary h-1.5 rounded-full transition-all duration-300"
+                      style={{ width: `${uploadProgress.percentage}%` }}
+                    />
+                  </div>
+                )}
+                {uploadProgress.status === 'completed' && (
+                  <div className="text-xs text-green-600">✓ {uploadProgress.message}</div>
+                )}
+                {uploadProgress.status === 'error' && (
+                  <div className="text-xs text-destructive">✗ {uploadProgress.message}</div>
+                )}
+              </div>
+            )}
+
+            {/* 已上传文件列表 */}
+            {uploadedFiles.length > 0 && (
+              <div className="mb-3 max-w-2xl mx-auto space-y-1.5">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-2">
+                  <span>已上传文件</span>
+                  <span className="px-1.5 py-0.5 bg-muted rounded-full text-[10px]">
+                    {completedUploads}/{uploadedFiles.length}
+                  </span>
+                </div>
+                {uploadedFiles.map((uploadedFile, index) => (
+                  <div
+                    key={index}
+                    className={cn(
+                      "flex items-center gap-2 p-2 rounded text-xs transition-colors",
+                      uploadedFile.status === 'completed' && "bg-green-500/10",
+                      uploadedFile.status === 'error' && "bg-destructive/10",
+                      uploadedFile.status === 'uploading' && "bg-primary/10",
+                      uploadedFile.status === 'pending' && "bg-muted/30"
+                    )}
+                  >
+                    {uploadedFile.status === 'completed' && (
+                      <CheckCircle className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+                    )}
+                    {uploadedFile.status === 'error' && (
+                      <AlertCircle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />
+                    )}
+                    {uploadedFile.status === 'uploading' && (
+                      <Loader2 className="h-3.5 w-3.5 text-primary animate-spin flex-shrink-0" />
+                    )}
+                    {uploadedFile.status === 'pending' && (
+                      <FileText className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                    )}
+                    <span className="flex-1 truncate">{uploadedFile.file.name}</span>
+                    <span className="text-muted-foreground flex-shrink-0">
+                      {fileUploadService.formatFileSize(uploadedFile.file.size)}
+                    </span>
+                    {uploadedFile.status === 'error' && (
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setUploadProgress(null)}
-                        className="h-auto p-0 text-xs"
+                        onClick={() => retryUpload(index)}
+                        className="h-auto px-1.5 py-0.5 text-xs text-primary hover:text-primary/80 hover:bg-primary/10"
                       >
-                        <X className="h-3 w-3" />
+                        重试
                       </Button>
                     )}
-                  </div>
-                  {uploadProgress.status === 'uploading' && (
-                    <div className="w-full bg-background rounded-full h-1.5">
-                      <div
-                        className="bg-primary h-1.5 rounded-full transition-all duration-300"
-                        style={{ width: `${uploadProgress.percentage}%` }}
-                      />
-                    </div>
-                  )}
-                  {uploadProgress.status === 'completed' && (
-                    <div className="text-xs text-green-600">✓ {uploadProgress.message}</div>
-                  )}
-                  {uploadProgress.status === 'error' && (
-                    <div className="text-xs text-destructive">✗ {uploadProgress.message}</div>
-                  )}
-                </div>
-              )}
-
-              {/* 已上传文件列表 */}
-              {uploadedFiles.length > 0 && (
-                <div className="mb-3 space-y-1.5">
-                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-2">
-                    <span>已上传文件</span>
-                    <span className="px-1.5 py-0.5 bg-muted rounded-full text-[10px]">
-                      {completedUploads}/{uploadedFiles.length}
-                    </span>
-                  </div>
-                  {uploadedFiles.map((uploadedFile, index) => (
-                    <div
-                      key={index}
-                      className={cn(
-                        "flex items-center gap-2 p-2 rounded text-xs transition-colors",
-                        uploadedFile.status === 'completed' && "bg-green-500/10",
-                        uploadedFile.status === 'error' && "bg-destructive/10",
-                        uploadedFile.status === 'uploading' && "bg-primary/10",
-                        uploadedFile.status === 'pending' && "bg-muted/30"
-                      )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeUploadedFile(index)}
+                      className="h-auto p-0.5 text-muted-foreground hover:text-destructive"
                     >
-                      {uploadedFile.status === 'completed' && (
-                        <CheckCircle className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
-                      )}
-                      {uploadedFile.status === 'error' && (
-                        <AlertCircle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />
-                      )}
-                      {uploadedFile.status === 'uploading' && (
-                        <Loader2 className="h-3.5 w-3.5 text-primary animate-spin flex-shrink-0" />
-                      )}
-                      {uploadedFile.status === 'pending' && (
-                        <FileText className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                      )}
-                      <span className="flex-1 truncate">{uploadedFile.file.name}</span>
-                      <span className="text-muted-foreground flex-shrink-0">
-                        {fileUploadService.formatFileSize(uploadedFile.file.size)}
-                      </span>
-                      {uploadedFile.status === 'error' && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => retryUpload(index)}
-                          className="h-auto px-1.5 py-0.5 text-xs text-primary hover:text-primary/80 hover:bg-primary/10"
-                        >
-                          重试
-                        </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => removeUploadedFile(index)}
-                        className="h-auto p-0.5 text-muted-foreground hover:text-destructive"
-                      >
-                        <X className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
 
-              {/* DataLab 玻璃态输入容器 */}
-              <div className="glass rounded-2xl shadow-2xl p-3 flex items-end gap-3 ring-1 ring-slate-200 dark:ring-slate-700">
+            {/* 数据源选择器 - 紧凑版，居中 */}
+            <div className="mb-3 flex items-center justify-center">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground">
+                    <Database className="w-3 h-3" />
+                    <span>{selectedDataSourceLabel}</span>
+                    <ChevronDown className="w-3 h-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="center" className="w-64">
+                  <DropdownMenuLabel>选择数据源</DropdownMenuLabel>
+                  <DropdownMenuCheckboxItem
+                    checked={selectedDataSourceIds.length === 0}
+                    onCheckedChange={() => setSelectedDataSourceIds([])}
+                    className="pl-2"
+                    onSelect={(e) => e.preventDefault()}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Checkbox checked={selectedDataSourceIds.length === 0} className="pointer-events-none h-3.5 w-3.5" />
+                      <span>所有数据源（自动）</span>
+                    </div>
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuSeparator />
+                  {isLoadingDataSources ? (
+                    <DropdownMenuItem disabled className="flex items-center gap-2">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      加载中...
+                    </DropdownMenuItem>
+                  ) : activeDataSources.length === 0 ? (
+                    <DropdownMenuItem disabled className="text-muted-foreground">
+                      暂无可用数据源
+                    </DropdownMenuItem>
+                  ) : (
+                    activeDataSources.map((ds) => (
+                      <DropdownMenuCheckboxItem
+                        key={ds.id}
+                        checked={selectedDataSourceIds.includes(ds.id)}
+                        onCheckedChange={(checked) => {
+                          const isChecked = Boolean(checked)
+                          setSelectedDataSourceIds((prev) => {
+                            const next = new Set(prev)
+                            if (isChecked) {
+                              next.add(ds.id)
+                            } else {
+                              next.delete(ds.id)
+                            }
+                            return Array.from(next)
+                          })
+                        }}
+                        onSelect={(e) => e.preventDefault()}
+                      >
+                        <div className="flex items-center justify-between gap-2 w-full">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Checkbox checked={selectedDataSourceIds.includes(ds.id)} className="pointer-events-none h-3.5 w-3.5" />
+                            <span className="truncate">{ds.name}</span>
+                          </div>
+                          <Badge variant="outline" className="text-[10px] px-1 py-0">
+                            {ds.db_type.toUpperCase()}
+                          </Badge>
+                        </div>
+                      </DropdownMenuCheckboxItem>
+                    ))
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+
+            {/* 居中输入框 */}
+            <div className="relative max-w-2xl mx-auto">
+              {/* 玻璃态输入容器 */}
+              <div className="rounded-2xl border border-slate-200/60 dark:border-slate-700/60 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm shadow-lg ring-1 ring-slate-200/50 dark:ring-slate-700/50 p-2 flex items-end gap-2">
                 {/* 文件上传按钮 */}
                 <button
                   onClick={handleFileSelect}
                   disabled={isLoading || uploadProgress?.status === 'uploading'}
-                  className="p-3 text-slate-400 hover:text-tiffany-400 transition-colors rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex-shrink-0"
+                  className="p-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 flex-shrink-0"
                   title="上传文档 (PDF, Word)"
                 >
                   {uploadProgress?.status === 'uploading' ? (
@@ -931,15 +892,15 @@ export default function AIAssistantPage() {
                   onKeyDown={handleKeyPress}
                   placeholder={completedUploads > 0 ? `已上传 ${completedUploads} 个文件，输入问题...` : "输入您的问题..."}
                   disabled={isLoading}
-                  className="flex-1 bg-transparent border-0 focus:ring-0 text-slate-800 dark:text-slate-100 placeholder-slate-400 py-3 px-2 resize-none leading-relaxed outline-none text-base"
+                  className="flex-1 bg-transparent border-0 focus:ring-0 text-slate-800 dark:text-slate-100 placeholder-slate-400 py-2.5 px-2 resize-none leading-relaxed outline-none text-base"
                   rows={1}
                   style={{ minHeight: '48px', maxHeight: '120px' }}
                 />
-                
+
                 {isLoading ? (
                   <button
                     onClick={stopStreaming}
-                    className="p-3.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-all flex items-center justify-center flex-shrink-0"
+                    className="p-2.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-all flex items-center justify-center flex-shrink-0"
                     title="停止生成"
                   >
                     <Square className="w-5 h-5 fill-current" />
@@ -949,31 +910,30 @@ export default function AIAssistantPage() {
                     onClick={handleSend}
                     disabled={!input.trim()}
                     className={cn(
-                      "p-3.5 rounded-xl transition-all flex items-center justify-center flex-shrink-0",
+                      "p-2.5 rounded-xl transition-all flex items-center justify-center flex-shrink-0",
                       !input.trim()
                         ? "bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
-                        : "btn-datalab"
+                        : "bg-primary hover:bg-primary/90 text-slate-900 shadow-sm"
                     )}
                   >
                     <Send className="w-5 h-5" />
                   </button>
                 )}
               </div>
-              <div className="mt-2 text-center">
-                {isLoading ? (
-                  <p className="text-[10px] text-orange-600">AI 正在生成中... 点击红色按钮可停止生成</p>
-                ) : (
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500">
-                    按 <span className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">Enter</span> 发送，<span className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">Shift+Enter</span> 换行。AI 可能会出错。
-                  </p>
-                )}
-              </div>
             </div>
-          </CardContent>
-        </Card>
+
+            <div className="mt-2 text-center">
+              {isLoading ? (
+                <p className="text-[10px] text-orange-600">AI 正在生成中... 点击红色按钮可停止生成</p>
+              ) : (
+                <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                  按 <span className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">Enter</span> 发送，<span className="font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">Shift+Enter</span> 换行。AI 可能会出错。
+                </p>
+              )}
+            </div>
+          </div>
+          </div>
         </div>
-      </div>
-      {/* Close main container */}
       </div>
     </div>
   )

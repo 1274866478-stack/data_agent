@@ -1725,6 +1725,17 @@ async def run_agent(
     # 注意：已经在文件顶部导入了re，这里直接使用re而不是re_module
     # 使用全局的re模块，避免作用域问题
     try:
+        # ============================================================
+        # 🔥 诊断日志：记录数据源类型和配置信息
+        # ============================================================
+        logger.info(f"=== Agent 诊断信息 ===")
+        logger.info(f"database_url 类型: {type(database_url)}")
+        logger.info(f"database_url 值: {str(database_url)[:200] if database_url else 'None'}")
+        logger.info(f"question: {question[:100]}...")
+        logger.info(f"thread_id: {thread_id}")
+        logger.info(f"enable_echarts: {enable_echarts}")
+        logger.info(f"verbose: {verbose}")
+
         # Build or get cached agent
         agent, _ = await build_agent(
             database_url=database_url,
@@ -1742,14 +1753,46 @@ async def run_agent(
         
         # 🔥 关键修复：如果是文件数据源，自动在查询中注入文件路径上下文
         # 这样AI就知道应该调用 inspect_file 和 analyze_dataframe 工具
+        # 🔥 关键修复：如果是文件数据源，自动在查询中注入文件路径上下文
+        # 这样AI就知道应该调用 inspect_file 和 analyze_dataframe 工具
+        # ============================================================
+        # 🔍 数据源类型检测（增强版）
+        # ============================================================
+        logger.info(f"=== 数据源类型检测 ===")
+
+        # 检测各种文件路径格式
+        file_patterns = {
+            "file://": database_url.startswith("file://") if database_url else False,
+            "local://": database_url.startswith("local://") if database_url else False,
+            "/app/data/": database_url.startswith("/app/data/") if database_url else False,
+            "/app/uploads/": database_url.startswith("/app/uploads/") if database_url else False,
+            ".xlsx": database_url.endswith(".xlsx") if database_url else False,
+            ".xls": database_url.endswith(".xls") if database_url else False,
+            ".csv": database_url.endswith(".csv") if database_url else False,
+            "contains .xlsx": ".xlsx" in database_url if database_url else False,
+            "contains .xls": ".xls" in database_url if database_url else False,
+            "contains .csv": ".csv" in database_url if database_url else False,
+        }
+
+        for pattern, matched in file_patterns.items():
+            if matched:
+                logger.info(f"  ✓ 匹配文件路径模式: {pattern}")
+
         is_file_source = database_url and (
-            database_url.startswith("file://") or 
+            database_url.startswith("file://") or
             database_url.startswith("local://") or
             database_url.startswith("/app/data/") or
+            database_url.startswith("/app/uploads/") or
             database_url.endswith(".xlsx") or
             database_url.endswith(".xls") or
-            database_url.endswith(".csv")
+            database_url.endswith(".csv") or
+            ".xlsx" in database_url or
+            ".xls" in database_url or
+            ".csv" in database_url
         )
+
+        logger.info(f"  最终判定: is_file_source = {is_file_source}")
+        logger.info(f"========================")
         
         if is_file_source:
             import os
@@ -1796,10 +1839,11 @@ async def run_agent(
         # Collect all messages during execution
         all_messages = []
         final_content = ""
-        executed_sql = None
+        executed_sqls = []  # 🔥 修复：改为列表支持多SQL执行
         query_results = None
+        query_results_list = []  # 🔥 新增：保存所有查询结果
         chart_image = None  # Store chart image from MCP ECharts tool call
-        
+
         # 🔥 幻觉检测相关变量（第三道防线）
         hallucination_detected = False
         hallucination_reason = []
@@ -1907,12 +1951,16 @@ async def run_agent(
                                                     logger.info(f"Detected chart tool call: {tool_name}")
 
                                             if tc.get("name") in ("query", "execute_sql_safe", "execute_query"):
-                                                executed_sql = tc.get("args", {}).get("query") or tc.get("args", {}).get("sql")
+                                                sql = tc.get("args", {}).get("query") or tc.get("args", {}).get("sql")
+                                                if sql:
+                                                    # 🔥 修复：使用追加而不是覆盖，支持多SQL执行
+                                                    executed_sqls.append(sql)
+                                                    logger.info(f"🔗 [SQL收集] 收集到第 {len(executed_sqls)} 个SQL: {sql[:100]}...")
 
                                                 # 🔥 时间聚合验证（年度趋势查询修正）
                                                 from src.app.services.agent.tools import validate_time_aggregation_sql
                                                 is_valid, corrected_sql, error_msg = validate_time_aggregation_sql(
-                                                    executed_sql,
+                                                    sql,
                                                     question,
                                                     db_type=_infer_db_type_from_url(database_url)
                                                 )
@@ -1920,7 +1968,8 @@ async def run_agent(
                                                 if not is_valid:
                                                     logger.warning(f"⚠️ {error_msg}")
                                                     # 使用修正后的 SQL 替换原始 SQL
-                                                    executed_sql = corrected_sql
+                                                    if executed_sqls and executed_sqls[-1] == sql:
+                                                        executed_sqls[-1] = corrected_sql
                                                     # 修改工具调用参数
                                                     if "args" not in tc:
                                                         tc["args"] = {}
@@ -1999,6 +2048,10 @@ async def run_agent(
                                                         logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
                                                 else:
                                                     # Fallback: treat as query results
+                                                    # 🔥 修复：SQL 查询结果保存到列表
+                                                    if tool_name in ("query", "execute_sql_safe", "execute_query"):
+                                                        query_results_list.append(parsed_content)
+                                                        logger.info(f"🔗 [查询结果收集] 收集第 {len(query_results_list)} 个查询结果")
                                                     query_results = parsed_content
                                             except json.JSONDecodeError:
                                                 # Not JSON, might be plain text or other format
@@ -2007,6 +2060,10 @@ async def run_agent(
                                                     chart_image = content
                                                     logger.info(f"Extracted chart URL from tool result: {chart_image}")
                                                 else:
+                                                    # 🔥 修复：SQL 查询结果保存到列表（非JSON格式）
+                                                    if tool_name in ("query", "execute_sql_safe", "execute_query"):
+                                                        query_results_list.append(content)
+                                                        logger.info(f"🔗 [查询结果收集] 收集第 {len(query_results_list)} 个查询结果（非JSON）")
                                                     query_results = content
                                         else:
                                             # Content is not a string, check if it's a dict/list with image data
@@ -2037,11 +2094,23 @@ async def run_agent(
                                                     chart_image = content.get("url")
                                                     logger.info(f"Extracted chart URL from MCP tool result: {chart_image}")
                                                 else:
+                                                    # 🔥 修复：SQL 查询结果保存到列表
+                                                    if tool_name in ("query", "execute_sql_safe", "execute_query"):
+                                                        query_results_list.append(content)
+                                                        logger.info(f"🔗 [查询结果收集] 收集第 {len(query_results_list)} 个查询结果（dict）")
                                                     query_results = content
                                             else:
+                                                # 🔥 修复：SQL 查询结果保存到列表
+                                                if tool_name in ("query", "execute_sql_safe", "execute_query"):
+                                                    query_results_list.append(content)
+                                                    logger.info(f"🔗 [查询结果收集] 收集第 {len(query_results_list)} 个查询结果（其他）")
                                                 query_results = content
                                     except (json.JSONDecodeError, TypeError) as e:
                                         logger.warning(f"Failed to parse tool message content: {e}")
+                                        # 🔥 修复：SQL 查询结果保存到列表（异常情况）
+                                        if tool_name in ("query", "execute_sql_safe", "execute_query"):
+                                            query_results_list.append(msg.content)
+                                            logger.info(f"🔗 [查询结果收集] 收集第 {len(query_results_list)} 个查询结果（异常）")
                                         query_results = msg.content
 
         except BaseException as stream_error:
@@ -2223,16 +2292,30 @@ async def run_agent(
                 cleaned_content = final_content
 
         # 🔥 第一步修复：SQL 提取兜底逻辑（被动触发）
+        # ============================================================
+        # 🔍 SQL 兜底执行逻辑诊断
+        # ============================================================
+        logger.info(f"=== SQL 兜底执行逻辑诊断 ===")
+        logger.info(f"当前 executed_sqls 数量: {len(executed_sqls)}")
+        logger.info(f"当前 query_results: {type(query_results)}")
+        logger.info(f"final_content 长度: {len(final_content) if final_content else 0}")
+
         # 检查是否有 tool_calls 但没有执行 SQL
         has_tool_calls = False
+        tool_call_names = []
         for msg in all_messages:
             if isinstance(msg, AIMessage) and getattr(msg, 'tool_calls', None):
                 has_tool_calls = True
+                tool_call_names.extend([tc.get('name', 'unknown') if isinstance(tc, dict) else str(tc.name) for tc in msg.tool_calls])
                 break
-        
+
+        logger.info(f"has_tool_calls: {has_tool_calls}")
+        if tool_call_names:
+            logger.info(f"检测到的工具调用: {tool_call_names}")
+
         # 如果 tool_calls 为空，但文本内容中包含 SQL 代码块，强制提取并执行
-        if not executed_sql and final_content:
-            # 尝试从 markdown 代码块中提取 SQL
+        if not executed_sqls and final_content:
+            # 尝试从 markdown 代码块中提取所有 SQL（支持多个SQL）
             # 匹配 ```sql ... ``` 格式
             sql_patterns = [
                 r'```sql\s*\n(.*?)\n```',  # 标准格式：```sql\n...\n```
@@ -2240,42 +2323,58 @@ async def run_agent(
                 r'```sql(.*?)```',         # 无换行格式
                 r'```\s*sql\s*\n(.*?)\n```',  # 带空格的格式
             ]
-            
+
             for pattern in sql_patterns:
-                match = re.search(pattern, final_content, re.DOTALL | re.IGNORECASE)
-                if match:
-                    extracted_sql = match.group(1).strip()
+                matches = re.findall(pattern, final_content, re.DOTALL | re.IGNORECASE)
+                for match in matches:
+                    extracted_sql = match.strip()
                     # 验证提取的 SQL 看起来合理（至少包含 SELECT）
                     if extracted_sql and ('SELECT' in extracted_sql.upper() or 'WITH' in extracted_sql.upper()):
-                        executed_sql = extracted_sql
-                        logger.warning(f"⚠️ Detected raw SQL in text (no tool call), forcing execution... SQL: {executed_sql[:100]}...")
-                        break
-            
+                        executed_sqls.append(extracted_sql)
+                        logger.warning(f"⚠️ Detected raw SQL in text (no tool call), adding to execution queue... SQL: {extracted_sql[:100]}...")
+                if executed_sqls:
+                    break
+
             # 如果还是没找到，尝试更宽松的模式（查找包含 SELECT 的代码块）
-            if not executed_sql:
+            if not executed_sqls:
                 # 匹配任何包含 SQL 关键字的代码块
                 loose_pattern = r'```(?:sql|SQL)?\s*\n((?:SELECT|WITH|INSERT|UPDATE|DELETE).*?)\n```'
-                match = re.search(loose_pattern, final_content, re.DOTALL | re.IGNORECASE)
-                if match:
-                    extracted_sql = match.group(1).strip()
+                matches = re.findall(loose_pattern, final_content, re.DOTALL | re.IGNORECASE)
+                for match in matches:
+                    extracted_sql = match.strip()
                     if extracted_sql:
-                        executed_sql = extracted_sql
-                        logger.warning(f"⚠️ Detected raw SQL in text (loose pattern), forcing execution... SQL: {extracted_sql[:100]}...")
-            
+                        executed_sqls.append(extracted_sql)
+                        logger.warning(f"⚠️ Detected raw SQL in text (loose pattern), adding to execution queue... SQL: {extracted_sql[:100]}...")
+
             # 如果没有找到 SQL 代码块，检查是否在普通文本中有 SQL 语句
-            if not executed_sql:
+            if not executed_sqls:
                 # 查找以 SELECT/WITH 开头的文本行（可能是直接写的 SQL）
                 sql_line_pattern = r'(?:^|\n)((?:SELECT|WITH)\s+[^`]+?)(?:\n|$)'
-                match = re.search(sql_line_pattern, final_content, re.IGNORECASE | re.MULTILINE)
-                if match:
-                    potential_sql = match.group(1).strip()
+                matches = re.findall(sql_line_pattern, final_content, re.IGNORECASE | re.MULTILINE)
+                for match in matches:
+                    potential_sql = match.strip()
                     # 验证这看起来像 SQL（包含常见关键字）
                     if len(potential_sql) > 20 and any(kw in potential_sql.upper() for kw in ['FROM', 'WHERE', 'JOIN', 'GROUP BY', 'ORDER BY']):
-                        executed_sql = potential_sql
-                        logger.warning(f"⚠️ Detected SQL-like text (no code block), forcing execution... SQL: {executed_sql[:100]}...")
-            
-            if not executed_sql:
+                        executed_sqls.append(potential_sql)
+                        logger.warning(f"⚠️ Detected SQL-like text (no code block), adding to execution queue... SQL: {potential_sql[:100]}...")
+
+            if not executed_sqls:
                 logger.warning(f"⚠️ 无法从 tool_calls 或文本内容中提取 SQL。final_content 长度: {len(final_content)}, has_tool_calls: {has_tool_calls}")
+            else:
+                logger.info(f"✅ SQL 提取成功，共提取 {len(executed_sqls)} 个 SQL")
+                for i, sql in enumerate(executed_sqls):
+                    logger.info(f"  SQL[{i+1}]: {sql[:100]}...")
+
+        # ============================================================
+        # SQL 强制执行逻辑诊断
+        # ============================================================
+        logger.info(f"=== SQL 强制执行逻辑诊断 ===")
+        logger.info(f"准备执行 SQL - executed_sqls 数量: {len(executed_sqls)}")
+        logger.info(f"准备执行 SQL - query_results 状态: {query_results is not None}")
+        if executed_sqls:
+            for i, sql in enumerate(executed_sqls):
+                logger.info(f"  待执行 SQL[{i+1}]: {sql[:100]}...")
+        logger.info(f"============================")
 
         # 🔥🔥🔥 第四道防线：通用幻觉检测（适用于所有数据源类型，无论是否调用工具）
         # 即使调用了工具，也要检测回答中是否包含明显的幻觉测试数据
@@ -2653,40 +2752,59 @@ async def run_agent(
 
 
         # 🔥 关键修复：如果LLM没有执行SQL查询，但提供了SQL（无论是通过工具调用还是文本），强制执行它
-        if not query_results and executed_sql:
-            logger.warning(f"⚠️ LLM提供了SQL但没有执行查询（或查询未返回结果），强制自动执行SQL...")
+        # 🔥 链式执行支持：如果有多个SQL，按顺序执行所有SQL
+        if not query_results and executed_sqls:
+            logger.warning(f"⚠️ LLM提供了 {len(executed_sqls)} 个SQL但没有执行查询（或查询未返回结果），强制自动执行SQL...")
+
+            # 🔥 链式执行逻辑：如果有多个SQL，按顺序执行
+            if len(executed_sqls) > 1:
+                logger.info(f"🔗 [链式执行] 检测到 {len(executed_sqls)} 个SQL，开始链式执行...")
+
             try:
                 # 使用execute_sql_safe工具执行SQL（这是安全的SQL执行工具）
                 from .tools import execute_sql_safe
-                
-                # 执行SQL查询
-                logger.info(f"🔄 正在执行提取的 SQL: {executed_sql[:200]}...")
-                result = execute_sql_safe.invoke({"sql": executed_sql, "query": executed_sql})
-                
-                # 解析结果
-                if isinstance(result, str):
+
+                # 链式执行所有SQL
+                for idx, sql in enumerate(executed_sqls):
+                    logger.info(f"🔄 [链式执行] 正在执行第 {idx + 1}/{len(executed_sqls)} 个SQL: {sql[:200]}...")
+
                     try:
-                        query_results = json.loads(result)
-                        logger.info(f"✅ SQL执行成功，返回JSON格式结果，包含 {len(query_results) if isinstance(query_results, list) else 1} 条记录")
-                    except json.JSONDecodeError:
-                        # 如果不是JSON，可能是错误信息或纯文本结果
-                        logger.warning(f"SQL执行返回非JSON结果: {result[:200]}...")
-                        # 尝试将字符串结果包装为列表
-                        query_results = [{"result": result}] if result else None
-                elif isinstance(result, list):
-                    query_results = result
-                    logger.info(f"✅ SQL执行成功，返回列表格式结果，包含 {len(query_results)} 条记录")
-                elif isinstance(result, dict):
-                    query_results = [result]
-                    logger.info(f"✅ SQL执行成功，返回字典格式结果")
-                else:
-                    query_results = None
-                    logger.warning(f"SQL执行返回未知格式: {type(result)}")
-                
+                        result = execute_sql_safe.invoke({"sql": sql, "query": sql})
+
+                        # 解析结果
+                        if isinstance(result, str):
+                            try:
+                                parsed_result = json.loads(result)
+                                logger.info(f"✅ [链式执行] 第 {idx + 1} 个SQL执行成功，返回JSON格式结果，包含 {len(parsed_result) if isinstance(parsed_result, list) else 1} 条记录")
+                                # 只有最后一个SQL的结果作为最终结果，或者有数据的结果
+                                if isinstance(parsed_result, list) and len(parsed_result) > 0:
+                                    query_results = parsed_result
+                                elif query_results is None:
+                                    query_results = parsed_result
+                            except json.JSONDecodeError:
+                                # 如果不是JSON，可能是错误信息或纯文本结果
+                                logger.warning(f"[链式执行] SQL执行返回非JSON结果: {result[:200]}...")
+                                if query_results is None:
+                                    query_results = [{"result": result}] if result else None
+                        elif isinstance(result, list):
+                            logger.info(f"✅ [链式执行] 第 {idx + 1} 个SQL执行成功，返回列表格式结果，包含 {len(result)} 条记录")
+                            if len(result) > 0:
+                                query_results = result
+                        elif isinstance(result, dict):
+                            logger.info(f"✅ [链式执行] 第 {idx + 1} 个SQL执行成功，返回字典格式结果")
+                            if query_results is None:
+                                query_results = [result]
+                        else:
+                            logger.warning(f"[链式执行] SQL执行返回未知格式: {type(result)}")
+
+                    except Exception as e:
+                        logger.error(f"❌ [链式执行] 第 {idx + 1} 个SQL执行出错: {e}")
+                        # 继续执行下一个SQL
+
                 if query_results:
-                    logger.info(f"✅ 成功自动执行SQL查询，获取到 {len(query_results) if isinstance(query_results, list) else 1} 条结果")
+                    logger.info(f"✅ [链式执行] 成功执行SQL查询，获取到 {len(query_results) if isinstance(query_results, list) else 1} 条结果")
                 else:
-                    logger.warning("⚠️ 自动执行SQL查询但没有获取到结果")
+                    logger.warning("⚠️ [链式执行] 所有SQL执行完成但没有获取到结果")
             except Exception as e:
                 logger.error(f"❌ 尝试自动执行SQL时出错: {e}", exc_info=True)
                 # 即使执行失败，也继续处理，至少可以显示SQL和错误信息
@@ -2700,14 +2818,35 @@ async def run_agent(
         chart_config = ChartConfig()
         echarts_option = None
 
-        if query_results and isinstance(query_results, list):
-            query_result = QueryResult.from_raw_data(query_results)
+        # 🔥 修复：使用最后一个SQL或所有SQL的组合（用于数据验证）
+        primary_sql = executed_sqls[-1] if executed_sqls else ""
+
+        # 🔥 修复：优先使用 query_results_list 中最后一个有数据的结果
+        final_query_results = query_results
+        if query_results_list:
+            # 从最后一个结果开始找，找到第一个有数据的结果
+            for result in reversed(query_results_list):
+                if isinstance(result, list) and len(result) > 0:
+                    final_query_results = result
+                    logger.info(f"🔗 [结果选择] 使用第 {query_results_list.index(result) + 1} 个查询结果（共 {len(query_results_list)} 个）")
+                    break
+                elif isinstance(result, dict) and result:
+                    final_query_results = result
+                    logger.info(f"🔗 [结果选择] 使用第 {query_results_list.index(result) + 1} 个查询结果（dict，共 {len(query_results_list)} 个）")
+                    break
+            else:
+                # 如果所有结果都是空的，使用最后一个
+                final_query_results = query_results_list[-1]
+                logger.info(f"🔗 [结果选择] 使用最后一个查询结果（所有结果为空）")
+
+        if final_query_results and isinstance(final_query_results, list):
+            query_result = QueryResult.from_raw_data(final_query_results)
 
             # 🔧 步骤1: 数据一致性验证
             # 检查 LLM 生成的字段是否真实存在于查询结果中
             validation_result = validate_sql_data_consistency(
-                executed_sql or "",
-                query_results,
+                primary_sql,
+                final_query_results,  # 🔥 修复：使用 final_query_results
                 llm_config={"x_field": None, "y_field": None}  # 如果有 LLM 配置可传入
             )
 
@@ -2719,7 +2858,7 @@ async def run_agent(
 
             # 🔧 步骤2: 智能字段映射
             # 基于真实数据推断 X 轴和 Y 轴应使用的字段
-            field_mapping = smart_field_mapping(query_results, executed_sql)
+            field_mapping = smart_field_mapping(final_query_results, primary_sql)  # 🔥 修复：使用 final_query_results
             logger.info(
                 f"📊 [字段映射] X轴: {field_mapping.x_field} ({field_mapping.x_type.value}), "
                 f"Y轴: {field_mapping.y_field} ({field_mapping.y_type.value}), "
@@ -2728,7 +2867,7 @@ async def run_agent(
 
             # 🔧 步骤3: 图表推荐
             # 根据数据特征和用户问题推荐图表类型
-            chart_recommendation = recommend_chart(query_results, executed_sql, question)
+            chart_recommendation = recommend_chart(final_query_results, primary_sql, question)  # 🔥 修复：使用 final_query_results
             logger.info(
                 f"📈 [图表推荐] 类型: {chart_recommendation.chart_type}, "
                 f"标题: {chart_recommendation.title}, "
@@ -2736,14 +2875,14 @@ async def run_agent(
             )
 
             # 🔧 步骤4: 使用验证后的字段映射生成图表配置
-            if executed_sql:
+            if executed_sqls:
                 inferred_type = chart_recommendation.chart_type
                 chart_title = chart_recommendation.title
 
                 # 使用智能映射的字段，而不是 LLM 提供的字段
                 _, chart_config, echarts_option = prepare_mcp_chart_request(
-                    sql_result=query_results,
-                    sql=executed_sql,
+                    sql_result=final_query_results,  # 🔥 修复：使用 final_query_results
+                    sql=primary_sql,  # 🔥 修复：使用 primary_sql 而不是不存在的 executed_sql
                     title=chart_title,
                     chart_type=inferred_type,
                     x_field=field_mapping.x_field,  # 使用智能映射的 X 字段
@@ -2812,7 +2951,7 @@ async def run_agent(
                 # 自动生成图表配置
                 _, chart_config, echarts_option = prepare_mcp_chart_request(
                     sql_result=query_results,
-                    sql=executed_sql or "",
+                    sql=primary_sql,
                     title=chart_title,
                     chart_type=inferred_type,
                     question=question
@@ -2918,7 +3057,7 @@ async def run_agent(
             query_results = None
             logger.error(f"🚫 [Agent执行] 检测到幻觉，已更新answer字段为错误消息")
         
-        # 🔥 构建metadata（包含幻觉检测信息）
+        # 🔥 构建metadata（包含幻觉检测信息和多SQL执行信息）
         response_metadata = {
             "tool_error": tool_error_detected,
             "tool_status": "error" if tool_error_detected else "success",
@@ -2927,11 +3066,19 @@ async def run_agent(
             # 🔥 添加幻觉检测元数据
             "hallucination_detected": hallucination_detected,
             "hallucination_reason": hallucination_reason if hallucination_detected else None,
+            # 🔥 添加多SQL执行信息
+            "executed_sqls": executed_sqls,  # 所有执行的SQL列表
+            "executed_sql_count": len(executed_sqls),  # 执行的SQL数量
+            "query_results_count": len(query_results_list),  # 查询结果数量
+            "has_multiple_queries": len(executed_sqls) > 1,  # 是否有多个查询
         }
-        
+
+        # 🔥 使用最后一个SQL作为主SQL用于显示（保持向后兼容）
+        primary_sql = executed_sqls[-1] if executed_sqls else ""
+
         response = VisualizationResponse(
             answer=final_answer,  # 🔥 使用处理后的answer（如果检测到幻觉，使用错误消息）
-            sql=executed_sql or "",
+            sql=primary_sql,
             data=query_result,  # 现在query_result不会是None
             chart=chart_config,
             echarts_option=echarts_option,
@@ -2958,10 +3105,10 @@ async def run_agent(
             # 如果是字符串或其他类型，使用空QueryResult
             logger.warning(f"query_results是意外类型: {type(query_results)}，使用空QueryResult")
             data_field = QueryResult()
-        
+
         return {
             "answer": cleaned_content or "",  # Use cleaned content, default to empty string
-            "sql": executed_sql or "",  # 🔥 修复：确保sql字段始终是字符串
+            "sql": primary_sql,  # 🔥 修复：使用最后一个执行的SQL
             "data": data_field,  # 🔥 修复：确保data字段始终是QueryResult实例
             "success": True,
             "error": None,
