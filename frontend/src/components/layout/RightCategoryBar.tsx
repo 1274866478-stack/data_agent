@@ -30,12 +30,13 @@ interface RightCategoryBarProps {
   onToggle: () => void
 }
 
-// 分组导航配置
+// 分组导航配置 - Insight Agent 放在首位并突出显示
 const navGroups = [
   {
-    label: '概览',
+    label: 'AI 助手',
+    highlight: true,
     items: [
-      { href: '/dashboard', icon: Home, label: '仪表板' },
+      { href: '/ai-assistant', icon: Bot, label: 'Insight Agent' },
     ],
   },
   {
@@ -46,9 +47,9 @@ const navGroups = [
     ],
   },
   {
-    label: '分析工具',
+    label: '概览',
     items: [
-      { href: '/ai-assistant', icon: Bot, label: 'Insight Agent' },
+      { href: '/dashboard', icon: Home, label: '仪表盘' },
     ],
   },
   {
@@ -89,10 +90,20 @@ export function RightCategoryBar({ collapsed, onToggle }: RightCategoryBarProps)
       <nav className="flex-1 overflow-y-auto py-4 px-3">
         {navGroups.map((group, groupIndex) => (
           <div key={group.label} className={cn(groupIndex > 0 && 'mt-6')}>
+            {/* 分组标题 - 高亮组使用渐变色 */}
             <div className="px-3 mb-2">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                {group.label}
-              </span>
+              {group.highlight ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold bg-gradient-to-r from-amber-500 to-orange-500 bg-clip-text text-transparent uppercase tracking-wider">
+                    {group.label}
+                  </span>
+                  <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+                </div>
+              ) : (
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  {group.label}
+                </span>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -105,14 +116,18 @@ export function RightCategoryBar({ collapsed, onToggle }: RightCategoryBarProps)
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200',
-                      isActive
-                        ? 'bg-primary text-primary-foreground shadow-sm'
-                        : 'text-foreground hover:bg-muted'
+                      'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200',
+                      group.highlight
+                        ? isActive
+                          ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/30'
+                          : 'text-amber-600 hover:text-amber-700 hover:bg-amber-50'
+                        : isActive
+                          ? 'bg-primary text-primary-foreground shadow-sm'
+                          : 'text-foreground hover:bg-muted'
                     )}
                   >
                     <Icon className="h-4 w-4 flex-shrink-0" />
-                    <span>{item.label}</span>
+                    <span className="font-medium">{item.label}</span>
                   </Link>
                 )
               })}

@@ -273,11 +273,16 @@ class Settings(BaseSettings):
             )
 
         # 检查重复字符模式（弱密钥特征）
-        if len(set(v)) < len(v) * 0.3:  # 如果唯一字符少于30%
-            raise ValueError(
-                "ZHIPUAI_API_KEY appears to be weak (low character variety). "
-                "Please use a proper API key from https://open.bigmodel.cn/"
-            )
+        # 跳过十六进制格式的 API Key（智谱AI使用hex格式，字符种类天然有限）
+        hex_chars = set('0123456789abcdef')
+        key_body = v.replace('sk-', '').replace('-', '').lower()
+        if not all(c in hex_chars for c in key_body):
+            # 非hex格式才检查字符多样性
+            if len(set(v)) < len(v) * 0.3:
+                raise ValueError(
+                    "ZHIPUAI_API_KEY appears to be weak (low character variety). "
+                    "Please use a proper API key from https://open.bigmodel.cn/"
+                )
 
         return v
 

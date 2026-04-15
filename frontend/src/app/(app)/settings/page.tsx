@@ -7,7 +7,10 @@ import { SettingsInput } from '@/components/settings/SettingsInput'
 import { SettingsToggle } from '@/components/settings/SettingsToggle'
 import { ProgressBar } from '@/components/settings/ProgressBar'
 import { SettingsSectionHeader } from '@/components/settings/SettingsSectionHeader'
+import { useAuthStore } from '@/store/authStore'
+import { useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
+import { User, AlertCircle, ArrowLeftRight } from 'lucide-react'
 
 interface TenantSettings {
   display_name: string
@@ -33,9 +36,50 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
+  // 账户相关状态
+  const { user, token, logout: authLogout } = useAuthStore()
+  const router = useRouter()
+  const [switchingAccount, setSwitchingAccount] = useState(false)
+
   useEffect(() => {
     loadSettings()
   }, [])
+
+  // 切换账号 - 清除登录状态并跳转到登录页
+  const handleSwitchAccount = async () => {
+    if (switchingAccount) return
+    setSwitchingAccount(true)
+    try {
+      // 调用后端登出 API
+      if (token) {
+        try {
+          await fetch('/api/v1/auth/logout', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          })
+        } catch (e) {
+          // 忽略登出 API 错误，继续清除本地状态
+        }
+      }
+
+      // 清除本地存储的认证信息
+      localStorage.removeItem('auth_token')
+      localStorage.removeItem('user_id')
+      localStorage.removeItem('tenant_id')
+      localStorage.removeItem('user_email')
+
+      // 清除 Zustand store 状态
+      authLogout()
+
+      // 跳转到登录页
+      router.push('/login')
+    } finally {
+      setSwitchingAccount(false)
+    }
+  }
 
   const loadSettings = async () => {
     try {
@@ -237,6 +281,63 @@ export default function SettingsPage() {
                   </span>
                 </div>
               </div>
+            </div>
+          </GlassPanel>
+
+          {/* 账户管理 */}
+          <GlassPanel>
+            <SettingsSectionHeader
+              icon="manage_accounts"
+              title="账户管理"
+              description="管理您的登录账号和安全设置"
+            />
+            <div className="space-y-6">
+              {/* 当前账户信息 */}
+              {user ? (
+                <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+                    <User className="w-6 h-6 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                      {user.email || user.full_name || '未设置名称'}
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      租户 ID: {user.tenant_id || 'N/A'}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-4 p-4 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                  <AlertCircle className="w-6 h-6 text-amber-500" />
+                  <p className="text-sm text-amber-700 dark:text-amber-400">
+                    未检测到登录信息
+                  </p>
+                </div>
+              )}
+
+              {/* 切换账号按钮 */}
+              <Button
+                onClick={handleSwitchAccount}
+                disabled={switchingAccount || !token}
+                className="w-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 px-6 py-3 rounded-xl font-medium flex items-center justify-center gap-2 transition-all"
+              >
+                {switchingAccount ? (
+                  <>
+                    <MaterialIcon icon="sync" className="text-lg animate-spin" />
+                    正在退出...
+                  </>
+                ) : (
+                  <>
+                    <ArrowLeftRight className="text-lg" />
+                    切换账号
+                  </>
+                )}
+              </Button>
+
+              <p className="text-xs text-slate-400 dark:text-slate-500 text-center">
+                退出当前账号并使用其他账号登录
+              </p>
             </div>
           </GlassPanel>
         </div>

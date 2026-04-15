@@ -23,12 +23,12 @@ import {
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
-// 导航项配置
+// 导航项配置 - Agent放在首位并突出显示
 const navItems = [
-  { href: '/dashboard', icon: Home, label: '仪表板' },
+  { href: '/ai-assistant', icon: Bot, label: 'Insight Agent', highlight: true },
   { href: '/data-sources', icon: Database, label: '数据源' },
   { href: '/documents', icon: FileText, label: '文档' },
-  { href: '/ai-assistant', icon: Bot, label: 'Insight Agent' },
+  { href: '/dashboard', icon: Home, label: '仪表盘' },
 ]
 
 const bottomItems = [
@@ -45,11 +45,17 @@ export function LeftIconBar() {
         <Image src="/logo-icon-only.svg" alt="Insight Agent" width={40} height={40} className="object-contain" />
       </Link>
 
-      {/* 主导航 */}
+      {/* 主导航 - Agent突出显示在最顶部 */}
       <nav className="flex-1 flex flex-col items-center gap-2">
+        {/* Agent 专用突出指示 */}
+        <div className="relative mb-1">
+          <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+          <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-4 h-4 bg-amber-500/30 rounded-full animate-ping" />
+        </div>
         {navItems.map((item) => {
           const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
           const Icon = item.icon
+          const isHighlight = item.highlight
 
           return (
             <Link
@@ -58,20 +64,39 @@ export function LeftIconBar() {
               className={cn(
                 'group relative w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200',
                 isActive
-                  ? 'bg-accent text-accent-foreground'
-                  : 'text-muted-foreground hover:text-accent-foreground hover:bg-accent/50'
+                  ? isHighlight
+                    ? 'bg-gradient-modern-primary text-white shadow-lg shadow-primary/30'
+                    : 'bg-accent text-accent-foreground'
+                  : isHighlight
+                    ? 'text-amber-400 hover:text-amber-300 hover:bg-amber-500/20'
+                    : 'text-muted-foreground hover:text-accent-foreground hover:bg-accent/50'
               )}
             >
-              <Icon className="h-5 w-5" />
-              
-              {/* Tooltip */}
-              <div className="absolute left-full ml-3 px-2 py-1 bg-popover text-popover-foreground text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 shadow-md border border-border">
-                {item.label}
-              </div>
+              {/* 高亮项发光效果 */}
+              {isHighlight && !isActive && (
+                <div className="absolute inset-0 rounded-lg bg-amber-500/10 animate-pulse" />
+              )}
+              <Icon className={cn('h-5 w-5 relative z-10', isHighlight && 'drop-shadow-lg')} />
 
-              {/* 激活指示器 */}
+              {/* 文字标签 - 高亮项常驻显示 */}
+              {isHighlight ? (
+                <div className="absolute left-full ml-3 px-2 py-1 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs rounded-md whitespace-nowrap z-50 shadow-lg">
+                  {item.label}
+                </div>
+              ) : (
+                <div className="absolute left-full ml-3 px-2 py-1 bg-popover text-popover-foreground text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50 shadow-md border border-border">
+                  {item.label}
+                </div>
+              )}
+
+              {/* 激活指示器 - 高亮项使用渐变 */}
               {isActive && (
-                <div className="absolute left-0 w-0.5 h-6 bg-gradient-modern-primary rounded-r" />
+                <div className={cn(
+                  'absolute left-0 w-0.5 h-6 rounded-r',
+                  isHighlight
+                    ? 'bg-gradient-to-b from-amber-300 to-orange-400'
+                    : 'bg-gradient-modern-primary'
+                )} />
               )}
             </Link>
           )
